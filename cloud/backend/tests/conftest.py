@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.main import app
 from app.core.database import get_db
 from app.models.user import Base, User
+from app.models.token import RefreshTokenRecord  # ensure table is registered on Base.metadata
 
 TEST_DATABASE_URL = "sqlite+aiosqlite://"
 

@@ -29,12 +29,24 @@ class JWTService:
         headers = {"kid": current_key.kid}
         return jwt.encode(payload, current_key.private_key, algorithm="RS256", headers=headers)
 
-    def create_refresh_token(self, sub: str) -> str:
+    def create_refresh_token(self, sub: str, jti: str, family_id: str) -> str:
+        """Create a refresh token with JWT ID and family ID for rotation tracking.
+
+        Args:
+            sub: Subject (user ID as string).
+            jti: Unique JWT ID for this specific token issuance.
+            family_id: Token family ID shared across rotations.
+
+        Returns:
+            Encoded JWT string.
+        """
         current_key = self.key_manager.get_current_key()
         now = datetime.now(timezone.utc)
         payload = {
             "sub": sub,
             "type": "refresh",
+            "jti": jti,
+            "family_id": family_id,
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(days=self.refresh_expire)).timestamp()),
         }
