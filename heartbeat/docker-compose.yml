@@ -1,0 +1,14 @@
+services:
+  heartbeat-backend:
+    build: ./backend
+    container_name: heartbeat-backend
+    ports:
+      - "127.0.0.1:8091:8091"
+    volumes:
+      - heartbeat_data:/app/data
+    environment:
+      - HEARTBEAT_API_KEY=${HEARTBEAT_API_KEY:-changeme-dev-key}
+    restart: unless-stopped
+
+volumes:
+  heartbeat_data:
