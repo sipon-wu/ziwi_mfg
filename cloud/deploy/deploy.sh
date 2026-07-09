@@ -6,8 +6,8 @@
 #
 # 前置：
 #   1. 已将 cloud/ 整目录 scp 到 $PROJECT_DIR
-#   2. 腾讯云 DNSPod API 密钥已就位（acme.sh 签发 *.ziwi.cn 用）：
-#      export DP_Id="..." ; export DP_Key="..."   （或用 acme.sh 已存账户）
+#   2. *.ziwi.cn 通配符证书已由 acme.sh 签发并存于 /root/.acme.sh/*.ziwi.cn_ecc/
+#      （多团队共用，cloud.ziwi.cn 直接复用，无需重新签发；严禁对他人证书账户做 --force 重签）
 #   3. 宿主机已装 docker + docker compose + nginx
 #
 set -euo pipefail
@@ -18,7 +18,8 @@ DOMAIN="cloud.ziwi.cn"
 WILDCARD="*.ziwi.cn"
 CERT_DIR="/root/.acme.sh/${WILDCARD}_ecc"
 NGINX_CONF_SRC="${PROJECT_DIR}/deploy/nginx/${DOMAIN}.conf"
-NGINX_CONF_DST="/etc/nginx/conf.d/${DOMAIN}.conf"
+NGINX_CONF_DST="/etc/nginx/sites-available/${DOMAIN}"
+NGINX_CONF_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
 BACKUP_DIR="/var/backups/cloud-idp/$(date +%Y%m%d-%H%M%S)"
 
 log(){ echo "==> $*"; }
@@ -28,8 +29,8 @@ command -v docker >/dev/null  || { echo "ERROR: docker 未安装"; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "ERROR: docker compose 未安装"; exit 1; }
 command -v nginx >/dev/null || { echo "ERROR: nginx 未安装"; exit 1; }
 echo "内存:"; free -h | awk 'NR==2{print "  "$0}'
-echo "端口占用 (80/443/8000/3000/5433)："
-for p in 80 443 8000 3000 5433; do
+echo "端口占用 (80/443/8090/3000/5433)："
+for p in 80 443 8090 3000 5433; do
   if ss -ltn 2>/dev/null | grep -q ":${p} "; then echo "  ⚠️  端口 ${p} 已被占用（须与 school 栈确认不冲突）"; else echo "  ✅ ${p} 空闲"; fi
 done
 
@@ -60,22 +61,25 @@ log "[4/11] 起服编排 (docker compose up -d --build)"
 docker compose up -d --build
 echo "    等待 backend /health ..."
 for i in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "    backend 健康 ✅"; break; fi
+  if curl -fsS http://127.0.0.1:8090/health >/dev/null 2>&1; then echo "    backend 健康 ✅"; break; fi
   [ "$i" -eq 30 ] && { echo "ERROR: backend 30s 内未就绪，查 docker compose logs backend"; exit 1; }
   sleep 2
 done
 
-log "[5/11] SSL 证书 (acme.sh ${WILDCARD} DNS-01)"
-if [ -f "${CERT_DIR}/${WILDCARD}.cer" ]; then
-  echo "    证书已存在，跳过签发"
+log "[5/11] SSL 证书（复用 acme.sh 已签发的 *.ziwi.cn 通配符，不做重签）"
+if [ -f "${CERT_DIR}/fullchain.cer" ]; then
+  echo "    证书 ${CERT_DIR}/fullchain.cer 已存在，直接复用 ✅"
 else
-  ~/.acme.sh/acme.sh --issue -d "$WILDCARD" --dns dns_dp --force
+  echo "ERROR: 未找到 ${CERT_DIR}/fullchain.cer。cloud.ziwi.cn 依赖共享 *.ziwi.cn 通配符证书，"
+  echo "       请勿自行 --force 重签（会扰动 school/ecms 共用的 acme.sh 账户）。请先确认证书状态。"
+  exit 1
 fi
 
 log "[6/11] nginx 落盘 + 重载"
 cp "$NGINX_CONF_SRC" "$NGINX_CONF_DST"
+ln -sf "$NGINX_CONF_DST" "$NGINX_CONF_LINK"
 nginx -t && systemctl reload nginx
-echo "    nginx 已加载 ${DOMAIN}.conf"
+echo "    nginx 已加载 ${DOMAIN}"
 
 log "[7/11] 验证（非阻断，失败仅告警）"
 echo -n "  前端 /        : "; curl -IsS "https://${DOMAIN}/" 2>/dev/null | head -n 1 || echo "  ⚠️ 检查 nginx"

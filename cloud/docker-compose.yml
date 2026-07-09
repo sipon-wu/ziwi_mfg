@@ -3,7 +3,7 @@ services:
     build: ./backend
     container_name: cloud-backend
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8090:8000"
     environment:
       - CLOUD_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/cloud_idp
       - CLOUD_JWT_ACCESS_EXPIRE_MINUTES=30
