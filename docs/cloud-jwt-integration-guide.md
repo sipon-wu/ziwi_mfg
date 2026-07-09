@@ -1,8 +1,9 @@
 # cloud.ziwi.cn JWT 集成指南
 
-> **版本**: v1.0  
+> **版本**: v1.1  
 > **面向读者**: school（教学平台）/ mfg（制造平台）后端开发者  
-> **最后更新**: 2026-07-10
+> **最后更新**: 2026-07-10  
+> **v1.1 变更**: refresh_token 轮换机制（RFC 9700）+ 重放检测
 
 ---
 
@@ -414,7 +415,10 @@ async def health():
 
 ### 4.3 Refresh Token 处理
 
-access_token 有效期 **30 分钟**（`expires_in: 1800`），过期后使用 refresh_token 获取新的 access_token。
+access_token 有效期 **30 分钟**（`expires_in: 1800`），refresh_token 有效期 **7 天**。过期后使用 refresh_token 获取新的 access_token。
+
+> ⚠️ **重要：refresh_token 轮换（RFC 9700）**
+> 每次刷新不仅返回新 access_token，还返回**新的 refresh_token**。旧的 refresh_token 立即作废，用旧 token 再次刷新会触发**重放检测**——整条令牌链作废、强制重新登录。前端刷新后必须更新本地存储为新的 refresh_token。
 
 #### 刷新端点
 
@@ -666,7 +670,7 @@ GET /health
 | Token 类型 | 有效期 | 说明 |
 |:---|:---|:---|
 | `access_token` | **30 分钟**（1800s） | 短期，降低泄露风险 |
-| `refresh_token` | **由 cloud 控制** | 用于获取新的 access_token |
+| `refresh_token` | **7 天** | 每次刷新后旧 token 作废、返回新 token（轮换机制） |
 
 建议：school/mfg 后端在 access_token 过期前 **5 分钟** 提示前端预刷新，减少用户感知的延迟。
 
