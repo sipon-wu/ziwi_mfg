@@ -1,0 +1,2286 @@
+openapi: "3.0.3"
+info:
+  title: 知微 ziwi SaaS 平台 API
+  description: |
+    知微(SaaS)平台 — Phase 1 核心业务 API 文档
+
+    ## 认证方式
+    - **Bearer JWT**: `Authorization: Bearer <token>` — 用户身份认证
+    - **X-Tenant-Id**: 请求头 — 多租户识别（SaaS 模式必传）
+    - **X-Deploy-Mode**: 请求头 — 部署模式: saas / onprem / multi-factory
+    - **X-Factory-Id**: 请求头 — 工厂ID（multi-factory 模式必传）
+    - **X-License-Key**: 请求头 — 许可证密钥（onprem 模式必传）
+
+    ## API 版本
+    - URL 路径版本: `/api/v1/{resource}`
+    - 同一接口保留 2 个版本，v1 废弃前 3 个月发送 `X-API-Deprecated` 头
+
+    ## 分页规范
+    - `page`: 从 1 开始
+    - `page_size`: 默认 20，最大 100
+    - `total`: 总记录数
+    - 响应格式: `{ "items": [], "total": 0, "page": 1, "page_size": 20 }`
+
+    ## 错误响应格式
+    ```json
+    {
+      "code": "400-1001",
+      "message": "参数校验失败：必填字段缺失",
+      "request_id": "req_abc123"
+    }
+    ```
+
+    ## 错误码清单
+    | code | 说明 |
+    |------|------|
+    | 400-0000 | 请求参数错误 |
+    | 400-1001 | 参数校验失败：必填字段缺失 |
+    | 400-1002 | 参数校验失败：格式错误 |
+    | 400-1003 | 参数校验失败：值超出允许范围 |
+    | 400-2001 | 业务规则冲突：库存不足 |
+    | 400-2002 | 业务规则冲突：状态不允许此操作 |
+    | 400-2003 | 业务规则冲突：数据已存在（重复） |
+    | 401-0000 | 未认证 |
+    | 401-1001 | Token 无效或已过期 |
+    | 401-1002 | Token 格式错误 |
+    | 401-1003 | OAuth 授权失败 |
+    | 403-0000 | 无权限 |
+    | 403-1001 | 模块未购买（租户未启用该模块） |
+    | 403-1002 | 用户角色无此操作权限 |
+    | 403-1003 | 数据范围权限不足（不可跨工厂操作） |
+    | 404-0000 | 资源不存在 |
+    | 404-1001 | 查询的资源 ID 不存在 |
+    | 404-1002 | 关联的父资源不存在 |
+    | 409-0000 | 数据冲突 |
+    | 409-1001 | 并发修改冲突（乐观锁版本号不一致） |
+    | 409-1002 | 重复提交（请求 ID 已存在） |
+    | 429-0000 | 请求过频繁 |
+    | 429-1001 | API 调用频率超限（租户级别） |
+    | 429-1002 | API 调用频率超限（用户级别） |
+    | 429-2001 | 写入请求熔断（慢查询超阈值，5 分钟后重试） |
+    | 429-2002 | 写入次数已达月度限额（试用租户） |
+    | 429-2003 | Token 配额超限（AI 调用） |
+    | 500-0000 | 内部服务异常 |
+    | 500-1001 | 数据库连接失败 |
+    | 500-1002 | 缓存服务不可用 |
+    | 500-1003 | 消息队列不可用 |
+    | 500-2001 | 外部服务调用失败 |
+    | 500-2002 | AI 模型推理超时 |
+    | 500-2003 | 文件上传失败 |
+    | 503-0000 | 服务暂不可用 |
+    | 503-1001 | 模块服务未部署（未购买） |
+    | 503-1002 | 模块正在维护中 |
+    | 503-2001 | 算力资源不足（AI 服务排队） |
+  version: "1.0.0"
+  contact:
+    name: 知微技术团队
+    email: dev@ziwi.cn
+
+servers:
+  - url: http://localhost:8000
+    description: 本地开发服务器
+  - url: https://api.ziwi.cn
+    description: 生产环境(SaaS)
+
+paths:
+  # ==========================================
+  # M00 — 认证
+  # ==========================================
+  /api/v1/auth/login:
+    post:
+      tags: ["M00-认证"]
+      summary: 用户登录
+      description: 使用用户名密码或手机验证码登录
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  format: password
+                  example: "P@ssw0rd"
+                tenant_id:
+                  type: string
+                  example: t_12345
+              example:
+                username: admin
+                password: "P@ssw0rd"
+                tenant_id: t_12345
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIs...
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 86400
+                  refresh_token:
+                    type: string
+                    example: rf_abc123
+                  user:
+                    $ref: "#/components/schemas/UserInfo"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: ["M00-认证"]
+      summary: 刷新 Token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Token 刷新成功
+
+  /api/v1/auth/logout:
+    post:
+      tags: ["M00-认证"]
+      summary: 退出登录
+      operationId: logout
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 退出成功
+
+  /api/v1/auth/change-password:
+    post:
+      tags: ["M00-认证"]
+      summary: 修改密码
+      operationId: changePassword
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        "200":
+          description: 密码修改成功
+
+  # ==========================================
+  # M00 — 租户管理
+  # ==========================================
+  /api/v1/tenants:
+    get:
+      tags: ["M00-租户管理"]
+      summary: 查询租户列表
+      operationId: listTenants
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: 租户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  page_size:
+                    type: integer
+    post:
+      tags: ["M00-租户管理"]
+      summary: 创建租户
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: 租户创建成功
+
+  /api/v1/tenants/{tenant_id}:
+    get:
+      tags: ["M00-租户管理"]
+      summary: 查询租户详情
+      operationId: getTenant
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 租户详情
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      tags: ["M00-租户管理"]
+      summary: 更新租户信息
+      operationId: updateTenant
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTenantRequest"
+      responses:
+        "200":
+          description: 更新成功
+
+  /api/v1/tenants/{tenant_id}/config:
+    get:
+      tags: ["M00-租户管理"]
+      summary: 查询租户配置
+      operationId: getTenantConfig
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: group
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 租户配置
+    put:
+      tags: ["M00-租户管理"]
+      summary: 更新租户配置
+      operationId: updateTenantConfig
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 更新成功
+
+  # ==========================================
+  # M00 — 用户管理
+  # ==========================================
+  /api/v1/users:
+    get:
+      tags: ["M00-用户管理"]
+      summary: 用户列表
+      operationId: listUsers
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserInfo"
+                  total:
+                    type: integer
+    post:
+      tags: ["M00-用户管理"]
+      summary: 创建用户
+      operationId: createUser
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: 创建成功
+
+  /api/v1/users/{user_id}:
+    get:
+      tags: ["M00-用户管理"]
+      summary: 用户详情
+      operationId: getUser
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 用户详情
+    put:
+      tags: ["M00-用户管理"]
+      summary: 更新用户
+      operationId: updateUser
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 更新成功
+    delete:
+      tags: ["M00-用户管理"]
+      summary: 删除用户(禁用)
+      operationId: deleteUser
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 删除成功
+
+  /api/v1/users/me:
+    get:
+      tags: ["M00-用户管理"]
+      summary: 当前用户信息
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 当前用户信息
+
+  # ==========================================
+  # M00 — 角色管理
+  # ==========================================
+  /api/v1/roles:
+    get:
+      tags: ["M00-角色管理"]
+      summary: 角色列表
+      operationId: listRoles
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: 角色列表
+    post:
+      tags: ["M00-角色管理"]
+      summary: 创建角色
+      operationId: createRole
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/roles/{role_id}:
+    get:
+      tags: ["M00-角色管理"]
+      summary: 角色详情
+      operationId: getRole
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-角色管理"]
+      summary: 更新角色
+      operationId: updateRole
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    delete:
+      tags: ["M00-角色管理"]
+      summary: 删除角色
+      operationId: deleteRole
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/roles/{role_id}/permissions:
+    get:
+      tags: ["M00-角色管理"]
+      summary: 查询角色权限
+      operationId: getRolePermissions
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-角色管理"]
+      summary: 分配角色权限
+      operationId: assignRolePermissions
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/roles/{role_id}/users:
+    get:
+      tags: ["M00-角色管理"]
+      summary: 查询角色关联用户
+      operationId: getRoleUsers
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-角色管理"]
+      summary: 为角色添加用户
+      operationId: addRoleUser
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M00 — 权限
+  # ==========================================
+  /api/v1/permissions:
+    get:
+      tags: ["M00-权限"]
+      summary: 权限列表(树形)
+      operationId: listPermissions
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: module_code
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 权限树
+
+  # ==========================================
+  # M00 — 消息
+  # ==========================================
+  /api/v1/messages:
+    get:
+      tags: ["M00-消息"]
+      summary: 消息列表
+      operationId: listMessages
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: is_read
+          in: query
+          schema:
+            type: boolean
+        - name: message_type
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 消息列表
+    post:
+      tags: ["M00-消息"]
+      summary: 发送消息
+      operationId: sendMessage
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/messages/{message_id}:
+    get:
+      tags: ["M00-消息"]
+      summary: 消息详情
+      operationId: getMessage
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-消息"]
+      summary: 标记已读
+      operationId: markMessageRead
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/messages/unread-count:
+    get:
+      tags: ["M00-消息"]
+      summary: 未读消息数
+      operationId: getUnreadCount
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M00 — 审批
+  # ==========================================
+  /api/v1/approval/templates:
+    get:
+      tags: ["M00-审批"]
+      summary: 审批模板列表
+      operationId: listApprovalTemplates
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-审批"]
+      summary: 创建审批模板
+      operationId: createApprovalTemplate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/templates/{template_id}:
+    get:
+      tags: ["M00-审批"]
+      summary: 审批模板详情
+      operationId: getApprovalTemplate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-审批"]
+      summary: 更新审批模板
+      operationId: updateApprovalTemplate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/instances:
+    get:
+      tags: ["M00-审批"]
+      summary: 审批实例列表
+      operationId: listApprovalInstances
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-审批"]
+      summary: 发起审批
+      operationId: createApprovalInstance
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/instances/{instance_id}:
+    get:
+      tags: ["M00-审批"]
+      summary: 审批实例详情
+      operationId: getApprovalInstance
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/instances/{instance_id}/approve:
+    post:
+      tags: ["M00-审批"]
+      summary: 审批通过
+      operationId: approveInstance
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/instances/{instance_id}/reject:
+    post:
+      tags: ["M00-审批"]
+      summary: 审批驳回
+      operationId: rejectInstance
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/instances/{instance_id}/cancel:
+    post:
+      tags: ["M00-审批"]
+      summary: 取消审批
+      operationId: cancelInstance
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/approval/my-pending:
+    get:
+      tags: ["M00-审批"]
+      summary: 我的待审批列表
+      operationId: getMyPendingApprovals
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M00 — 数据字典
+  # ==========================================
+  /api/v1/dictionary:
+    get:
+      tags: ["M00-字典"]
+      summary: 字典列表
+      operationId: listDictionaries
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-字典"]
+      summary: 创建字典
+      operationId: createDictionary
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/dictionary/{dict_code}/items:
+    get:
+      tags: ["M00-字典"]
+      summary: 字典项列表
+      operationId: listDictItems
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-字典"]
+      summary: 添加字典项
+      operationId: createDictItem
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M00 — 团队与员工
+  # ==========================================
+  /api/v1/teams:
+    get:
+      tags: ["M00-团队"]
+      summary: 团队列表
+      operationId: listTeams
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-团队"]
+      summary: 创建团队
+      operationId: createTeam
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/teams/{team_id}:
+    get:
+      tags: ["M00-团队"]
+      summary: 团队详情
+      operationId: getTeam
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-团队"]
+      summary: 更新团队
+      operationId: updateTeam
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    delete:
+      tags: ["M00-团队"]
+      summary: 删除团队
+      operationId: deleteTeam
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/employees:
+    get:
+      tags: ["M00-员工"]
+      summary: 员工列表
+      operationId: listEmployees
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M00-员工"]
+      summary: 创建员工
+      operationId: createEmployee
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/employees/{employee_id}:
+    get:
+      tags: ["M00-员工"]
+      summary: 员工详情
+      operationId: getEmployee
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-员工"]
+      summary: 更新员工
+      operationId: updateEmployee
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M00 — 许可证管理
+  # ==========================================
+  /api/v1/license/status/{tenant_id}:
+    get:
+      tags: ["M00-许可证"]
+      summary: 查询许可证状态
+      operationId: getLicenseStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 许可证状态
+
+  /api/v1/license/activate:
+    post:
+      tags: ["M00-许可证"]
+      summary: 激活许可证
+      operationId: activateLicense
+      responses:
+        "200":
+          description: 激活成功
+
+  /api/v1/license/renew/{tenant_id}:
+    post:
+      tags: ["M00-许可证"]
+      summary: 续期许可证
+      operationId: renewLicense
+      security:
+        - BearerAuth: []
+
+  /api/v1/license/revoke/{license_key}:
+    post:
+      tags: ["M00-许可证"]
+      summary: 吊销许可证
+      operationId: revokeLicense
+      security:
+        - BearerAuth: []
+
+  # ==========================================
+  # M00 — 功能开关
+  # ==========================================
+  /api/v1/feature-flags:
+    get:
+      tags: ["M00-功能开关"]
+      summary: 功能开关列表
+      operationId: listFeatureFlags
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M00-功能开关"]
+      summary: 批量更新功能开关
+      operationId: updateFeatureFlags
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M01 — 生产工单
+  # ==========================================
+  /api/v1/work-orders:
+    get:
+      tags: ["M01-工单"]
+      summary: 工单列表
+      operationId: listWorkOrders
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            type: string
+        - name: assignee_id
+          in: query
+          schema:
+            type: integer
+        - name: due_date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: due_date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 工单列表
+    post:
+      tags: ["M01-工单"]
+      summary: 创建工单
+      operationId: createWorkOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-orders/{order_id}:
+    get:
+      tags: ["M01-工单"]
+      summary: 工单详情
+      operationId: getWorkOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M01-工单"]
+      summary: 更新工单
+      operationId: updateWorkOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-orders/{order_id}/status:
+    put:
+      tags: ["M01-工单"]
+      summary: 变更工单状态
+      operationId: changeWorkOrderStatus
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-orders/{order_id}/status-log:
+    get:
+      tags: ["M01-工单"]
+      summary: 工单状态变更日志
+      operationId: getWorkOrderStatusLog
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-orders/batch:
+    post:
+      tags: ["M01-工单"]
+      summary: 批量创建工单
+      operationId: batchCreateWorkOrders
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M01 — 报工
+  # ==========================================
+  /api/v1/work-reports:
+    get:
+      tags: ["M01-报工"]
+      summary: 报工记录列表
+      operationId: listWorkReports
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: work_order_id
+          in: query
+          schema:
+            type: integer
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+        - name: report_date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: report_date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 报工列表
+    post:
+      tags: ["M01-报工"]
+      summary: 提交报工
+      operationId: createWorkReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-reports/{report_id}:
+    get:
+      tags: ["M01-报工"]
+      summary: 报工详情
+      operationId: getWorkReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M01-报工"]
+      summary: 更新报工
+      operationId: updateWorkReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/work-reports/{report_id}/submit:
+    post:
+      tags: ["M01-报工"]
+      summary: 提交报工审批
+      operationId: submitWorkReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M01 — 排产
+  # ==========================================
+  /api/v1/schedules:
+    get:
+      tags: ["M01-排产"]
+      summary: 排产列表
+      operationId: listSchedules
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: scheduled_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: equipment_id
+          in: query
+          schema:
+            type: integer
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 排产列表
+    post:
+      tags: ["M01-排产"]
+      summary: 创建排产
+      operationId: createSchedule
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/schedules/{schedule_id}:
+    get:
+      tags: ["M01-排产"]
+      summary: 排产详情
+      operationId: getSchedule
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M01-排产"]
+      summary: 更新排产
+      operationId: updateSchedule
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/schedules/auto-generate:
+    post:
+      tags: ["M01-排产"]
+      summary: 自动排产
+      operationId: autoGenerateSchedules
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M02 — 设备台账
+  # ==========================================
+  /api/v1/equipment:
+    get:
+      tags: ["M02-设备"]
+      summary: 设备列表
+      operationId: listEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 设备列表
+    post:
+      tags: ["M02-设备"]
+      summary: 创建设备
+      operationId: createEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/equipment/{equipment_id}:
+    get:
+      tags: ["M02-设备"]
+      summary: 设备详情
+      operationId: getEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M02-设备"]
+      summary: 更新设备
+      operationId: updateEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    delete:
+      tags: ["M02-设备"]
+      summary: 删除设备
+      operationId: deleteEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/equipment/categories:
+    get:
+      tags: ["M02-设备"]
+      summary: 设备类别树
+      operationId: listEquipmentCategories
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M02-设备"]
+      summary: 创建设备类别
+      operationId: createEquipmentCategory
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M02 — 保养任务
+  # ==========================================
+  /api/v1/maintenance-plans:
+    get:
+      tags: ["M02-保养计划"]
+      summary: 保养计划列表
+      operationId: listMaintenancePlans
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M02-保养计划"]
+      summary: 创建保养计划
+      operationId: createMaintenancePlan
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/maintenance-plans/{plan_id}:
+    get:
+      tags: ["M02-保养计划"]
+      summary: 保养计划详情
+      operationId: getMaintenancePlan
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M02-保养计划"]
+      summary: 更新保养计划
+      operationId: updateMaintenancePlan
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/maintenance-tasks:
+    get:
+      tags: ["M02-保养任务"]
+      summary: 保养任务列表
+      operationId: listMaintenanceTasks
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: equipment_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: task_type
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 任务列表
+    post:
+      tags: ["M02-保养任务"]
+      summary: 创建保养任务
+      operationId: createMaintenanceTask
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/maintenance-tasks/{task_id}:
+    get:
+      tags: ["M02-保养任务"]
+      summary: 任务详情
+      operationId: getMaintenanceTask
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M02-保养任务"]
+      summary: 更新任务
+      operationId: updateMaintenanceTask
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/maintenance-tasks/{task_id}/status:
+    put:
+      tags: ["M02-保养任务"]
+      summary: 变更任务状态
+      operationId: changeMaintenanceTaskStatus
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M02 — 备件
+  # ==========================================
+  /api/v1/spare-parts:
+    get:
+      tags: ["M02-备件"]
+      summary: 备件列表
+      operationId: listSpareParts
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 备件列表
+    post:
+      tags: ["M02-备件"]
+      summary: 创建备件
+      operationId: createSparePart
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/spare-parts/{part_id}:
+    get:
+      tags: ["M02-备件"]
+      summary: 备件详情
+      operationId: getSparePart
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M02-备件"]
+      summary: 更新备件
+      operationId: updateSparePart
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/spare-parts/inventory:
+    get:
+      tags: ["M02-备件"]
+      summary: 备件库存列表
+      operationId: listSparePartInventory
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M02-备件"]
+      summary: 入库/出库
+      operationId: adjustSparePartInventory
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M03 — 检验
+  # ==========================================
+  /api/v1/inspection-orders:
+    get:
+      tags: ["M03-检验"]
+      summary: 检验单列表
+      operationId: listInspectionOrders
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: inspection_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+        - name: batch_no
+          in: query
+          schema:
+            type: string
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 检验单列表
+    post:
+      tags: ["M03-检验"]
+      summary: 创建检验单
+      operationId: createInspectionOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/inspection-orders/{order_id}:
+    get:
+      tags: ["M03-检验"]
+      summary: 检验单详情(含结果)
+      operationId: getInspectionOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/inspection-orders/{order_id}/results:
+    post:
+      tags: ["M03-检验"]
+      summary: 提交检验结果
+      operationId: submitInspectionResults
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M03 — 合格证
+  # ==========================================
+  /api/v1/certificates:
+    get:
+      tags: ["M03-合格证"]
+      summary: 合格证列表
+      operationId: listCertificates
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M03-合格证"]
+      summary: 签发合格证
+      operationId: createCertificate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/certificates/{cert_id}:
+    get:
+      tags: ["M03-合格证"]
+      summary: 合格证详情
+      operationId: getCertificate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/certificates/templates:
+    get:
+      tags: ["M03-合格证"]
+      summary: 合格证模板列表
+      operationId: listCertificateTemplates
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M03-合格证"]
+      summary: 创建合格证模板
+      operationId: createCertificateTemplate
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M03 — 质量报告
+  # ==========================================
+  /api/v1/quality-reports:
+    get:
+      tags: ["M03-质量报告"]
+      summary: 质量报告列表
+      operationId: listQualityReports
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M03-质量报告"]
+      summary: 生成质量报告
+      operationId: generateQualityReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/quality-reports/{report_id}:
+    get:
+      tags: ["M03-质量报告"]
+      summary: 质量报告详情
+      operationId: getQualityReport
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M05 — 安灯
+  # ==========================================
+  /api/v1/andon/calls:
+    get:
+      tags: ["M05-安灯"]
+      summary: 安灯呼叫列表
+      operationId: listAndonCalls
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: call_type
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            type: string
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 安灯呼叫列表
+    post:
+      tags: ["M05-安灯"]
+      summary: 发起安灯呼叫
+      operationId: createAndonCall
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/andon/calls/{call_id}:
+    get:
+      tags: ["M05-安灯"]
+      summary: 安灯呼叫详情
+      operationId: getAndonCall
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/andon/calls/{call_id}/acknowledge:
+    post:
+      tags: ["M05-安灯"]
+      summary: 响应安灯呼叫
+      operationId: acknowledgeAndonCall
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/andon/calls/{call_id}/resolve:
+    post:
+      tags: ["M05-安灯"]
+      summary: 解决安灯呼叫
+      operationId: resolveAndonCall
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/andon/calls/{call_id}/escalate:
+    post:
+      tags: ["M05-安灯"]
+      summary: 升级安灯呼叫
+      operationId: escalateAndonCall
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/andon/statistics:
+    get:
+      tags: ["M05-安灯"]
+      summary: 安灯统计
+      operationId: getAndonStatistics
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: factory_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 安灯统计数据
+
+  # ==========================================
+  # M11 — 能碳
+  # ==========================================
+  /api/v1/energy/devices:
+    get:
+      tags: ["M11-能碳"]
+      summary: 能源设备列表
+      operationId: listEnergyDevices
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/energy/data:
+    get:
+      tags: ["M11-能碳"]
+      summary: 能耗时序数据查询
+      operationId: queryEnergyData
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: metric_name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: aggregation
+          in: query
+          schema:
+            type: string
+            enum: [raw, avg, sum, max, min]
+            default: raw
+        - name: bucket_interval
+          in: query
+          schema:
+            type: string
+            example: 1h
+      responses:
+        "200":
+          description: 能耗数据
+
+  /api/v1/energy/carbon-emissions:
+    get:
+      tags: ["M11-能碳"]
+      summary: 碳排放记录查询
+      operationId: queryCarbonEmissions
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: energy_type
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 碳排放数据
+
+  /api/v1/energy/alerts:
+    get:
+      tags: ["M11-能碳"]
+      summary: 能耗告警列表
+      operationId: listEnergyAlerts
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M11-能碳"]
+      summary: 创建能耗告警规则
+      operationId: createEnergyAlert
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M12 — IoT 设备
+  # ==========================================
+  /api/v1/iot/gateways:
+    get:
+      tags: ["M12-IoT"]
+      summary: 网关列表
+      operationId: listIoTGateways
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M12-IoT"]
+      summary: 注册网关
+      operationId: createIoTGateway
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/iot/gateways/{gateway_id}:
+    get:
+      tags: ["M12-IoT"]
+      summary: 网关详情
+      operationId: getIoTGateway
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M12-IoT"]
+      summary: 更新网关
+      operationId: updateIoTGateway
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/iot/gateways/{gateway_id}/heartbeat:
+    post:
+      tags: ["M12-IoT"]
+      summary: 网关心跳(用于边缘网关上报)
+      operationId: reportGatewayHeartbeat
+      responses:
+        "200":
+          description: 心跳接收成功
+
+  /api/v1/iot/devices:
+    get:
+      tags: ["M12-IoT"]
+      summary: 设备列表
+      operationId: listIoTDevices
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M12-IoT"]
+      summary: 注册IoT设备
+      operationId: createIoTDevice
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/iot/devices/{device_id}:
+    get:
+      tags: ["M12-IoT"]
+      summary: 设备详情
+      operationId: getIoTDevice
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M12-IoT"]
+      summary: 更新IoT设备
+      operationId: updateIoTDevice
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/iot/data-points:
+    get:
+      tags: ["M12-IoT"]
+      summary: 查询IoT数据点
+      operationId: queryIoTDataPoints
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: point_name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: aggregation
+          in: query
+          schema:
+            type: string
+            enum: [raw, avg, sum, max, min]
+            default: raw
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 10000
+      responses:
+        "200":
+          description: IoT数据点
+
+  /api/v1/iot/devices/{device_id}/status:
+    put:
+      tags: ["M12-IoT"]
+      summary: 更新设备状态(online/offline)
+      operationId: updateIoTDeviceStatus
+      responses:
+        "200":
+          description: 状态更新成功
+
+  /api/v1/iot/data-points/upload:
+    post:
+      tags: ["M12-IoT"]
+      summary: 批量上传IoT数据(用于边缘网关)
+      operationId: uploadDataPoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  device_code:
+                    type: string
+                  point_name:
+                    type: string
+                  value_numeric:
+                    type: number
+                  value_text:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+      responses:
+        "200":
+          description: 数据上传成功
+
+  # ==========================================
+  # M12 — Excel 导入
+  # ==========================================
+  /api/v1/import/tasks:
+    get:
+      tags: ["M12-导入"]
+      summary: 导入任务列表
+      operationId: listImportTasks
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M12-导入"]
+      summary: 创建导入任务
+      operationId: createImportTask
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/import/tasks/{task_id}:
+    get:
+      tags: ["M12-导入"]
+      summary: 导入任务详情
+      operationId: getImportTask
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/import/mappings:
+    get:
+      tags: ["M12-导入"]
+      summary: 导入映射列表
+      operationId: listImportMappings
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M12 — 链路监控
+  # ==========================================
+  /api/v1/link-monitors:
+    get:
+      tags: ["M12-监控"]
+      summary: 链路监控列表
+      operationId: listLinkMonitors
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M12-监控"]
+      summary: 创建链路监控
+      operationId: createLinkMonitor
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/link-monitors/{monitor_id}:
+    get:
+      tags: ["M12-监控"]
+      summary: 监控详情
+      operationId: getLinkMonitor
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/link-monitors/{monitor_id}/logs:
+    get:
+      tags: ["M12-监控"]
+      summary: 监控日志
+      operationId: getLinkMonitorLogs
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+
+  # ==========================================
+  # M13 — 看板
+  # ==========================================
+  /api/v1/dashboards:
+    get:
+      tags: ["M13-看板"]
+      summary: 看板列表
+      operationId: listDashboards
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    post:
+      tags: ["M13-看板"]
+      summary: 创建看板
+      operationId: createDashboard
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/dashboards/{dashboard_id}:
+    get:
+      tags: ["M13-看板"]
+      summary: 看板详情(含组件)
+      operationId: getDashboard
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    put:
+      tags: ["M13-看板"]
+      summary: 更新看板
+      operationId: updateDashboard
+      security:
+        - BearerAuth: []
+        - TenantId: []
+    delete:
+      tags: ["M13-看板"]
+      summary: 删除看板
+      operationId: deleteDashboard
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/dashboards/{dashboard_id}/widgets:
+    post:
+      tags: ["M13-看板"]
+      summary: 添加组件
+      operationId: addDashboardWidget
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/dashboards/{dashboard_id}/data:
+    get:
+      tags: ["M13-看板"]
+      summary: 看板数据(所有组件数据)
+      operationId: getDashboardData
+      security:
+        - BearerAuth: []
+        - TenantId: []
+      parameters:
+        - name: refresh
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: 看板数据
+
+  /api/v1/dashboards/default:
+    get:
+      tags: ["M13-看板"]
+      summary: 获取默认看板
+      operationId: getDefaultDashboard
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # M01-M12 — 外部ERP对接
+  # ==========================================
+  /api/v1/external/bom/sync:
+    post:
+      tags: ["外部-ERP"]
+      summary: BOM同步
+      operationId: syncBOM
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/external/production-order/sync:
+    post:
+      tags: ["外部-ERP"]
+      summary: 生产订单同步
+      operationId: syncProductionOrder
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/external/equipment/sync:
+    post:
+      tags: ["外部-ERP"]
+      summary: 设备基础数据同步
+      operationId: syncEquipment
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/external/material/{code}:
+    get:
+      tags: ["外部-ERP"]
+      summary: 物料查询
+      operationId: getMaterial
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  # ==========================================
+  # 计费
+  # ==========================================
+  /api/v1/billing/usage/query:
+    post:
+      tags: ["计费"]
+      summary: 用量查询
+      operationId: queryUsage
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/billing/usage/alert/config:
+    post:
+      tags: ["计费"]
+      summary: 设置用量告警阈值
+      operationId: setUsageAlertConfig
+      security:
+        - BearerAuth: []
+        - TenantId: []
+
+  /api/v1/billing/usage/alert/check/{tenant_id}:
+    get:
+      tags: ["计费"]
+      summary: 检查用量告警
+      operationId: checkUsageAlert
+      security:
+        - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT Bearer Token，从登录接口获取"
+    TenantId:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+      description: "租户ID（SaaS模式必传）"
+    DeployMode:
+      type: apiKey
+      in: header
+      name: X-Deploy-Mode
+      description: "部署模式: saas / onprem / multi-factory"
+    FactoryId:
+      type: apiKey
+      in: header
+      name: X-Factory-Id
+      description: "工厂ID（multi-factory模式必传）"
+    LicenseKey:
+      type: apiKey
+      in: header
+      name: X-License-Key
+      description: "许可证密钥（onprem模式必传）"
+
+  schemas:
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        real_name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        avatar_url:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Tenant:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        tenant_name:
+          type: string
+        tenant_code:
+          type: string
+        status:
+          type: string
+        edition:
+          type: string
+        deploy_mode:
+          type: string
+        max_users:
+          type: integer
+        expired_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
+      type: object
+      required: [tenant_name]
+      properties:
+        tenant_name:
+          type: string
+        tenant_code:
+          type: string
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+        edition:
+          type: string
+        deploy_mode:
+          type: string
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        tenant_name:
+          type: string
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+        max_users:
+          type: integer
+
+    CreateUserRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        real_name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        role_ids:
+          type: array
+          items:
+            type: integer
+
+    ApiError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "400-1001"
+        message:
+          type: string
+        request_id:
+          type: string
+
+    PaginatedResponse:
+      type: object
+      properties:
+        items:
+          type: array
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: 页码，从 1 开始
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    PageSizeParam:
+      name: page_size
+      in: query
+      description: 每页条数，默认 20，最大 100
+      schema:
+        type: integer
+        default: 20
+        maximum: 100
+        minimum: 1
+
+  responses:
+    UnauthorizedError:
+      description: 未认证或 Token 无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "401-1001"
+            message: "Token 无效或已过期"
+            request_id: "req_abc123"
+    ForbiddenError:
+      description: 无权限
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "403-1002"
+            message: "用户角色无此操作权限"
+            request_id: "req_abc123"
+    NotFoundError:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "404-0000"
+            message: "资源不存在"
+            request_id: "req_abc123"
+    ConflictError:
+      description: 数据冲突
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "409-1001"
+            message: "并发修改冲突（乐观锁版本号不一致）"
+            request_id: "req_abc123"
+    TooManyRequests:
+      description: 请求过频繁
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "429-1001"
+            message: "API 调用频率超限（租户级别）"
+            request_id: "req_abc123"
+    InternalServerError:
+      description: 内部服务异常
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "500-0000"
+            message: "内部服务异常"
+            request_id: "req_abc123"
+    ServiceUnavailable:
+      description: 服务暂不可用
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: "503-0000"
+            message: "服务暂不可用"
+            request_id: "req_abc123"

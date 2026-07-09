@@ -1,0 +1,10 @@
+/* Vant 4 主题色覆写 — 对齐知微品牌色 #0d7377 */
+:root {
+  --van-primary-color: #0d7377;
+  --van-button-primary-background: #0d7377;
+  --van-button-primary-border-color: #0d7377;
+  --van-tab-active-text-color: #0d7377;
+  --van-tab-bottom-bar-color: #0d7377;
+  --van-nav-bar-title-text-color: #1e293b;
+  --van-cell-vertical-padding: 12px;
+}

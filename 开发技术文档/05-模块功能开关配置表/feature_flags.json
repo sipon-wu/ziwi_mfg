@@ -1,0 +1,169 @@
+{
+  "$schema": "./feature_flags.schema.json",
+  "version": "1.0",
+  "description": "知微 ziwi SaaS 模块功能开关配置表（基于产品方案 V1.4 + 开发计划 Phase 1）",
+  "updated_at": "2026-06-12",
+  "default_strategy": "environment_variable",
+  "modules": {
+    "M00": {
+      "name": "平台基础服务",
+      "phase": 1,
+      "enabled": true,
+      "description": "租户管理、用户系统、RBAC 权限、消息中心、审批引擎、数据字典、许可证管理",
+      "features": {
+        "M00_TENANT":       { "phase": 1, "enabled": true, "description": "租户管理" },
+        "M00_USER":         { "phase": 1, "enabled": true, "description": "用户体系" },
+        "M00_RBAC":         { "phase": 1, "enabled": true, "description": "RBAC 权限" },
+        "M00_MESSAGE":      { "phase": 1, "enabled": true, "description": "消息中心（站内信+企微+钉钉）" },
+        "M00_APPROVAL":     { "phase": 1, "enabled": true, "description": "审批引擎（内置审批流）" },
+        "M00_DICTIONARY":   { "phase": 1, "enabled": true, "description": "数据字典" },
+        "M00_LICENSE":      { "phase": 1, "enabled": true, "description": "许可证管理（本地部署）" },
+        "M00_CIRCUIT_BREAKER": { "phase": 1, "enabled": true, "description": "API 网关熔断器" }
+      }
+    },
+    "M01": {
+      "name": "生产管理",
+      "phase": 1,
+      "enabled": true,
+      "description": "手工排产 + 个人报工（离散型）",
+      "features": {
+        "M01_WORK_ORDER":   { "phase": 1, "enabled": true, "description": "生产任务单" },
+        "M01_SCHEDULING":   { "phase": 1, "enabled": true, "description": "手工排产（甘特图）" },
+        "M01_WORK_REPORT":  { "phase": 1, "enabled": true, "description": "个人报工（触屏终端）" },
+        "M01_REPORT":       { "phase": 1, "enabled": true, "description": "报工数据回写与报表" },
+        "M01_GROUP_REPORT": { "phase": 2, "enabled": false, "description": "小组报工（Phase 2）" },
+        "M01_FLOW_REPORT":  { "phase": 2, "enabled": false, "description": "流程型报工（Phase 2）" },
+        "M01_WAGE_CONFIG":  { "phase": 2, "enabled": false, "description": "工价配置（Phase 2）" },
+        "M01_APS":          { "phase": 3, "enabled": false, "description": "APS 排程引擎（Phase 3）" }
+      }
+    },
+    "M02": {
+      "name": "TPM 设备管理",
+      "phase": 1,
+      "enabled": true,
+      "description": "设备台账 + 维修保养",
+      "features": {
+        "M02_EQUIPMENT":    { "phase": 1, "enabled": true, "description": "设备台账" },
+        "M02_MAINTENANCE":  { "phase": 1, "enabled": true, "description": "维修与保养" },
+        "M02_SPARE_PARTS":  { "phase": 1, "enabled": true, "description": "备品备件管理" }
+      }
+    },
+    "M03": {
+      "name": "品质管理",
+      "phase": 1,
+      "enabled": true,
+      "description": "品质检验 + 合格证 + 品质报表",
+      "features": {
+        "M03_QC":           { "phase": 1, "enabled": true, "description": "品质检验（首检/巡检/抽检）" },
+        "M03_CERTIFICATE":  { "phase": 1, "enabled": true, "description": "合格证管理" },
+        "M03_QC_REPORT":    { "phase": 1, "enabled": true, "description": "品质报表与统计" }
+      }
+    },
+    "M04": {
+      "name": "仓储管理",
+      "phase": 2,
+      "enabled": false,
+      "description": "Phase 2 实现",
+      "features": {
+        "M04_WAREHOUSE":    { "phase": 2, "enabled": false, "description": "仓库管理" },
+        "M04_INVENTORY":    { "phase": 2, "enabled": false, "description": "库存管理" }
+      }
+    },
+    "M05": {
+      "name": "安灯系统",
+      "phase": 1,
+      "enabled": true,
+      "description": "Andon 呼叫 + 响应追踪 + 超时升级",
+      "features": {
+        "M05_ANDON_CALL":   { "phase": 1, "enabled": true, "description": "安灯呼叫" },
+        "M05_ANDON_ANALYSIS": { "phase": 1, "enabled": true, "description": "安灯统计分析" }
+      }
+    },
+    "M06": {
+      "name": "物料管理",
+      "phase": 2,
+      "enabled": false,
+      "description": "Phase 2 实现（含物料主数据/BOM）",
+      "features": {
+        "M06_MATERIAL":     { "phase": 2, "enabled": false, "description": "物料主数据" },
+        "M06_BOM":          { "phase": 2, "enabled": false, "description": "BOM 管理" },
+        "M06_MRP":          { "phase": 3, "enabled": false, "description": "MRP 运算（Phase 3）" }
+      }
+    },
+    "M07": {
+      "name": "采购管理",
+      "phase": 2,
+      "enabled": false,
+      "description": "Phase 2 实现",
+      "features": {}
+    },
+    "M08": {
+      "name": "销售管理",
+      "phase": 2,
+      "enabled": false,
+      "description": "Phase 2 实现",
+      "features": {}
+    },
+    "M09": {
+      "name": "财务管理",
+      "phase": 3,
+      "enabled": false,
+      "description": "Phase 3 实现（含计件工资核算）",
+      "features": {}
+    },
+    "M10": {
+      "name": "人力资源管理",
+      "phase": 2,
+      "enabled": false,
+      "description": "Phase 2 实现",
+      "features": {}
+    },
+    "M11": {
+      "name": "能碳管理",
+      "phase": 1,
+      "enabled": true,
+      "description": "能碳系统集成（SSO + 数据路由）",
+      "features": {
+        "M11_ENERGY":       { "phase": 1, "enabled": true, "description": "能碳模块（合并旧系统）" },
+        "M11_SSO":          { "phase": 1, "enabled": true, "description": "SSO 单点登录" },
+        "M11_DATA_ROUTE":   { "phase": 1, "enabled": true, "description": "能碳数据路由" }
+      }
+    },
+    "M12": {
+      "name": "数据采集（IoT）",
+      "phase": 1,
+      "enabled": true,
+      "description": "IoT 数据采集网关 + Excel 导入",
+      "features": {
+        "M12_IOT_GATEWAY":  { "phase": 1, "enabled": true, "description": "IoT 采集网关（MQTT/Modbus/OPC UA）" },
+        "M12_EXCEL_IMPORT": { "phase": 1, "enabled": true, "description": "Excel 导入引擎" },
+        "M12_DEVICE_DATA":  { "phase": 1, "enabled": true, "description": "设备数据管理" },
+        "M12_LINK_MONITOR": { "phase": 1, "enabled": true, "description": "数据链路监控" }
+      }
+    },
+    "M13": {
+      "name": "看板",
+      "phase": 1,
+      "enabled": true,
+      "description": "基础看板（车间大屏 + 驾驶舱）",
+      "features": {
+        "M13_DASHBOARD":    { "phase": 1, "enabled": true, "description": "基础看板" },
+        "M13_TOUCH_PANEL":  { "phase": 1, "enabled": true, "description": "触屏终端适配" },
+        "M13_WAP":          { "phase": 1, "enabled": true, "description": "移动 WAP 适配" },
+        "M13_PDA":          { "phase": 2, "enabled": false, "description": "PDA 端（Phase 2）" }
+      }
+    },
+    "M99": {
+      "name": "配置与部署",
+      "phase": 1,
+      "enabled": true,
+      "description": "方案配置 + 注册试用 + license 部署",
+      "features": {
+        "M99_CONFIG_PORTAL": { "phase": 1, "enabled": true, "description": "ziwi.cn 方案配置入口 MVP" },
+        "M99_REGISTER":     { "phase": 1, "enabled": true, "description": "注册与试用流程" },
+        "M99_LICENSE_SVC":  { "phase": 1, "enabled": true, "description": "license.ziwi.cn 部署" },
+        "M99_PHASE2_PORTAL": { "phase": 2, "enabled": false, "description": "配置入口 Phase 2 增强" }
+      }
+    }
+  }
+}

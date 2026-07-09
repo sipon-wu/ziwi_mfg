@@ -1,0 +1,247 @@
+/* ============================================================
+   知微 ziwi 品牌设计规范 — CSS 变量
+   来源：www.ziwi.cn/demo/ecms/ 前端源码提取
+   ============================================================ */
+
+:root {
+  /* ── 品牌色系 ── */
+  --ziwi-primary: #0d7377;           /* 品牌主色：按钮/卡片条/激活态 */
+  --ziwi-primary-light: #0d9488;     /* 主色浅色变体（渐变末端） */
+  --ziwi-primary-dark: #0a5c5f;      /* 主色深色变体 */
+  --ziwi-primary-darker: #0a4a4d;    /* 主色最深变体（登录页渐变） */
+  --ziwi-primary-bg: #e8f4f0;        /* 主色浅背景 */
+  --ziwi-primary-hover: #0b6366;     /* 悬浮态 */
+
+  /* ── 语义色 ── */
+  --ziwi-success: #22c55e;
+  --ziwi-warning: #f59e0b;
+  --ziwi-danger: #ef4444;
+  --ziwi-info: #3b82f6;
+
+  /* ── 中性色 ── */
+  --ziwi-bg: #f5f6fa;                /* 页面背景 */
+  --ziwi-bg-white: #ffffff;
+  --ziwi-bg-light: #f8fafc;
+  --ziwi-border: #e2e8f0;            /* 边框 */
+  --ziwi-border-light: #f1f5f9;
+
+  /* ── 文字色 ── */
+  --ziwi-text-primary: #1e293b;      /* 主文字 */
+  --ziwi-text-regular: #333333;      /* 常规文字 */
+  --ziwi-text-secondary: #555555;    /* 次要文字 */
+  --ziwi-text-muted: #999999;        /* 弱化文字 */
+  --ziwi-text-placeholder: #c0c4cc;
+  --ziwi-text-white: #ffffff;
+
+  /* ── 侧边栏 ── */
+  --ziwi-sidebar-bg: #212529;        /* 深色侧边栏背景 */
+  --ziwi-sidebar-text: #adb5bd;      /* 侧边栏文字 */
+  --ziwi-sidebar-active: #ffffff;    /* 侧边栏激活文字 */
+  --ziwi-sidebar-hover-bg: #2b3035;  /* 侧边栏悬浮背景 */
+  --ziwi-sidebar-width: 220px;
+  --ziwi-sidebar-collapsed-width: 60px;
+
+  /* ── 圆角 ── */
+  --ziwi-radius-sm: 4px;
+  --ziwi-radius-md: 6px;
+  --ziwi-radius-lg: 8px;
+  --ziwi-radius-xl: 12px;
+  --ziwi-radius-round: 50%;
+
+  /* ── 阴影 ── */
+  --ziwi-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --ziwi-shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+  --ziwi-shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  --ziwi-shadow-card: 0 1px 4px rgba(0,0,0,0.06);
+
+  /* ── 间距 ── */
+  --ziwi-gap-xs: 4px;
+  --ziwi-gap-sm: 8px;
+  --ziwi-gap-md: 12px;
+  --ziwi-gap-lg: 16px;
+  --ziwi-gap-xl: 24px;
+  --ziwi-gap-2xl: 32px;
+
+  /* ── 字体 ── */
+  --ziwi-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --ziwi-font-size-xs: 11px;
+  --ziwi-font-size-sm: 12px;
+  --ziwi-font-size-md: 13px;
+  --ziwi-font-size-lg: 14px;
+  --ziwi-font-size-xl: 16px;
+  --ziwi-font-size-2xl: 20px;
+  --ziwi-font-size-3xl: 24px;
+}
+
+/* ============================================================
+   通用组件样式
+   ============================================================ */
+
+/* ── 按钮 ── */
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 8px 16px; font-size: var(--ziwi-font-size-md);
+  background: var(--ziwi-primary); color: var(--ziwi-text-white);
+  border: none; border-radius: var(--ziwi-radius-sm);
+  cursor: pointer; transition: all 0.2s; line-height: 1.4;
+}
+.btn-primary:hover { background: var(--ziwi-primary-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-outline {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 7px 15px; font-size: var(--ziwi-font-size-md);
+  background: var(--ziwi-bg-white); color: var(--ziwi-primary);
+  border: 1px solid var(--ziwi-primary); border-radius: var(--ziwi-radius-sm);
+  cursor: pointer; transition: all 0.2s; line-height: 1.4;
+}
+.btn-outline:hover { background: var(--ziwi-primary-bg); }
+
+.btn-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; font-size: var(--ziwi-font-size-sm);
+  background: none; border: none; color: var(--ziwi-primary);
+  cursor: pointer; text-decoration: underline;
+}
+.btn-link:hover { color: var(--ziwi-primary-hover); }
+
+.btn-sm { padding: 4px 10px; font-size: var(--ziwi-font-size-sm); }
+.btn-xs { padding: 2px 6px; font-size: var(--ziwi-font-size-xs); }
+.btn-danger { background: var(--ziwi-danger); }
+.btn-danger:hover { background: #dc2626; }
+.btn-danger-outline { border-color: var(--ziwi-danger); color: var(--ziwi-danger); }
+.btn-danger-outline:hover { background: #fef2f2; }
+
+/* ── KPI 卡片 ── */
+.kpi-card {
+  position: relative; background: var(--ziwi-bg-white);
+  border-radius: var(--ziwi-radius-lg); padding: var(--ziwi-gap-lg);
+  box-shadow: var(--ziwi-shadow-card);
+}
+.kpi-card::before {
+  content: ''; position: absolute; left: 0; top: 0;
+  width: 3px; height: 100%;
+  background: var(--ziwi-primary);
+  border-radius: 3px 0 0 3px;
+}
+.kpi-card .kpi-title { font-size: var(--ziwi-font-size-sm); color: var(--ziwi-text-secondary); margin-bottom: 4px; }
+.kpi-card .kpi-value { font-size: var(--ziwi-font-size-2xl); font-weight: 700; color: var(--ziwi-text-primary); }
+.kpi-card .kpi-unit { font-size: var(--ziwi-font-size-sm); color: var(--ziwi-text-muted); margin-left: 4px; }
+.kpi-card .kpi-trend { font-size: var(--ziwi-font-size-xs); margin-top: 4px; }
+.kpi-card .kpi-trend.up { color: var(--ziwi-success); }
+.kpi-card .kpi-trend.down { color: var(--ziwi-danger); }
+
+/* ── 表格 ── */
+.ziwi-table {
+  width: 100%; border-collapse: collapse;
+  font-size: var(--ziwi-font-size-md);
+}
+.ziwi-table th {
+  background: var(--ziwi-bg-light); color: var(--ziwi-text-secondary);
+  padding: 10px 12px; text-align: left; font-weight: 500;
+  border-bottom: 1px solid var(--ziwi-border);
+  white-space: nowrap;
+}
+.ziwi-table td {
+  padding: 10px 12px; color: var(--ziwi-text-regular);
+  border-bottom: 1px solid var(--ziwi-border-light);
+}
+.ziwi-table tr:hover td { background: #f8fafc; }
+.ziwi-table .status-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: var(--ziwi-font-size-xs); font-weight: 500;
+}
+.ziwi-table .status-tag.active { background: #e6f7e6; color: var(--ziwi-primary); }
+.ziwi-table .status-tag.trial { background: #fef3c7; color: #92400e; }
+.ziwi-table .status-tag.expired { background: #fee2e2; color: #991b1b; }
+.ziwi-table .status-tag.disabled { background: #f1f5f9; color: #64748b; }
+.ziwi-table .status-tag.pending { background: #e0f2fe; color: #0369a1; }
+.ziwi-table .status-tag.running,.status-tag.connected { background: #e6f7e6; color: var(--ziwi-primary); }
+.ziwi-table .status-tag.resolved { background: #e6f7e6; color: var(--ziwi-primary); }
+
+/* ── 搜索栏 ── */
+.search-bar {
+  display: flex; align-items: center; gap: var(--ziwi-gap-md);
+  margin-bottom: var(--ziwi-gap-lg);
+}
+.search-bar input {
+  flex: 1; max-width: 280px; padding: 8px 12px;
+  border: 1px solid var(--ziwi-border); border-radius: var(--ziwi-radius-sm);
+  font-size: var(--ziwi-font-size-md); outline: none;
+  transition: border-color 0.2s;
+}
+.search-bar input:focus { border-color: var(--ziwi-primary); }
+
+/* ── 表单 ── */
+.form-group { margin-bottom: var(--ziwi-gap-lg); }
+.form-group label {
+  display: block; margin-bottom: 6px;
+  font-size: var(--ziwi-font-size-md); color: var(--ziwi-text-secondary); font-weight: 500;
+}
+.form-group input, .form-group select, .form-group textarea {
+  width: 100%; padding: 8px 12px;
+  border: 1px solid var(--ziwi-border); border-radius: var(--ziwi-radius-sm);
+  font-size: var(--ziwi-font-size-md); outline: none; box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  border-color: var(--ziwi-primary);
+}
+
+/* ── 弹窗（Modal） ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: var(--ziwi-bg-white); border-radius: var(--ziwi-radius-lg);
+  padding: var(--ziwi-gap-xl); min-width: 480px; max-width: 640px;
+  max-height: 80vh; overflow-y: auto;
+  box-shadow: var(--ziwi-shadow-lg);
+}
+.modal-content h3 { margin: 0 0 var(--ziwi-gap-lg); font-size: var(--ziwi-font-size-xl); color: var(--ziwi-text-primary); }
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: var(--ziwi-gap-md);
+  margin-top: var(--ziwi-gap-xl); padding-top: var(--ziwi-gap-lg);
+  border-top: 1px solid var(--ziwi-border);
+}
+
+/* ── 标签页 ── */
+.tab-bar { display: flex; border-bottom: 1px solid var(--ziwi-border); margin-bottom: var(--ziwi-gap-lg); }
+.tab-item {
+  padding: 8px 20px; font-size: var(--ziwi-font-size-md);
+  cursor: pointer; color: var(--ziwi-text-secondary);
+  border-bottom: 2px solid transparent; transition: all 0.2s;
+}
+.tab-item.active { color: var(--ziwi-primary); border-bottom-color: var(--ziwi-primary); font-weight: 500; }
+.tab-item:hover { color: var(--ziwi-primary); }
+
+/* ── 分页 ── */
+.pagination {
+  display: flex; align-items: center; justify-content: center;
+  gap: 4px; margin-top: var(--ziwi-gap-lg);
+}
+.pagination button {
+  padding: 6px 12px; border: 1px solid var(--ziwi-border);
+  background: var(--ziwi-bg-white); border-radius: var(--ziwi-radius-sm);
+  cursor: pointer; font-size: var(--ziwi-font-size-sm); color: var(--ziwi-text-regular);
+}
+.pagination button:hover { border-color: var(--ziwi-primary); color: var(--ziwi-primary); }
+.pagination button.active { background: var(--ziwi-primary); color: var(--ziwi-text-white); border-color: var(--ziwi-primary); }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pagination .page-info {
+  padding: 6px 12px; font-size: var(--ziwi-font-size-sm); color: var(--ziwi-text-secondary);
+}
+
+/* ── Loading ── */
+.loading-spinner {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; color: var(--ziwi-text-muted); font-size: var(--ziwi-font-size-md);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner::before {
+  content: ''; width: 20px; height: 20px; margin-right: 8px;
+  border: 2px solid var(--ziwi-border); border-top-color: var(--ziwi-primary);
+  border-radius: var(--ziwi-radius-round); animation: spin 0.6s linear infinite;
+}

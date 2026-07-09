@@ -1,0 +1,41 @@
+# ===== Secrets / credentials =====
+.env
+.env.*
+!**/.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node / front-end build =====
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ===== Databases (local data) =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ===== WorkBuddy internal (agent memory / scratch) =====
+.workbuddy/
+
+# ===== Junk =====
+nul

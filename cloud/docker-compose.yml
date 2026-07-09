@@ -1,0 +1,49 @@
+services:
+  backend:
+    build: ./backend
+    container_name: cloud-backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - CLOUD_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/cloud_idp
+      - CLOUD_JWT_ACCESS_EXPIRE_MINUTES=30
+      - CLOUD_JWT_REFRESH_EXPIRE_DAYS=7
+      - CLOUD_KEY_DIR=/app/keys
+      - CLOUD_CORS_ORIGINS=*
+    volumes:
+      - cloud_keys:/app/keys
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: cloud-frontend
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: cloud-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cloud_idp
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - cloud_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  cloud_keys:
+  cloud_pgdata:

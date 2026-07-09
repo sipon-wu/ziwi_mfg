@@ -1,0 +1,173 @@
+version: "3.8"
+
+services:
+  # ============================================================
+  # PostgreSQL + TimescaleDB
+  # ============================================================
+  postgres:
+    image: timescale/timescaledb:2.15-pg16
+    container_name: ziwi-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ziwi
+      POSTGRES_USER: ziwi
+      POSTGRES_PASSWORD: ziwi_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ziwi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # PgBouncer（连接池）
+  # ============================================================
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23
+    container_name: ziwi-pgbouncer
+    restart: unless-stopped
+    ports:
+      - "6432:6432"
+    environment:
+      DATABASE_URL: postgres://ziwi:ziwi_dev_password@postgres:5432/ziwi
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 150
+      DEFAULT_POOL_SIZE: 25
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # Redis（缓存 + 会话 + Pub/Sub）
+  # ============================================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: ziwi-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ziwi_redis_password --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "ziwi_redis_password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # MinIO（对象存储 — 文件/图片/报表导出）
+  # ============================================================
+  minio:
+    image: minio/minio:RELEASE.2024-02-24T17-11-14Z
+    container_name: ziwi-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: ziwi_minio_admin
+      MINIO_ROOT_PASSWORD: ziwi_minio_password
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # EMQX（MQTT Broker — IoT 数据采集）
+  # ============================================================
+  emqx:
+    image: emqx/emqx:5.6.0
+    container_name: ziwi-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # MQTT TCP
+      - "8083:8083"   # MQTT WebSocket
+      - "8084:8084"   # MQTT WSS
+      - "18083:18083" # Dashboard
+    environment:
+      EMQX_NODE_NAME: emqx@ziwi-emqx
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ziwi_emqx_password
+    volumes:
+      - emqx_data:/opt/emqx/data
+    healthcheck:
+      test: ["CMD", "emqx_ctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # 后端服务（FastAPI）
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: ziwi-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - ziwi-network
+
+  # ============================================================
+  # 前端服务（Vue 3 + Vite）
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: ziwi-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    networks:
+      - ziwi-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  emqx_data:
+
+networks:
+  ziwi-network:
+    driver: bridge
