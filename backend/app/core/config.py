@@ -37,11 +37,20 @@ class Settings(BaseSettings):
     def REDIS_URL(self) -> str:
         return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-    # JWT
-    JWT_SECRET_KEY: str = "change_me_jwt_secret_32_chars_min"
-    JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # ── cloud.ziwi.cn 统一 JWT 认证配置（RS256 非对称验签） ──
+
+    CLOUD_JWKS_URL: str = "https://cloud.ziwi.cn/api/v1/auth/public-key"
+    CLOUD_JWKS_CACHE_TTL: int = 3600          # JWKS 缓存 TTL（秒），默认 1 小时
+    CLOUD_JWKS_FETCH_TIMEOUT: float = 5.0     # 拉取 JWKS 超时（秒）
+    CLOUD_EXPECTED_ALGORITHM: str = "RS256"   # cloud JWT 签名算法
+    CLOUD_CLOCK_SKEW_SECONDS: int = 30        # 时钟偏差容忍（秒）
+
+    # ── 以下 JWT 配置已废弃（保留字段名避免下游报错，不再用于本地签发） ──
+    # 本地签发 JWT 已移除，所有 token 验签通过 cloud JWKS 公钥完成。
+    JWT_SECRET_KEY: str = "change_me_jwt_secret_32_chars_min"    # [DEPRECATED]
+    JWT_ALGORITHM: str = "HS256"                                  # [DEPRECATED]
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30                     # [DEPRECATED] cloud 控制过期时间
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7                        # [DEPRECATED] cloud 控制过期时间
 
     # 日志
     LOG_LEVEL: str = "INFO"

@@ -1,0 +1,114 @@
+classDiagram
+    direction TB
+
+    class Settings {
+        +CLOUD_JWKS_URL: str
+        +CLOUD_JWKS_CACHE_TTL: int
+        +CLOUD_JWKS_FETCH_TIMEOUT: float
+        +CLOUD_EXPECTED_ALGORITHM: str
+        +CLOUD_CLOCK_SKEW_SECONDS: int
+        +JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int
+        +JWT_REFRESH_TOKEN_EXPIRE_DAYS: int
+        +DATABASE_URL: str
+        +REDIS_URL: str
+    }
+
+    class JWKSStore {
+        -_keys: dict~str,dict~
+        -_fetched_at: float
+        +is_valid() bool
+        +find_key(kid: str) dict|None
+        +fetch() dict~str,dict~
+        +refresh() dict~str,dict~
+    }
+
+    class TokenVerifyError {
+        <<enumeration>>
+        EXPIRED
+        INVALID_SIGNATURE
+        MALFORMED
+        UNKNOWN_KID
+        JWKS_UNAVAILABLE
+    }
+
+    class CloudAuth {
+        +verify_access_token(token: str) dict
+        +classify_jwt_error(exc: Exception) TokenVerifyError
+        +get_signing_key(kid: str) dict
+    }
+
+    class security_functions {
+        +hash_password(password: str) str
+        +verify_password(plain: str, hashed: str) bool
+        +verify_cloud_token(token: str) dict
+    }
+
+    class UserRepository {
+        +query(sql, params) List~Dict~
+        +query_one(sql, params) Dict|None
+        +query_page(sql, params, page, page_size) dict
+        +get(id: int) Dict|None
+        +get_by_cloud_uuid(uuid: str) Dict|None
+        +get_with_password(username: str, tenant_id: str) Dict|None
+        +create(data: dict) int
+        +update(id: int, data: dict) int
+        +delete(id: int) int
+        +update_last_login(id: int) int
+        +list(page, page_size, keyword, status) dict
+    }
+
+    class TenantRepository {
+        +query(sql, params) List~Dict~
+        +get_by_tenant_id(tenant_id: str) Dict|None
+        +get_feature_flags_by_tenant_id(tenant_id: str) Dict~str,bool~
+        +get(id: int) Dict|None
+        +create(data: dict) int
+        +update(id: int, data: dict) int
+        +delete(id: int) int
+        +list(page, page_size) dict
+    }
+
+    class AuthService {
+        -user_repo: UserRepository
+        -role_repo: RoleRepository
+        +change_password(user_id: int, old: str, new: str) None
+    }
+
+    class get_current_user {
+        <<FastAPI Dependency>>
+        +__call__(credentials, x_tenant_id, db) dict
+    }
+
+    class get_feature_flags {
+        <<FastAPI Dependency>>
+        +__call__(current_user, db) Dict~str,bool~
+    }
+
+    class get_tenant_repo {
+        <<FastAPI Dependency Factory>>
+        +__call__(repo_class, require_auth) Callable
+    }
+
+    class auth_router {
+        +POST /api/v1/auth/logout
+        +GET /api/v1/auth/me
+        +POST /api/v1/auth/change-password
+    }
+
+    class DataRouteResolver {
+        +ROUTES: Dict
+        +resolve(data_type, feature_flags) RouteStrategy$
+    }
+
+    Settings --> JWKSStore : configures
+    JWKSStore --> CloudAuth : provides keys
+    CloudAuth --> TokenVerifyError : returns
+    get_current_user --> CloudAuth : calls verify_access_token
+    get_current_user --> UserRepository : calls get_by_cloud_uuid
+    get_feature_flags --> TenantRepository : calls get_feature_flags_by_tenant_id
+    get_tenant_repo --> get_current_user : depends on
+    auth_router --> get_current_user : depends on
+    auth_router --> AuthService : calls
+    AuthService --> UserRepository : uses
+    AuthService --> security_functions : calls hash_password/verify_password
+    DataRouteResolver --> get_feature_flags : consumes feature_flags dict

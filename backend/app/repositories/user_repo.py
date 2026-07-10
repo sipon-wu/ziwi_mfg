@@ -33,6 +33,25 @@ class UserRepository(MultiTenantRepository):
         roles = [row[0] for row in result.fetchall()]
         user["roles"] = roles if roles else []
         return user
+
+    async def get_by_cloud_uuid(self, cloud_uuid: str) -> Optional[Dict]:
+        """通过 cloud.ziwi.cn 的用户 UUID 查询本地用户。
+
+        用于统一 JWT 认证流程：cloud JWT 验签通过后，用 sub (UUID)
+        在 mfg 本地 users 表中查找对应记录。
+
+        Args:
+            cloud_uuid: cloud.ziwi.cn 用户 UUID（JWT sub claim）
+
+        Returns:
+            用户 dict（含 id, tenant_id, cloud_uuid, username 等），未找到返回 None
+        """
+        return await self.query_one(
+            "SELECT id, tenant_id, cloud_uuid, username, real_name, email, phone, "
+            "avatar_url, status, last_login_at, created_at "
+            "FROM users WHERE cloud_uuid = :cloud_uuid",
+            {"cloud_uuid": cloud_uuid}
+        )
     
     async def get_with_password(self, username: str, tenant_id: str = None) -> Optional[Dict]:
         sql = "SELECT * FROM users WHERE username = :username"

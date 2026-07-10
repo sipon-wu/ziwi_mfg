@@ -20,6 +20,42 @@ class TenantRepository(SingleTenantRepository):
             "SELECT id, tenant_id, name, code, contact_name, contact_phone, status, industry, region, expire_at, package_modules, created_at, updated_at FROM tenants WHERE id = :id",
             {"id": id}
         )
+
+    async def get_feature_flags_by_tenant_id(self, tenant_id: str) -> Dict[str, bool]:
+        """从 tenants.package_modules 查询并扁平化为 feature_flags dict。
+
+        实现方式：
+        1. 按 tenant_id 查询 tenants 表，获取 package_modules JSON 字段
+        2. 将嵌套结构扁平化为 {"M01_WORK_ORDER": True, ...} 格式
+
+        package_modules 格式:
+            {"M01": ["WORK_ORDER", "WORK_REPORT"], "M02": ["EQUIPMENT"]}
+
+        扁平化后:
+            {"M01_WORK_ORDER": True, "M01_WORK_REPORT": True, "M02_EQUIPMENT": True}
+
+        Args:
+            tenant_id: 租户业务 ID（如 "t_abc123"）
+
+        Returns:
+            扁平化的 feature_flags dict，租户不存在或 package_modules 为空时返回 {}
+        """
+        tenant = await self.get_by_tenant_id(tenant_id)
+        if not tenant:
+            return {}
+
+        package_modules = tenant.get("package_modules") or {}
+        if not isinstance(package_modules, dict):
+            return {}
+
+        flags: Dict[str, bool] = {}
+        for module_code, sub_modules in package_modules.items():
+            if isinstance(sub_modules, list):
+                for sub in sub_modules:
+                    flag_key = f"{module_code}_{sub}"
+                    flags[flag_key] = True
+
+        return flags
     
     async def create(self, data: dict) -> int:
         import uuid

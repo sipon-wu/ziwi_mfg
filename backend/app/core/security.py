@@ -1,50 +1,72 @@
-# JWT + 密码工具
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from app.core.config import get_settings
+"""
+密码哈希 + cloud JWT 验签工具。
 
-settings = get_settings()
+变更说明 (2026-07-10):
+- 移除 create_access_token / create_refresh_token / verify_token（本地 HS256 签发）
+- 保留 hash_password / verify_password（change-password 仍需密码哈希）
+- 新增 verify_cloud_token（thin wrapper，调用 app.core.jwks.verify_access_token）
+"""
+
+from passlib.context import CryptContext
+
+from app.core.jwks import verify_access_token as _verify_cloud
+from app.core.jwks import classify_jwt_error, TokenVerifyError
+
+# ─── 密码哈希（bcrypt） ────────────────────────────────────
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
-
-def create_access_token(
-    data: dict,
-    expires_delta: Optional[timedelta] = None,
-    features: Optional[Dict[str, bool]] = None,
-) -> str:
-    """创建 JWT access token。
-
-    [rev] 新增 features 参数，将租户套餐信息写入 JWT payload。
+    """对明文密码进行 bcrypt 哈希。
 
     Args:
-        data: JWT payload 数据
-        expires_delta: 过期时间（可选，默认使用配置值）
-        features: 租户 feature_flags dict，写入 JWT claims 中的 features 字段
+        password: 明文密码
+
+    Returns:
+        bcrypt 哈希字符串
     """
-    to_encode = data.copy()
-    if features:
-        to_encode["features"] = features
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return pwd_context.hash(password)
 
-def create_refresh_token(data: dict) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
-def verify_token(token: str) -> dict:
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        return payload
-    except JWTError:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail={"code": "401-1001", "message": "Token 无效或已过期", "request_id": ""})
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """验证明文密码与 bcrypt 哈希是否匹配。
+
+    Args:
+        plain_password: 用户输入的明文密码
+        hashed_password: 数据库中存储的 bcrypt 哈希
+
+    Returns:
+        True 表示匹配
+    """
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# ─── cloud JWT 验签（thin wrapper） ────────────────────────
+async def verify_cloud_token(token: str) -> dict:
+    """验签 cloud.ziwi.cn 签发的 RS256 JWT 并返回 payload。
+
+    本函数是 app.core.jwks.verify_access_token 的 async thin wrapper，
+    供 dependencies.get_current_user 调用。
+
+    Args:
+        token: JWT access_token 字符串
+
+    Returns:
+        dict: JWT payload claims（sub, email, tenant_id, products, iat, exp）
+
+    Raises:
+        ExpiredSignatureError: token 已过期
+        JWTClaimsError: claims 不合法
+        JWTError: 签名/格式无效
+    """
+    return await _verify_cloud(token)
+
+
+# ─── 公开 API ──────────────────────────────────────────────
+__all__ = [
+    "hash_password",
+    "verify_password",
+    "verify_cloud_token",
+    "classify_jwt_error",
+    "TokenVerifyError",
+]

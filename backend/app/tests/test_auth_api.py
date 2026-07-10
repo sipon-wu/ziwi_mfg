@@ -1,9 +1,14 @@
 """
-Test suite for M00-Auth Module (7 test cases).
+Test suite for M00-Auth Module (4 test cases).
+
+变更说明 (2026-07-10):
+- 移除: test_login_success, test_login_invalid_credentials, test_refresh_token
+  （POST /login 和 POST /refresh 路由已移除，认证迁移至 cloud.ziwi.cn）
+- 保留: test_get_me, test_get_me_unauthorized, test_change_password, test_change_password_wrong_old
 
 Testing strategy:
   - Mock Repo methods (no real database)
-  - Mock security functions (password verify/hash, JWT creation, token verify)
+  - Mock security functions (password verify/hash)
   - Override get_db / get_current_user via conftest.py
   - Use httpx.AsyncClient + ASGITransport to send requests
 """
@@ -50,46 +55,7 @@ MOCK_PERMISSIONS = ["system:config", "user:manage"]
 
 
 class TestAuthAPI:
-    """7 test cases covering login / me / refresh / change-password."""
-
-    # ── Login ──────────────────────────────────────────────────────────
-
-    @patch("app.services.auth_service.create_refresh_token", return_value="fake_refresh")
-    @patch("app.services.auth_service.create_access_token", return_value="fake_access")
-    @patch("app.services.auth_service.verify_password", return_value=True)
-    @patch("app.api.auth.UserRepository.get_with_password")
-    async def test_login_success(self, mock_get_pw, mock_vpw, mock_at, mock_rt, async_client):
-        """正确用户名密码 → 返回 token + 用户信息"""
-        mock_get_pw.return_value = MOCK_USER_WITH_PW
-        with patch("app.api.auth.UserRepository.update_last_login") as mock_ll:
-            with patch("app.api.auth.UserRepository.get") as mock_get:
-                mock_get.return_value = MOCK_USER_INFO
-                resp = await async_client.post(
-                    "/api/v1/auth/login",
-                    json={"username": "admin", "password": "admin123"},
-                )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["access_token"] == "fake_access"
-        assert data["refresh_token"] == "fake_refresh"
-        assert data["token_type"] == "bearer"
-        assert data["expires_in"] == 1800
-        assert data["user"]["username"] == "admin"
-
-    @patch("app.services.auth_service.verify_password", return_value=False)
-    @patch("app.api.auth.UserRepository.get_with_password")
-    async def test_login_invalid_credentials(self, mock_get_pw, mock_vpw, async_client):
-        """错误密码 → 401"""
-        mock_get_pw.return_value = MOCK_USER_WITH_PW
-        resp = await async_client.post(
-            "/api/v1/auth/login",
-            json={"username": "admin", "password": "wrong_password"},
-        )
-        assert resp.status_code == 401
-        detail = resp.json()["detail"]
-        assert detail["code"] == "401-0000"
-        assert "用户名或密码错误" in detail["message"]
+    """4 test cases covering /me, /logout, /change-password."""
 
     # ── Get Me ─────────────────────────────────────────────────────────
 
@@ -97,7 +63,7 @@ class TestAuthAPI:
     @patch("app.api.auth.RoleRepository.get_user_roles", return_value=MOCK_ROLES)
     @patch("app.api.auth.UserRepository.get")
     async def test_get_me(self, mock_get, mock_roles, mock_perms, async_client):
-        """有效 token → 返回当前用户信息 (带 roles 和 permissions)"""
+        """有效 token → 返回当前用户信息 (带 roles, permissions, cloud_uuid)"""
         user_info = {**MOCK_USER_INFO}
         mock_get.return_value = user_info
         resp = await async_client.get("/api/v1/auth/me")
@@ -118,35 +84,11 @@ class TestAuthAPI:
         original = app.dependency_overrides.pop(get_current_user, None)
         try:
             resp = await async_client.get("/api/v1/auth/me")
-            # HTTPBearer(auto_error=True) 无凭证时返回 403
+            # HTTPBearer(auto_error=False) 无凭证时返回 401
             assert resp.status_code in (401, 403)
         finally:
             # 恢复 override
             app.dependency_overrides[get_current_user] = original
-
-    # ── Refresh Token ──────────────────────────────────────────────────
-
-    @patch("app.services.auth_service.create_access_token", return_value="new_access")
-    @patch("app.services.auth_service.verify_token")
-    @patch("app.api.auth.UserRepository.get")
-    async def test_refresh_token(self, mock_get, mock_vt, mock_at, async_client):
-        """有效 refresh_token → 返回新 access_token"""
-        mock_vt.return_value = {
-            "sub": "1",
-            "tenant_id": "default",
-            "type": "refresh",
-        }
-        mock_get.return_value = MOCK_USER_INFO
-
-        resp = await async_client.post(
-            "/api/v1/auth/refresh",
-            json={"refresh_token": "valid_refresh_token"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["access_token"] == "new_access"
-        assert data["token_type"] == "bearer"
-        assert data["expires_in"] == 1800
 
     # ── Change Password ────────────────────────────────────────────────
 

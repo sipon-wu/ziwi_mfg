@@ -1,0 +1,66 @@
+sequenceDiagram
+    actor 用户
+    participant SPA as 前端 SPA
+    participant Cloud as cloud.ziwi.cn
+    participant MFG as mfg1.ziwi.cn
+    participant JWKS as JWKSStore (缓存)
+    participant DB as mfg DB
+
+    Note over 用户,DB: ═══ 阶段1: 用户登录 cloud ═══
+    用户->>SPA: 访问 mfg1.ziwi.cn
+    SPA->>SPA: 检查本地 access_token
+    alt 无 token
+        SPA->>Cloud: 跳转 https://cloud.ziwi.cn 登录
+        用户->>Cloud: 输入 email + password
+        Cloud->>Cloud: 验证凭证
+        Cloud-->>SPA: {access_token, refresh_token, expires_in: 1800}
+    end
+
+    Note over 用户,DB: ═══ 阶段2: 调用 mfg API ═══
+    SPA->>MFG: GET /api/v1/auth/me<br/>Authorization: Bearer access_token
+    
+    MFG->>MFG: get_current_user() 依赖注入
+    MFG->>MFG: 提取 Bearer token
+    MFG->>JWKS: get_signing_key("key_v1")
+    
+    alt 缓存有效 (TTL 未过)
+        JWKS-->>MFG: 返回内存缓存的 key_v1 公钥
+    else 缓存过期或首次
+        JWKS->>Cloud: GET /api/v1/auth/public-key
+        Cloud-->>JWKS: {"keys": [{"kid":"key_v1","n":"...","e":"..."}]}
+        JWKS->>JWKS: 写入内存缓存 + 本地文件
+        JWKS-->>MFG: 返回 key_v1 公钥
+    else cloud 不可达
+        JWKS->>JWKS: 降级读取本地缓存文件
+        JWKS-->>MFG: 返回本地缓存的 key_v1 公钥
+    end
+
+    MFG->>MFG: verify_access_token(token, jwk)
+    Note over MFG: RS256 验签 + 校验 exp/iat/sub/email
+    MFG->>MFG: 解析 claims: sub(UUID), email, tenant_id, products
+
+    Note over 用户,DB: ═══ 阶段3: 用户映射 & 角色补全 ═══
+    MFG->>DB: UserRepository.get_by_cloud_uuid(sub_uuid)
+    DB-->>MFG: user dict (含 id, tenant_id, username, ...)
+    
+    alt 用户不存在
+        MFG-->>SPA: 401 用户未在 mfg 注册
+    end
+
+    MFG->>DB: RoleRepository.get_user_roles(user.id)
+    DB-->>MFG: [roles...]
+    MFG->>DB: RoleRepository.get_user_permissions(user.id)
+    DB-->>MFG: [permissions...]
+
+    MFG-->>SPA: 200 {code:0, data: {user + roles + permissions}}
+
+    Note over 用户,DB: ═══ 阶段4: feature_flags 注入 ═══
+    SPA->>MFG: GET /api/v1/equipment/list<br/>Authorization: Bearer access_token
+    
+    MFG->>MFG: get_feature_flags() 依赖注入
+    MFG->>DB: TenantRepository.get_feature_flags_by_tenant_id(tenant_id)
+    DB-->>MFG: {"M02_EQUIPMENT": true, "M01_WORK_ORDER": true, ...}
+    
+    MFG->>MFG: DataRouteResolver.resolve(DataType.DEVICE, flags)
+    Note over MFG: feature_flags["M02_EQUIPMENT"]==True → TPM_EQUIPMENT 策略
+    MFG-->>SPA: 200 设备列表
