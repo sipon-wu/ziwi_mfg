@@ -36,7 +36,7 @@ MODULES_SQL = "CAST(:modules AS jsonb)" if "postgresql" in settings.DATABASE_URL
 
 # ── 可配置参数（部署前按需修改） ──────────────────────────────────
 TENANT_ID = "mfg_demo"                       # 实际使用的租户 ID（需与 cloud 侧一致）
-CLOUD_UUID = "00000000-0000-0000-0000-000000000001"   # 占位 cloud_uuid
+CLOUD_UUID = os.environ.get("CLOUD_UUID", "00000000-0000-0000-0000-000000000001")   # 占位 cloud_uuid；运行时用 CLOUD_UUID 环境变量覆盖为真实 cloud sub
 ADMIN_USERNAME = "mfg_admin"
 ADMIN_REAL_NAME = "mfg 平台管理员"
 ADMIN_EMAIL = "admin@mfg1.ziwi.cn"
@@ -86,40 +86,46 @@ async def seed():
         })
         print(f"[seed] admin user '{ADMIN_USERNAME}' (cloud_uuid={CLOUD_UUID}) 就绪（已存在则跳过）")
 
-        # 3) admin 角色（先查后插，roles 无唯一约束）
-        role = (await session.execute(text(
-            "SELECT id FROM roles WHERE tenant_id = :tid AND code = 'admin'",
-        ), {"tid": TENANT_ID})).first()
-        if not role:
-            await session.execute(text("""
-                INSERT INTO roles (tenant_id, name, code, description, is_system)
-                VALUES (:tid, '系统管理员', 'admin', 'mfg 平台超级管理员', true)
-            """), {"tid": TENANT_ID})
-            print(f"[seed] role 'admin' 已创建")
-        else:
-            print(f"[seed] role 'admin' 已存在，跳过")
-
-        # 4) 用户-角色绑定（先查后插）
-        user_id = (await session.execute(text(
-            "SELECT id FROM users WHERE cloud_uuid = :cuuid",
-        ), {"cuuid": CLOUD_UUID})).scalar()
-        role_id = (await session.execute(text(
-            "SELECT id FROM roles WHERE tenant_id = :tid AND code = 'admin'",
-        ), {"tid": TENANT_ID})).scalar()
-        if user_id and role_id:
-            exists = (await session.execute(text(
-                "SELECT 1 FROM user_roles WHERE user_id = :uid AND role_id = :rid",
-            ), {"uid": user_id, "rid": role_id})).first()
-            if not exists:
-                await session.execute(text("""
-                    INSERT INTO user_roles (user_id, role_id, tenant_id)
-                    VALUES (:uid, :rid, :tid)
-                """), {"uid": user_id, "rid": role_id, "tid": TENANT_ID})
-                print(f"[seed] user_roles 绑定已创建 (user={user_id}, role={role_id})")
-            else:
-                print(f"[seed] user_roles 绑定已存在，跳过")
-
+        # 先提交租户+用户（关键数据），避免后续角色步骤异常时整体回滚
         await session.commit()
+        print(f"[seed] tenant + user 已提交")
+
+        # 3) admin 角色 + 4) 用户-角色绑定（尽力而为，失败不影响主账号）
+        try:
+            role = (await session.execute(text(
+                "SELECT id FROM roles WHERE tenant_id = :tid AND code = 'admin'",
+            ), {"tid": TENANT_ID})).first()
+            if not role:
+                await session.execute(text("""
+                    INSERT INTO roles (tenant_id, name, code, description, is_system)
+                    VALUES (:tid, '系统管理员', 'admin', 'mfg 平台超级管理员', true)
+                """), {"tid": TENANT_ID})
+                print(f"[seed] role 'admin' 已创建")
+            else:
+                print(f"[seed] role 'admin' 已存在，跳过")
+
+            user_id = (await session.execute(text(
+                "SELECT id FROM users WHERE cloud_uuid = :cuuid",
+            ), {"cuuid": CLOUD_UUID})).scalar()
+            role_id = (await session.execute(text(
+                "SELECT id FROM roles WHERE tenant_id = :tid AND code = 'admin'",
+            ), {"tid": TENANT_ID})).scalar()
+            if user_id and role_id:
+                exists = (await session.execute(text(
+                    "SELECT 1 FROM user_roles WHERE user_id = :uid AND role_id = :rid",
+                ), {"uid": user_id, "rid": role_id})).first()
+                if not exists:
+                    await session.execute(text("""
+                        INSERT INTO user_roles (user_id, role_id, tenant_id)
+                        VALUES (:uid, :rid, :tid)
+                    """), {"uid": user_id, "rid": role_id, "tid": TENANT_ID})
+                    print(f"[seed] user_roles 绑定已创建 (user={user_id}, role={role_id})")
+                else:
+                    print(f"[seed] user_roles 绑定已存在，跳过")
+            await session.commit()
+        except Exception as e:
+            print(f"[seed][WARN] 角色绑定步骤异常（不影响主账号）: {e}")
+            await session.rollback()
 
     print("[seed] mfg1 种子数据初始化完成。")
 
