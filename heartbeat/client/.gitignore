@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local env / secrets
+.env
+.env.local
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
