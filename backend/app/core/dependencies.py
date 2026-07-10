@@ -77,8 +77,18 @@ async def get_current_user(
         )
 
     # 4. 查 mfg 本地用户（按 cloud_uuid 映射）
-    repo = UserRepository(db)
-    user = await repo.get_by_cloud_uuid(cloud_uuid)
+    try:
+        repo = UserRepository(db)
+        user = await repo.get_by_cloud_uuid(cloud_uuid)
+    except Exception:
+        # DB 查询失败（如缺少 cloud_uuid 列、连接异常等）→ 533（认证临时不可用）
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "AUTH_UNAVAILABLE",
+                "message": "认证服务暂不可用，请稍后重试",
+            },
+        )
     if not user:
         raise HTTPException(
             status_code=401,
