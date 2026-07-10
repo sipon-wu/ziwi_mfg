@@ -107,18 +107,34 @@ class MultiTenantRepository(Repository):
     
     @staticmethod
     def _inject_tenant_where_select(sql: str) -> str:
-        """在 SELECT 查询中注入 tenant_id 过滤，比子查询包装更安全地保留 ORDER BY。"""
+        """在 SELECT 查询中注入 tenant_id 过滤，比子查询包装更安全地保留 ORDER BY。
+
+        关键修复：用主表别名限定 tenant_id（如 e.tenant_id），避免 JOIN 查询中
+        多表均含 tenant_id 列时产生 "column reference tenant_id is ambiguous" 错误。
+        """
+        # 解析主表（FROM 之后的第一张表）及其别名，用于限定 tenant_id 列
+        from_match = re.search(
+            r'\bFROM\s+([a-zA-Z_][\w]*)(?:\s+(?:AS\s+)?([a-zA-Z_][\w]*))?',
+            sql,
+            re.IGNORECASE,
+        )
+        table_ref = None
+        if from_match:
+            # 优先使用别名；无别名时回退为表名本身（PostgreSQL 允许 table.col）
+            table_ref = from_match.group(2) or from_match.group(1)
+        tenant_filter = f"{table_ref}.tenant_id = :_tenant_id" if table_ref else "tenant_id = :_tenant_id"
+
         match = re.search(r'\bWHERE\b', sql, re.IGNORECASE)
         if match:
             pos = match.end()
-            return f"{sql[:pos]} tenant_id = :_tenant_id AND {sql[pos:].lstrip()}"
+            return f"{sql[:pos]} {tenant_filter} AND {sql[pos:].lstrip()}"
         # 无 WHERE 子句，在 ORDER BY/GROUP BY/HAVING/LIMIT 之前插入
         for keyword in ['ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT']:
             kw_match = re.search(rf'\b{keyword}\b', sql, re.IGNORECASE)
             if kw_match:
                 pos = kw_match.start()
-                return f"{sql[:pos].rstrip()} WHERE tenant_id = :_tenant_id {sql[pos:]}"
-        return f"{sql.rstrip()} WHERE tenant_id = :_tenant_id"
+                return f"{sql[:pos].rstrip()} WHERE {tenant_filter} {sql[pos:]}"
+        return f"{sql.rstrip()} WHERE {tenant_filter}"
 
     async def query(self, sql: str, params: Dict = None) -> List[Dict]:
         if self._tenant_id:
