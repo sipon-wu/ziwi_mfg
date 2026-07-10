@@ -1,12 +1,15 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
 sqlalchemy[asyncio]==2.0.35
-asyncpg==0.29.0
+# 不钉死小版本：Python 3.13 下 asyncpg 0.29.0 仅有 sdist（需 gcc 编译），
+# >=0.29.0 会让 pip 挑选带 cp313 预编译 wheel 的较新版本（已参照同机 cloud-idp 验证可行）
+asyncpg>=0.29.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
-pydantic-settings==2.5.0
+pydantic-settings>=2.2
 python-multipart==0.0.12
 redis==5.2.0
 httpx==0.27.0
 apscheduler>=3.10.4
+openpyxl>=3.1.0

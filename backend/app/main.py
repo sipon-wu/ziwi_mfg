@@ -8,6 +8,7 @@ import uuid
 from app.core.config import get_settings
 from app.core.database import init_db, ensure_engine
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
+from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
 from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab
 
 settings = get_settings()
@@ -28,9 +29,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] APScheduler 初始化失败: {e}")
 
+    # 启动私有部署心跳上报（heartbeat.ziwi.cn，接口契约 D.1 节）
+    # 仅当 HEARTBEAT_API_KEY 与 HEARTBEAT_DEPLOYMENT_ID 均已配置且非测试环境时启用，
+    # 避免测试/未配置环境发起真实网络请求。心跳失败不影响应用启动（降级原则）。
+    heartbeat_ctx = None
+    try:
+        hb_config = HeartbeatClientConfig()
+        if hb_config.api_key and hb_config.deployment_id and settings.APP_ENV != "test":
+            # create_heartbeat_lifespan 返回工厂函数 _lifespan(app)；
+            # 必须先调用工厂得到真正的 async context manager，再 __aenter__
+            hb_factory = create_heartbeat_lifespan(config=hb_config)
+            heartbeat_ctx = hb_factory(app)
+            await heartbeat_ctx.__aenter__()
+            print("[INFO] 心跳上报客户端已启动")
+        else:
+            print("[INFO] 心跳上报未启用（缺少 HEARTBEAT_API_KEY / HEARTBEAT_DEPLOYMENT_ID，或处于测试环境）")
+    except Exception as e:
+        print(f"[WARN] 心跳上报启动失败（不影响应用）: {e}")
+
     yield
 
     # 关闭时
+    if heartbeat_ctx is not None:
+        try:
+            await heartbeat_ctx.__aexit__(None, None, None)
+        except Exception:
+            pass
     try:
         shutdown_scheduler()
     except Exception:

@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 先升级 pip，避免旧基础镜像内 pip 不识别新版 wheel 标签（如 cryptography cp313）导致 "from versions: none"
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

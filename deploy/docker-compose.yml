@@ -1,9 +1,11 @@
 services:
   mfg-backend:
-    build: ../backend
+    build: ./backend
     container_name: mfg1-backend
     ports:
       - "127.0.0.1:8092:8000"
+    env_file:
+      - ./backend/.env
     environment:
       - DB_DRIVER=postgresql
       - DB_HOST=mfg-db
