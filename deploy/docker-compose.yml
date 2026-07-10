@@ -1,0 +1,40 @@
+services:
+  mfg-backend:
+    build: ../backend
+    container_name: mfg1-backend
+    ports:
+      - "127.0.0.1:8092:8000"
+    environment:
+      - DB_DRIVER=postgresql
+      - DB_HOST=mfg-db
+      - DB_PORT=5432
+      - DB_NAME=mfg
+      - DB_USER=mfg
+      - DB_PASSWORD=mfg_dev_2026
+      - APP_ENV=staging
+      - APP_CORS_ORIGINS=*
+    depends_on:
+      mfg-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mfg-db:
+    image: postgres:16-alpine
+    container_name: mfg1-db
+    ports:
+      - "127.0.0.1:5434:5432"
+    environment:
+      - POSTGRES_DB=mfg
+      - POSTGRES_USER=mfg
+      - POSTGRES_PASSWORD=mfg_dev_2026
+    volumes:
+      - mfg_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mfg", "-d", "mfg"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mfg_pgdata:
