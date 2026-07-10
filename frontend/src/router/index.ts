@@ -23,6 +23,7 @@ const R_TRIAL = ['admin', 'process_engineer', 'department_head']
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'Login', component: () => import('@/pages/auth/Login.vue') },
+  { path: '/setup', name: 'SolutionConfig', component: () => import('@/pages/setup/SolutionConfig.vue'), meta: { title: '方案配置' } },
   {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
@@ -56,6 +57,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'equipment', name: 'Equipment', component: () => import('@/pages/equipment/EquipmentList.vue'), meta: { title: '设备管理', roles: R_EQUIP } },
       { path: 'equipment/create', name: 'CreateEquipment', component: () => import('@/pages/equipment/EquipmentCreate.vue'), meta: { title: '新增设备', roles: R_EQUIP } },
       { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', roles: R_EQUIP } },
+      { path: 'equipment/maintenance-tasks', name: 'MaintenanceTasks', component: () => import('@/pages/equipment/MaintenanceTasks.vue'), meta: { title: '保养任务', roles: R_EQUIP } },
+      { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '维护计划', roles: R_EQUIP } },
       // M05 - 安灯管理
       { path: 'andon', name: 'Andon', component: () => import('@/pages/andon/AndonList.vue'), meta: { title: '安灯管理' } },
       { path: 'andon/:id', name: 'AndonDetail', component: () => import('@/pages/andon/AndonDetail.vue'), meta: { title: '安灯详情' } },
@@ -80,6 +83,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'quality/fmea/:id/control-plan', name: 'FmeaControlPlan', component: () => import('@/pages/quality/fmea/ControlPlan.vue'), meta: { title: '控制计划', roles: R_FMEA } },
       // 其他模块
       { path: 'energy', name: 'Energy', component: () => import('@/pages/energy/EnergyDeviceList.vue'), meta: { title: '能碳管理', roles: R_ENERGY } },
+      { path: 'energy/overview', name: 'EnergyOverview', component: () => import('@/pages/energy/EnergyOverview.vue'), meta: { title: '用能概况', roles: R_ENERGY } },
+      { path: 'energy/analysis', name: 'EnergyAnalysis', component: () => import('@/pages/energy/EnergyAnalysis.vue'), meta: { title: '能耗分析', roles: R_ENERGY } },
+      { path: 'energy/carbon', name: 'EnergyCarbon', component: () => import('@/pages/energy/EnergyCarbon.vue'), meta: { title: '碳管理', roles: R_ENERGY } },
       { path: 'data-collection', name: 'DataCollection', component: () => import('@/pages/datacollection/CollectTaskList.vue'), meta: { title: '数据采集', roles: R_DC } },
       { path: 'system/config', name: 'SystemConfig', component: () => import('@/pages/system/SystemConfig.vue'), meta: { title: '系统配置', roles: R_SYSTEM } },
       { path: 'system/license', name: 'LicenseInfo', component: () => import('@/pages/system/LicenseInfo.vue'), meta: { title: '许可证', roles: R_SYSTEM } },
@@ -104,6 +110,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'lab/standards', name: 'LabStandardsList', component: () => import('@/pages/lab/StandardsList.vue'), meta: { title: '标准库', roles: ['admin', 'inspector', 'process_engineer'] } },
     ],
   },
+  // 404 兜底路由：未匹配路径显示 NotFound，避免白屏
+  { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('@/pages/NotFound.vue') },
 ]
 
 const router = createRouter({ history: createWebHashHistory(), routes })

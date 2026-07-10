@@ -12,6 +12,14 @@ const router = useRouter()
 const calls = ref<AndonCall[]>([])
 const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
 
+// 安灯概览 KPI（真实统计，失败显示 "—"）
+const kpi = ref<{ pending: string | number; responding: string | number; resolvedToday: string | number }>({
+  pending: '—',
+  responding: '—',
+  resolvedToday: '—',
+})
+const kpiLoading = ref(false)
+
 const statusFilter = ref('')
 const keyword = ref('')
 
@@ -22,6 +30,37 @@ const statusOptions = [
   { value: 'resolved', label: '已解决' },
   { value: 'escalated', label: '已升级' },
 ]
+
+function isToday(dateStr?: string): boolean {
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return false
+  const now = new Date()
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+}
+
+async function loadKpi() {
+  kpiLoading.value = true
+  try {
+    const res = await get<PaginatedResponse<AndonCall>>('/andon/calls', { page: 1, page_size: 1000 })
+    const items: AndonCall[] = res.items || []
+    let pending = 0
+    let responding = 0
+    let resolvedToday = 0
+    for (const c of items) {
+      if (c.status === 'pending') pending++
+      else if (c.status === 'responding' || c.status === 'acknowledged' || c.status === 'processing') responding++
+      else if (c.status === 'resolved' || c.status === 'closed') {
+        if (isToday(c.resolve_at) || isToday(c.created_at)) resolvedToday++
+      }
+    }
+    kpi.value = { pending, responding, resolvedToday }
+  } catch {
+    kpi.value = { pending: '—', responding: '—', resolvedToday: '—' }
+  } finally {
+    kpiLoading.value = false
+  }
+}
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
@@ -48,15 +87,18 @@ function goDetail(id: number) {
   router.push(`/andon/${id}`)
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadKpi()
+})
 </script>
 
 <template>
   <div>
     <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px;">
-      <KpiCard title="待响应" :value="0" color="#D85A30" />
-      <KpiCard title="响应中" :value="0" color="#BA7517" />
-      <KpiCard title="今日已解决" :value="0" color="#1D9E75" />
+      <KpiCard title="待响应" :value="kpi.pending" color="#D85A30" />
+      <KpiCard title="响应中" :value="kpi.responding" color="#BA7517" />
+      <KpiCard title="今日已解决" :value="kpi.resolvedToday" color="#1D9E75" />
     </div>
 
     <SearchBar v-model:keyword="keyword" @search="onSearch" />
