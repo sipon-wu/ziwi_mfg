@@ -244,3 +244,95 @@ class TestConfigChanges:
         assert s.CLOUD_JWKS_FETCH_TIMEOUT == 5.0
         assert s.CLOUD_EXPECTED_ALGORITHM == "RS256"
         assert s.CLOUD_CLOCK_SKEW_SECONDS == 30
+
+
+# ────────────────────────────────────────────────────────────────
+# Part F: 边缘用例测试
+# ────────────────────────────────────────────────────────────────
+
+class TestEdgeCases:
+    """补充边缘场景：无 token 401、空租户 feature_flags、未知 cloud_uuid。"""
+
+    async def test_me_without_token_returns_401(self, async_client):
+        """GET /me 不带 Authorization header → 401。
+
+        临时移除 get_current_user 的 mock override，使真实的依赖注入逻辑生效。
+        由于 HTTPBearer(auto_error=False)，无 token 时 credentials=None，
+        get_current_user 应直接抛出 401。
+        """
+        from app.core.dependencies import get_current_user
+        from app.main import app
+        from app.tests.conftest import _mock_get_current_user
+
+        # 移除 mock，让真实的 get_current_user 运行
+        app.dependency_overrides.pop(get_current_user, None)
+        try:
+            resp = await async_client.get("/api/v1/auth/me")
+            assert resp.status_code == 401
+            body = resp.json()
+            assert body["detail"]["code"] == "MISSING_TOKEN"
+        finally:
+            # 恢复 mock 以免影响后续测试
+            app.dependency_overrides[get_current_user] = _mock_get_current_user
+
+    async def test_change_password_without_token_returns_401(self, async_client):
+        """POST /change-password 不带 Authorization header → 401。"""
+        from app.core.dependencies import get_current_user
+        from app.main import app
+        from app.tests.conftest import _mock_get_current_user
+
+        app.dependency_overrides.pop(get_current_user, None)
+        try:
+            resp = await async_client.post(
+                "/api/v1/auth/change-password",
+                json={"old_password": "old", "new_password": "new"},
+            )
+            assert resp.status_code == 401
+            body = resp.json()
+            assert body["detail"]["code"] == "MISSING_TOKEN"
+        finally:
+            app.dependency_overrides[get_current_user] = _mock_get_current_user
+
+    @pytest.mark.asyncio
+    async def test_feature_flags_empty_tenant_returns_empty_dict(self):
+        """get_feature_flags: tenant_id 为 None/空时返回 {}。"""
+        from app.core.dependencies import get_feature_flags
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from unittest.mock import AsyncMock
+
+        mock_db = AsyncMock(spec=AsyncSession)
+        # tenant_id 为 None
+        user_no_tenant = {"id": 1, "tenant_id": None}
+        result = await get_feature_flags(user_no_tenant, mock_db)
+        assert result == {}
+
+        # tenant_id 为空字符串
+        user_empty_tenant = {"id": 1, "tenant_id": ""}
+        result2 = await get_feature_flags(user_empty_tenant, mock_db)
+        assert result2 == {}
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_missing_sub_in_payload(self):
+        """get_current_user: cloud JWT payload 缺 sub → 401。"""
+        from unittest.mock import AsyncMock, patch
+        from fastapi import HTTPException
+
+        with patch("app.core.dependencies.verify_cloud_token") as mock_verify:
+            mock_verify.return_value = {
+                "email": "test@ziwi.cn",
+                "exp": 9999999999,
+                "iat": 1700000000,
+                # 故意缺少 sub
+            }
+            from app.core.dependencies import get_current_user
+            from fastapi.security import HTTPAuthorizationCredentials
+
+            creds = HTTPAuthorizationCredentials(
+                scheme="Bearer", credentials="fake_token"
+            )
+            mock_db = AsyncMock()
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=creds, db=mock_db)
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail["code"] == "MISSING_TOKEN"
