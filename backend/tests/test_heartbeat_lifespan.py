@@ -105,10 +105,7 @@ def test_heartbeat_lifespan_via_app_main(patched_heartbeat, monkeypatch):
 
     _app_config.get_settings.cache_clear()
 
-    try:
-        from app.main import app  # 触发真实 lifespan 代码路径
-    except Exception as exc:  # noqa: BLE001 - 已知源码 Bug1/Bug2 未修复时跳過
-        pytest.skip(f"app.main 导入失败（已知源码 Bug1/Bug2 未修复）: {exc}")
+    from app.main import app  # 触发真实 lifespan 代码路径
 
     with TestClient(app):
         pass

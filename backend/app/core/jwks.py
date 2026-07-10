@@ -201,6 +201,8 @@ async def verify_access_token(token: str) -> dict:
     # 将 "RS256" 字符串映射到 jose.constants.Algorithms 常量
     alg_value = getattr(Algorithms, expected_alg, Algorithms.RS256)
 
+    # NOTE: 在 python-jose 3.5.0 中，leeway 不是 jwt.decode() 的顶层参数，
+    #       而是 options 字典的一个键（被 _validate_claims 消费）。
     payload = jwt.decode(
         token,
         jwk,
@@ -210,8 +212,8 @@ async def verify_access_token(token: str) -> dict:
             "require": ["sub", "email", "exp", "iat"],
             "verify_exp": True,
             "verify_iat": True,
+            "leeway": s.CLOUD_CLOCK_SKEW_SECONDS,
         },
-        leeway=s.CLOUD_CLOCK_SKEW_SECONDS,
     )
 
     return payload
