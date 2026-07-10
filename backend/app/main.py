@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.database import init_db, ensure_engine
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
-from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab
+from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system
 
 settings = get_settings()
 
@@ -69,6 +69,7 @@ app = FastAPI(
     description="知微(SaaS)平台 — Phase 1 核心业务 API",
     version="1.0.0",
     lifespan=lifespan,
+    debug=settings.IS_DEBUG,
 )
 
 # CORS
@@ -105,6 +106,7 @@ app.include_router(basic_data.router)
 app.include_router(wms.router)
 app.include_router(trial.router)
 app.include_router(lab.router)
+app.include_router(system.router)
 
 # 健康检查
 @app.get("/health")
@@ -112,35 +114,13 @@ async def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": "1.0.0"}
 
 
-# 系统配置概览
-@app.get("/api/v1/system/config")
-async def system_config():
-    """返回系统配置概览（版本、模块列表、状态）"""
-    return {
-        "code": 0,
-        "message": "success",
-        "data": {
-            "version": "1.0.0",
-            "app_name": settings.APP_NAME,
-            "environment": settings.APP_ENV,
-            "debug": settings.APP_DEBUG,
-            "modules": [
-                {"code": "M01", "name": "生产管理", "status": "active", "routes": ["/api/v1/production"]},
-                {"code": "M02", "name": "设备管理(TPM)", "status": "active", "routes": ["/api/v1/tpm"]},
-                {"code": "M03", "name": "品质管理", "status": "active", "routes": ["/api/v1/quality"]},
-                {"code": "M04", "name": "安灯管理", "status": "active", "routes": ["/api/v1/andon"]},
-                {"code": "M05", "name": "异常管理", "status": "active", "routes": ["/api/v1/quality"]},
-                {"code": "M07", "name": "组织架构", "status": "active", "routes": ["/api/v1/organization"]},
-                {"code": "M08", "name": "消息中心", "status": "active", "routes": ["/api/v1/messages"]},
-                {"code": "M09", "name": "审批管理", "status": "active", "routes": ["/api/v1/approvals"]},
-                {"code": "M10", "name": "基础数据", "status": "active", "routes": ["/api/v1/dictionary"]},
-                {"code": "M11", "name": "能碳管理", "status": "active", "routes": ["/api/v1/energy"]},
-                {"code": "M12", "name": "数据采集", "status": "active", "routes": ["/api/v1/collect"]},
-                {"code": "M20", "name": "仓储管理(WMS)", "status": "active", "routes": ["/api/v1/wms"]},
-                {"code": "M16", "name": "试产管理(NPI)", "status": "active", "routes": ["/api/v1/trials"]},
-            ],
-        },
-    }
+# 未知 /api/v1/* 路径兜底：返回结构化 404 JSON（SPA 路由不受影响）
+@app.get("/api/v1/{full_path:path}")
+async def api_not_found(full_path: str):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Not Found", "code": "ROUTE_NOT_FOUND"},
+    )
 
 # 全局异常处理器
 @app.exception_handler(Exception)

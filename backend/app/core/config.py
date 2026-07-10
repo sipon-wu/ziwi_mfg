@@ -1,12 +1,15 @@
 # Pydantic Settings 读取环境变量
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
+from typing import Optional
 from functools import lru_cache
 
 class Settings(BaseSettings):
     APP_NAME: str = "ziwi"
     APP_ENV: str = "development"
-    APP_DEBUG: bool = True
+    # debug 默认按环境推断：仅 development/dev/local 开启；
+    # 可被显式设置 APP_DEBUG=true/false 覆盖（staging / production 默认关闭）。
+    APP_DEBUG: Optional[bool] = None
     APP_SECRET_KEY: str = "change_me_in_production_32_chars_min"
     APP_CORS_ORIGINS: str = "*"
 
@@ -57,6 +60,13 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "json"
 
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def IS_DEBUG(self) -> bool:
+        """FastAPI 调试模式开关：默认按环境推断，仅开发环境开启。"""
+        if self.APP_DEBUG is not None:
+            return self.APP_DEBUG
+        return self.APP_ENV in ("development", "dev", "local")
 
 @lru_cache()
 def get_settings() -> Settings:
