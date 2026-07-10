@@ -120,8 +120,20 @@ class MultiTenantRepository(Repository):
         )
         table_ref = None
         if from_match:
-            # 优先使用别名；无别名时回退为表名本身（PostgreSQL 允许 table.col）
-            table_ref = from_match.group(2) or from_match.group(1)
+            raw_table = from_match.group(1)
+            raw_alias = from_match.group(2)
+            # 关键字黑名单：当 FROM 表没有显式别名时，紧跟表名的 WHERE/LEFT/JOIN/
+            # ORDER 等关键字会被正则误判为"别名"。命中关键字则回退到表名本身限定
+            # （PostgreSQL 允许 table.tenant_id，且单表场景本就无歧义）。
+            _SQL_KEYWORDS = {
+                'where', 'left', 'right', 'inner', 'outer', 'join', 'on',
+                'order', 'group', 'having', 'limit', 'set', 'and', 'or',
+                'using', 'cross', 'full', 'natural', 'as',
+            }
+            if raw_alias and raw_alias.lower() not in _SQL_KEYWORDS:
+                table_ref = raw_alias
+            else:
+                table_ref = raw_table
         tenant_filter = f"{table_ref}.tenant_id = :_tenant_id" if table_ref else "tenant_id = :_tenant_id"
 
         match = re.search(r'\bWHERE\b', sql, re.IGNORECASE)
