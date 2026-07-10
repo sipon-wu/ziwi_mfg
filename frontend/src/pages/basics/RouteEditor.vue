@@ -75,6 +75,17 @@ const editingStep = ref<Partial<StepItem>>({})
 const editingStepIndex = ref(-1)
 const isNewStep = ref(true)
 
+// 弹窗同时服务于"添加工序"与"编辑工序"，用计算属性合并两个开关（v-model 不接受表达式）
+const stepDialogShow = computed({
+  get: () => showAddStep.value || showStepDetail.value,
+  set: (v: boolean) => {
+    if (!v) {
+      showAddStep.value = false
+      showStepDetail.value = false
+    }
+  },
+})
+
 // ── 步骤类型选项 ──
 const STEP_TYPE_OPTIONS = [
   { value: 'production', label: '生产' },
@@ -342,7 +353,7 @@ function wcTypeLabel(t: string): string {
 
     <!-- ── 添加/编辑工序弹窗 ── -->
     <van-dialog
-      v-model:show="showAddStep || showStepDetail"
+      v-model:show="stepDialogShow"
       :title="isNewStep ? '添加工序' : '编辑工序'"
       show-cancel-button
       @confirm="confirmAddStep"

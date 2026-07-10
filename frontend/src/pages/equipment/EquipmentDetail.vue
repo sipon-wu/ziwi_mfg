@@ -19,7 +19,7 @@ const statusLabels: Record<string, string> = {
   scrapped: '已报废',
 }
 
-const statusTypes: Record<string, string> = {
+const statusTypes: Record<string, 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info'> = {
   running: 'success',
   idle: 'primary',
   maintenance: 'warning',
