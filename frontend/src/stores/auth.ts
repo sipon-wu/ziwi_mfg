@@ -37,5 +37,14 @@ export const useAuthStore = defineStore('auth', () => {
     ;['access_token', 'refresh_token', 'tenant_id', 'user_info'].forEach(k => localStorage.removeItem(k))
   }
 
-  return { user, token, isLoggedIn, login, fetchUser, logout }
+  // 应用启动：若本地有 token，恢复会话并拉取真实用户（含 roles），覆盖硬刷新后 user_info 陈旧的问题
+  async function init() {
+    const t = localStorage.getItem('access_token')
+    if (!t) return
+    token.value = t
+    isLoggedIn.value = true
+    await fetchUser()
+  }
+
+  return { user, token, isLoggedIn, login, fetchUser, logout, init }
 })
