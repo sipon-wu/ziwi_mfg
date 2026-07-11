@@ -45,6 +45,12 @@ class FmeaDocumentRepository(MultiTenantRepository):
             {**data, "id": id},
         )
 
+    async def delete_doc(self, id: int) -> int:
+        """删除 FMEA 文档（DELETE 由 MultiTenantRepository 自动附加 tenant_id 过滤）"""
+        return await self.execute(
+            "DELETE FROM fmea_documents WHERE id = :id", {"id": id}
+        )
+
     async def get_latest_doc(self, product_id: int = None, process_id: int = None, fmea_type: str = None) -> Optional[Dict]:
         sql = "SELECT * FROM fmea_documents WHERE is_latest = 1"
         params = {}
@@ -233,6 +239,18 @@ class FmeaActionRepository(MultiTenantRepository):
         return await self.query(
             "SELECT * FROM fmea_actions WHERE status IN ('open', 'in_progress') "
             "AND target_date < date('now')"
+        )
+
+    async def delete_by_doc_id(self, doc_id: int) -> int:
+        """级联删除：删除指定文档下所有 FMEA 项关联的整改措施。
+
+        整改措施的 item_id 关联 fmea_items，本方法通过子查询定位归属该文档的项，
+        再删除其整改措施。DELETE 由 MultiTenantRepository 自动附加 tenant_id 过滤。
+        """
+        return await self.execute(
+            "DELETE FROM fmea_actions WHERE item_id IN "
+            "(SELECT id FROM fmea_items WHERE doc_id = :doc_id)",
+            {"doc_id": doc_id},
         )
 
 

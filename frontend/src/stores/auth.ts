@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { post } from '@/api/client'
+import { get, post } from '@/api/client'
 import type { LoginResponse, UserInfo } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -21,12 +21,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function fetchUser() {
     try {
-      const res = await post<UserInfo>('/auth/me')
+      const res = await get<UserInfo>('/auth/me')
       user.value = res
       // 关键：把真实用户（含 roles）持久化到 localStorage，菜单与路由守卫才能读到角色
       localStorage.setItem('user_info', JSON.stringify(res))
-    } catch {
-      logout()
+    } catch (e) {
+      // 重要：/auth/me 临时失败（网络抖动、令牌即将过期重试中等）不应直接 logout 清空 token，
+      // 否则会误把"登录成功"判为失败、瞬间踢回未登录态（本次 mfg1 无法登录的根因之一）。
+      // 仅告警并保留既有 token/isLoggedIn，用户下次操作自然重试即可。
+      console.warn('fetchUser failed', e)
     }
   }
 

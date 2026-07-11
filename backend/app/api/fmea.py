@@ -80,6 +80,26 @@ async def update_fmea_document(
     return {"code": 0, "message": "更新成功"}
 
 
+@router.delete("/fmea/documents/{doc_id}")
+async def delete_fmea_document(
+    doc_id: int,
+    current_user: dict = Depends(get_current_user),
+    repo: FmeaDocumentRepository = Depends(get_tenant_repo(FmeaDocumentRepository)),
+):
+    """删除 FMEA 文档（级联删除 items / actions / hierarchies / control-plans）
+
+    - 鉴权：get_tenant_repo(FmeaDocumentRepository) 默认 require_auth=True，
+      未登录请求在此处即被拦截，返回 401。
+    - 租户隔离：repo 已注入当前租户 tenant_id，get_doc 与 delete_doc 均自动
+      附加 tenant_id 过滤；文档不属于当前租户时 get_doc 返回 None → 对外 404。
+    """
+    svc = FmeaService(repo)
+    result = await svc.delete_fmea_document(doc_id)
+    if result.get("error"):
+        raise HTTPException(404, detail={"code": "404-0000", "message": result["error"]})
+    return {"code": 0, "message": result["message"], "data": {"id": doc_id}}
+
+
 @router.post("/fmea/documents/{doc_id}/publish")
 async def publish_fmea_document(
     doc_id: int,

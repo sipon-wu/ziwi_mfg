@@ -98,6 +98,37 @@ class FmeaService:
             "status": "draft",
         }
 
+    async def delete_fmea_document(self, doc_id: int) -> Dict:
+        """删除 FMEA 文档并级联清理其子数据，避免孤儿记录。
+
+        级联顺序（子表先于主表，规避潜在外键约束问题）：
+        1. fmea_actions      —— 通过 item_id 关联 fmea_items，须最先删除
+        2. fmea_items        —— FMEA 项
+        3. fmea_hierarchies  —— 结构树（项依赖结构树）
+        4. control_plans     —— 控制计划（fmea_doc_id 关联）
+        5. fmea_documents    —— 主表
+
+        所有 repo 已在 __init__ 中注入 tenant_id，因此底层 DELETE/UPDATE 会自动
+        附加租户过滤条件，保证多租户行级隔离；若文档不属于当前租户，get_doc 将
+        返回 None 从而提前返回不存在错误（对外 404）。
+        """
+        doc = await self.doc_repo.get_doc(doc_id)
+        if not doc:
+            return {"error": "FMEA文档不存在"}
+
+        # 1. 整改措施（依赖 fmea_items，须最先删除）
+        await self.action_repo.delete_by_doc_id(doc_id)
+        # 2. FMEA 项
+        await self.item_repo.delete_by_doc_id(doc_id)
+        # 3. 结构树
+        await self.hierarchy_repo.delete_by_doc_id(doc_id)
+        # 4. 控制计划
+        await self.control_plan_repo.delete_by_fmea_doc(doc_id)
+        # 5. 主表（tenant 过滤由基类注入，确保仅删除本租户文档）
+        await self.doc_repo.delete_doc(doc_id)
+
+        return {"message": "删除成功", "id": doc_id}
+
     async def _copy_from_source(self, target_doc_id: int, source_doc_id: int, tenant_id: str):
         """从源文档复制结构树和FMEA项"""
         source_nodes = await self.hierarchy_repo.list_tree(source_doc_id)
