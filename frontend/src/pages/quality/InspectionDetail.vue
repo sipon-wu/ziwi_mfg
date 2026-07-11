@@ -6,17 +6,12 @@ import { get } from '@/api/client'
 const route = useRoute()
 const router = useRouter()
 
-// 后端实际字段为 order_type（first/inspection/spot_check）与 result（ACC/REJ/UAI，未判定时为 pending）
+// 后端实际字段为 order_type（仅 first/inspection/spot_check，见 models/quality.py:60）与 result（ACC/REJ/UAI，未判定时为 pending）
 // 这里同时保留 QA 命名的 qc_type/status/judge_result 作为兜底，绝不留空
 const ORDER_TYPE_MAP: Record<string, string> = {
   first: '首件检验',
   inspection: '过程检验',
   spot_check: '抽检',
-  iqc: '来料检验',
-  ipqc: '过程检验',
-  fqc: '终检',
-  oqc: '出货检验',
-  pqi: '首件检验',
 }
 const STATUS_MAP: Record<string, string> = {
   pending: '待检验',
