@@ -144,21 +144,44 @@ class TestClassifyJwtError:
 class TestAuthRoutes:
     """验证路由变更：/login /refresh 移除，/logout /me /change-password 保留。"""
 
-    async def test_login_returns_404(self, async_client):
-        """POST /login 已移除 → 404。"""
+    @patch("app.api.auth.httpx.AsyncClient")
+    async def test_login_returns_200(self, mock_client_cls, async_client):
+        """POST /login 已恢复为代理转发到 cloud.ziwi.cn (2026-07-11)。
+
+        验证: /login 端点存在并正确透传 cloud 返回的 token。
+        通过 mock httpx.AsyncClient 避免真实外网请求。
+        """
+        # 构造云侧 mock 响应
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": 0, "data": {"token": "fake.jwt.token"}}
+
+        # httpx.AsyncClient(timeout=15) 作为 async context manager
+        mock_instance = MagicMock()
+        mock_instance.post = AsyncMock(return_value=mock_resp)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_instance
+        mock_client_cls.return_value = mock_cm
+
         resp = await async_client.post(
             "/api/v1/auth/login",
-            json={"username": "admin", "password": "admin123"},
+            json={"username": "admin@ziwi.cn", "password": "admin123"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["token"] == "fake.jwt.token"
 
     async def test_refresh_returns_404(self, async_client):
-        """POST /refresh 已移除 → 404。"""
+        """POST /refresh 已移除（无可匹配路由）→ 404 或 405。
+
+        FastAPI 对不存在的 POST 路径返回 405 (Method Not Allowed)，
+        404/405 均代表 refresh 端点不可用。
+        """
         resp = await async_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": "fake_token"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code in (404, 405)
 
     async def test_logout_returns_200(self, async_client):
         """POST /logout 保留 → 200。"""
@@ -204,12 +227,14 @@ class TestAuthRoutes:
 # ────────────────────────────────────────────────────────────────
 
 class TestSchemaChanges:
-    """验证已移除的 schema 类不可导入。"""
+    """验证 schema 类的可用性（随 /login 代理恢复，LoginRequest 重新引入）。"""
 
-    def test_login_request_removed(self):
-        """LoginRequest 已从 schemas.auth 移除。"""
-        with pytest.raises(ImportError):
-            from app.schemas.auth import LoginRequest
+    def test_login_request_exists(self):
+        """LoginRequest 随 /login 代理恢复后重新引入 (2026-07-11)。"""
+        from app.schemas.auth import LoginRequest
+        req = LoginRequest(username="admin@ziwi.cn", password="admin123")
+        assert req.username == "admin@ziwi.cn"
+        assert req.password == "admin123"
 
     def test_token_response_removed(self):
         """TokenResponse 已从 schemas.auth 移除。"""

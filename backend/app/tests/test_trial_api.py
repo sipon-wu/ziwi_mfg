@@ -1,6 +1,7 @@
 """M16 试产管理 (NPI) — API 测试"""
 
 import pytest
+from datetime import date
 from unittest.mock import patch
 
 
@@ -49,8 +50,10 @@ class TestM16Trial:
         data = resp.json()
         assert data["code"] == 0
         assert data["data"]["id"] == 2
-        # 自增序号: 5 -> 6
-        assert data["data"]["order_no"] == "NP-202606-0006"
+        # 服务按当前月生成前缀 (trial_service.py: prefix = NP-%Y%m-)
+        # mock 返回 6 月序号 0005 → 提取 seq=5 → 自增为 6，但前缀用当前月
+        today_prefix = f"NP-{date.today().strftime('%Y%m')}-"
+        assert data["data"]["order_no"] == f"{today_prefix}0006"
 
     async def test_list_trials(self, async_client):
         """M16-01: 列出试产工单"""

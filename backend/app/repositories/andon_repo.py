@@ -10,7 +10,8 @@ class AndonRepository(MultiTenantRepository):
     async def list_calls(self, page: int = 1, page_size: int = 20,
                          status: str = None, call_type: str = None,
                          priority: str = None) -> dict:
-        sql = "SELECT ac.*, COALESCE(ar_count.cnt, 0) as response_count FROM andon_call ac "
+        sql = ("SELECT ac.*, ac.description AS call_title, ac.station AS source_desc, "
+               "COALESCE(ar_count.cnt, 0) as response_count FROM andon_call ac ")
         sql += "LEFT JOIN (SELECT andon_call_id, COUNT(*) as cnt FROM andon_response GROUP BY andon_call_id) ar_count "
         sql += "ON ar_count.andon_call_id = ac.id WHERE 1=1"
         params = {}
@@ -24,7 +25,8 @@ class AndonRepository(MultiTenantRepository):
         return await self.query_page(sql, params, page, page_size)
 
     async def get_call(self, id: int) -> Optional[Dict]:
-        sql = "SELECT ac.*, COALESCE(ar_count.cnt, 0) as response_count FROM andon_call ac "
+        sql = ("SELECT ac.*, ac.description AS call_title, ac.station AS source_desc, "
+               "COALESCE(ar_count.cnt, 0) as response_count FROM andon_call ac ")
         sql += "LEFT JOIN (SELECT andon_call_id, COUNT(*) as cnt FROM andon_response GROUP BY andon_call_id) ar_count "
         sql += "ON ar_count.andon_call_id = ac.id WHERE ac.id = :id"
         return await self.query_one(sql, {"id": id})
