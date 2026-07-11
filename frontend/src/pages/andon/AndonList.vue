@@ -26,7 +26,7 @@ const keyword = ref('')
 const statusOptions = [
   { value: '', label: '全部' },
   { value: 'pending', label: '待响应' },
-  { value: 'responding', label: '响应中' },
+  { value: 'in_progress', label: '响应中' },
   { value: 'resolved', label: '已解决' },
   { value: 'escalated', label: '已升级' },
 ]
@@ -125,4 +125,12 @@ onMounted(() => {
 
     <van-empty v-if="!loading && calls.length === 0" description="暂无安灯呼叫" />
   </div>
+
 </template>
+
+<style scoped>
+:deep(.van-cell__value) {
+  align-self: flex-start;
+  padding-top: 10px;
+}
+</style>

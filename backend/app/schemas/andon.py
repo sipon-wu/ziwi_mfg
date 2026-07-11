@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -17,6 +17,8 @@ class AndonCallResponse(BaseModel):
     caller_id: int
     caller_name: Optional[str] = None
     description: str
+    call_title: str = Field(validation_alias="description", serialization_alias="call_title")
+    source_desc: Optional[str] = Field(validation_alias="station", default=None, serialization_alias="source_desc")
     priority: str = "normal"
     status: str = "pending"
     acknowledged_at: Optional[datetime] = None

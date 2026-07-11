@@ -474,10 +474,10 @@ async def seed_factory_calendars(session):
 
 async def seed_andon(session, admin_id, eq_ids, wo_ids):
     SLA = {
-        "emergency": (15, 240),
+        "emergency": (15, 120),
         "high": (30, 240),
-        "normal": (60, 480),
-        "low": (120, 720),
+        "normal": (120, 480),
+        "low": (240, 1440),
     }
 
     def dt(y, m, d, h, mi):
