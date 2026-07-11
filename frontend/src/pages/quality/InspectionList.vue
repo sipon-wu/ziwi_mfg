@@ -12,16 +12,23 @@ const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
 const keyword = ref('')
 const statusFilter = ref('')
 
+// 后端 InspectionOrder 真实字段为 order_type（first/inspection/spot_check），无 status 字段
+const ORDER_TYPE_MAP: Record<string, string> = {
+  first: '首件检验',
+  inspection: '过程检验',
+  spot_check: '抽检',
+}
+
 const statusOptions = [
   { value: '', label: '全部' },
-  { value: 'pending', label: '待检验' },
-  { value: 'inspecting', label: '检验中' },
-  { value: 'completed', label: '已完成' },
+  { value: 'first', label: '首件检验' },
+  { value: 'inspection', label: '过程检验' },
+  { value: 'spot_check', label: '抽检' },
 ]
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
-  if (statusFilter.value) params.status = statusFilter.value
+  if (statusFilter.value) params.order_type = statusFilter.value
   if (keyword.value) params.keyword = keyword.value
   
   const items = await fetchPage(async (p) => {
@@ -63,7 +70,7 @@ onMounted(loadData)
     <van-list v-model:loading="loading" :finished="!total || orders.length >= total" finished-text="没有更多了" @load="loadData">
       <van-cell v-for="item in orders" :key="item.id"
         :title="'检验单#'+item.id"
-        :label="item.qc_type || '-'"
+        :label="ORDER_TYPE_MAP[item.order_type] || item.order_type || '-'"
         is-link
         @click="router.push('/quality/'+item.id)"
       />
