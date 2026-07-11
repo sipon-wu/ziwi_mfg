@@ -362,14 +362,11 @@ function wcTypeLabel(t: string): string {
       <div class="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
         <van-field label="选择工序" required>
           <template #input>
-            <van-select v-model="editingStep.operation_id" placeholder="请选择工序">
-              <van-option
-                v-for="op in availableOps"
-                :key="op.id"
-                :value="op.id"
-                :label="`${op.code} - ${op.name}`"
-              />
-            </van-select>
+            <SelectField
+              v-model="editingStep.operation_id"
+              :options="availableOps.map(x => ({ value: x.id, label: `${x.code} - ${x.name}` }))"
+              placeholder="请选择工序"
+            />
           </template>
         </van-field>
 
@@ -377,22 +374,18 @@ function wcTypeLabel(t: string): string {
 
         <van-field label="步骤类型">
           <template #input>
-            <van-select v-model="editingStep.step_type" class="w-full">
-              <van-option v-for="opt in STEP_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-            </van-select>
+            <SelectField v-model="editingStep.step_type" :options="STEP_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
 
         <van-field label="执行工作中心">
           <template #input>
-            <van-select v-model="editingStep.wc_id" placeholder="可选" clearable>
-              <van-option
-                v-for="wc in allWorkCenters"
-                :key="wc.id"
-                :value="wc.id"
-                :label="`${wc.code} - ${wc.name}`"
-              />
-            </van-select>
+            <SelectField
+              v-model="editingStep.wc_id"
+              :options="allWorkCenters.map(x => ({ value: x.id, label: `${x.code} - ${x.name}` }))"
+              placeholder="可选"
+              clearable
+            />
           </template>
         </van-field>
 

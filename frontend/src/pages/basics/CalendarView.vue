@@ -246,9 +246,7 @@ onMounted(loadYear)
         <div class="text-sm font-medium">{{ editingDay.cal_date }}</div>
         <van-field label="日期类型">
           <template #input>
-            <van-select v-model="editingDay.day_type" class="w-full">
-              <van-option v-for="opt in DAY_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-            </van-select>
+            <SelectField v-model="editingDay.day_type" :options="DAY_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
         <van-field v-model="editingDay.name" label="名称" placeholder="如: 国庆节" />

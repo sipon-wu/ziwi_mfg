@@ -167,18 +167,7 @@ onMounted(() => {
         />
       </div>
       <div class="w-40">
-        <van-select
-          v-model="opTypeFilter"
-          placeholder="工序类型"
-          clearable
-        >
-          <van-option
-            v-for="opt in OP_TYPE_OPTIONS"
-            :key="opt.value"
-            :value="opt.value"
-            :label="opt.label"
-          />
-        </van-select>
+        <SelectField v-model="opTypeFilter" :options="OP_TYPE_OPTIONS" placeholder="工序类型" clearable />
       </div>
       <div class="flex gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
@@ -230,9 +219,7 @@ onMounted(() => {
         <van-field v-model="editing.name" label="工序名称" required placeholder="请输入名称" />
         <van-field label="工序类型" required>
           <template #input>
-            <van-select v-model="editing.op_type" class="w-full">
-              <van-option v-for="opt in OP_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-            </van-select>
+            <SelectField v-model="editing.op_type" :options="OP_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
         <van-field v-model.number="editing.setup_time" label="准备时间(min)" type="number" placeholder="0" />

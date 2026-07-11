@@ -218,9 +218,7 @@ onMounted(fetchData)
         />
       </div>
       <div class="w-36">
-        <van-select v-model="statusFilter" placeholder="状态" clearable>
-          <van-option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-        </van-select>
+        <SelectField v-model="statusFilter" :options="STATUS_OPTIONS" placeholder="状态" clearable />
       </div>
       <div class="flex gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
@@ -299,9 +297,7 @@ onMounted(fetchData)
         <van-field v-model="editing.name" label="路线名称" required placeholder="请输入名称" />
         <van-field label="路线类型" required>
           <template #input>
-            <van-select v-model="editing.route_type" class="w-full">
-              <van-option v-for="opt in ROUTE_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-            </van-select>
+            <SelectField v-model="editing.route_type" :options="ROUTE_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
         <van-field label="生效日期" @click="showDateFrom = true">

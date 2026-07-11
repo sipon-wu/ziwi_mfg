@@ -122,9 +122,7 @@ onMounted(fetchData)
         <van-field v-model="keyword" placeholder="搜索编码/名称/规格" clearable @keyup.enter="onSearch" />
       </div>
       <div class="w-32">
-        <van-select v-model="typeFilter" placeholder="产品类型" clearable>
-          <van-option v-for="opt in PRODUCT_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-        </van-select>
+        <SelectField v-model="typeFilter" :options="PRODUCT_TYPE_OPTIONS" placeholder="产品类型" clearable />
       </div>
       <van-field v-model="categoryFilter" placeholder="产品分类" class="w-36" clearable @keyup.enter="onSearch" />
       <div class="flex gap-2">
@@ -170,9 +168,7 @@ onMounted(fetchData)
         <van-field v-model="editing.spec" label="规格型号" placeholder="可选" />
         <van-field label="产品类型" required>
           <template #input>
-            <van-select v-model="editing.product_type" class="w-full">
-              <van-option v-for="opt in PRODUCT_TYPE_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
-            </van-select>
+            <SelectField v-model="editing.product_type" :options="PRODUCT_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
         <van-field v-model="editing.unit" label="单位" required placeholder="个/件/套/Kg/m" />
