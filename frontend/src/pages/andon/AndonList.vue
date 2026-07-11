@@ -9,6 +9,26 @@ import KpiCard from '@/components/KpiCard.vue'
 import SearchBar from '@/components/SearchBar.vue'
 
 const router = useRouter()
+
+// 安灯状态下文映射（避免右侧暴露英文 code）
+const STATUS_MAP: Record<string, string> = {
+  pending: '待响应',
+  in_progress: '响应中',
+  resolved: '已解决',
+  escalated: '已升级',
+  acknowledged: '已确认',
+  cancelled: '已取消',
+}
+const CALLTYPE_MAP: Record<string, string> = {
+  safety: '安全',
+  quality: '质量',
+  equipment: '设备',
+  process: '工艺',
+  material: '物料',
+  delivery: '交付',
+  other: '其他',
+}
+
 const calls = ref<AndonCall[]>([])
 const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
 
@@ -29,6 +49,8 @@ const statusOptions = [
   { value: 'in_progress', label: '响应中' },
   { value: 'resolved', label: '已解决' },
   { value: 'escalated', label: '已升级' },
+  { value: 'acknowledged', label: '已确认' },
+  { value: 'cancelled', label: '已取消' },
 ]
 
 function isToday(dateStr?: string): boolean {
@@ -49,8 +71,8 @@ async function loadKpi() {
     let resolvedToday = 0
     for (const c of items) {
       if (c.status === 'pending') pending++
-      else if (c.status === 'responding' || c.status === 'acknowledged' || c.status === 'processing') responding++
-      else if (c.status === 'resolved' || c.status === 'closed') {
+      else if (c.status === 'in_progress' || c.status === 'acknowledged') responding++
+      else if (c.status === 'resolved') {
         if (isToday(c.resolve_at) || isToday(c.created_at)) resolvedToday++
       }
     }
@@ -116,8 +138,8 @@ onMounted(() => {
       <van-cell
         v-for="item in calls" :key="item.id"
         :title="item.call_title || '呼叫#'+item.id"
-        :label="item.source_desc || item.call_type"
-        :value="item.status"
+        :label="item.source_desc || (CALLTYPE_MAP[item.call_type] || item.call_type)"
+        :value="STATUS_MAP[item.status] || item.status"
         is-link
         @click="goDetail(item.id)"
       />

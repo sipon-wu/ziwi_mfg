@@ -11,11 +11,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(username: string, password: string, tenantId?: string) {
     const res = await post<LoginResponse>('/auth/login', { username, password, tenant_id: tenantId })
     token.value = res.access_token
-    user.value = res.user
     localStorage.setItem('access_token', res.access_token)
     localStorage.setItem('refresh_token', res.refresh_token)
-    localStorage.setItem('tenant_id', res.user?.tenant_id || tenantId || '')
-    localStorage.setItem('user_info', JSON.stringify(res.user))
+    localStorage.setItem('tenant_id', tenantId || '')
+    // 登录接口只返回 token、不含 user；先存 token 再拉取真实用户（含 roles）并持久化
+    await fetchUser()
     isLoggedIn.value = true
   }
 
@@ -23,6 +23,8 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await post<UserInfo>('/auth/me')
       user.value = res
+      // 关键：把真实用户（含 roles）持久化到 localStorage，菜单与路由守卫才能读到角色
+      localStorage.setItem('user_info', JSON.stringify(res))
     } catch {
       logout()
     }

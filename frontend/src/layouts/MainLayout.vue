@@ -143,6 +143,7 @@ onMounted(loadUser)
 function getUserRoleCodes(): string[] {
   try {
     const raw = localStorage.getItem('user_info')
+    if (!raw || raw === 'undefined') return []
     if (raw) {
       const u = JSON.parse(raw)
       if (u.roles && Array.isArray(u.roles)) {
@@ -247,6 +248,18 @@ const allMenuTree: MenuItem[] = [
     children: [
       { id: 'cockpit', path: '/cockpit', label: '驾驶舱' },
       { id: 'workshop', path: '/workshop', label: '车间大屏' },
+    ],
+  },
+  {
+    id: 'basics',
+    label: '基础数据',
+    icon: '<path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    children: [
+      { id: 'op_operations', path: '/basics/operations', label: '工序定义' },
+      { id: 'op_workcenters', path: '/basics/work-centers', label: '工作中心' },
+      { id: 'op_routes', path: '/basics/routes', label: '工艺路线' },
+      { id: 'op_products', path: '/basics/products', label: '产品管理' },
+      { id: 'op_calendar', path: '/basics/calendar', label: '工厂日历' },
     ],
   },
   {
@@ -406,22 +419,28 @@ onMounted(syncFromRoute)
 /* ── 面包屑 ── */
 const breadcrumbs = computed(() => {
   const path = route.path
-  const result: { label: string; path?: string }[] = [{ label: '首页', path: '/cockpit' }]
+  const crumbs: { label: string; path?: string }[] = [{ label: '首页', path: '/dashboard' }]  // F11: 指向应用根 /dashboard
   for (const m of allMenuTree) {
     if (m.children) {
       for (const c of m.children) {
+        // 列表页：首页 / 模块名（当前页，不可点）
         if (c.path === path) {
-          result.push({ label: m.label })
-          result.push({ label: c.label })
-          return result
+          return [...crumbs, { label: m.label, path: undefined }]
+        }
+        // 详情页（动态 /:id）：首页 / 模块名(可点回列表) / 详情标题(不可点)
+        if (path.startsWith(c.path + '/')) {
+          const leaf = (route.meta?.title as string) || '详情'
+          return [...crumbs, { label: m.label, path: c.path }, { label: leaf, path: undefined }]
         }
       }
     } else if (m.path === path) {
-      result.push({ label: m.label })
-      return result
+      return [...crumbs, { label: m.label, path: undefined }]
     }
   }
-  return result
+  // 非菜单路由兜底：用 route.meta.title
+  const t = route.meta?.title as string | undefined
+  if (t) crumbs.push({ label: t, path: undefined })
+  return crumbs
 })
 </script>
 
