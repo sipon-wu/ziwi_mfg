@@ -1,10 +1,8 @@
 """
 FastAPI 依赖注入：获取当前用户、获取 DB session、租户感知的 Repo 工厂。
 
-变更说明 (2026-07-10):
-- get_current_user: 改用 cloud JWT (RS256) 验签 + cloud_uuid 查用户
-- get_feature_flags: 改为从 DB tenants.package_modules 查询
-- get_tenant_repo: 逻辑不变，tenant_id 来源从「本地 JWT」变为「cloud JWT + Header 降级」
+变更说明 (2026-07-12):
+- get_current_user: 增加本地 JWT 认证降级（子账号不走 cloud，走本地 bcrypt + HS256 JWT）
 """
 
 from typing import Any, Callable, Dict, Type, TypeVar
@@ -14,7 +12,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import verify_cloud_token, classify_jwt_error, TokenVerifyError
+from app.core.security import (
+    classify_jwt_error,
+    TokenVerifyError,
+    verify_cloud_token,
+    verify_local_token,
+)
 from app.repositories.user_repo import UserRepository
 from app.repositories.tenant_repo import TenantRepository
 
@@ -28,18 +31,15 @@ async def get_current_user(
     x_tenant_id: str = Header(default=None, alias="X-Tenant-Id"),
     db: AsyncSession = Depends(get_db),
 ):
-    """验证 cloud JWT 并返回 mfg 本地用户信息。
+    """验证 JWT 并返回 mfg 本地用户信息（支持 cloud RS256 + 本地 HS256 双通道）。
 
-    流程：
-    1. 提取 Bearer token
-    2. 调用 cloud JWKS 公钥验签 RS256 JWT
-    3. 从 JWT sub (UUID) 查 mfg 本地 users.cloud_uuid
-    4. 注入 tenant_id（cloud JWT 优先，X-Tenant-Id Header 降级）
-    5. 合并 cloud claims 到 user dict
+    认证顺序：
+    1. 先试 cloud RS256 JWT（管理员/cloud 用户）
+    2. 如果失败则试本地 HS256 JWT（子账号）
 
     Raises:
-        HTTPException 401: token 缺失/无效/过期，或用户未在 mfg 注册
-        HTTPException 503: cloud JWKS 不可达且无本地缓存
+        HTTPException 401: token 缺失/无效/过期
+        HTTPException 503: cloud JWKS 不可达（仅限 cloud 用户场景）
     """
     # 1. 检查 Authorization header
     if credentials is None:
@@ -50,66 +50,91 @@ async def get_current_user(
 
     token = credentials.credentials
 
-    # 2. 验签 cloud JWT
+    # ── 尝试 cloud JWT 验签（管理员/cloud 用户） ──
+    cloud_error = None
     try:
         payload = await verify_cloud_token(token)
     except Exception as e:
-        error_code = classify_jwt_error(e)
+        cloud_error = e
+
+    if cloud_error is None:
+        # cloud 验签成功 → 按 cloud 用户流程（原逻辑）
+        cloud_uuid = payload.get("sub")
+        if not cloud_uuid:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "MISSING_TOKEN", "message": "Token 缺少 sub 声明"},
+            )
+        try:
+            repo = UserRepository(db)
+            user = await repo.get_by_cloud_uuid(cloud_uuid)
+        except Exception:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "AUTH_UNAVAILABLE",
+                    "message": "认证服务暂不可用，请稍后重试",
+                },
+            )
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "401-0002",
+                    "message": f"用户在 mfg 平台未注册 (cloud_uuid={cloud_uuid})",
+                },
+            )
+        # 注入 tenant_id
+        cloud_tenant = payload.get("tenant_id")
+        effective_tenant = cloud_tenant or x_tenant_id or user.get("tenant_id")
+        if effective_tenant and hasattr(repo, "set_tenant_id"):
+            repo.set_tenant_id(effective_tenant)
+        # 合并 cloud claims
+        user["cloud_uuid"] = cloud_uuid
+        user["cloud_email"] = payload.get("email")
+        user["cloud_products"] = payload.get("products", [])
+        user["tenant_id"] = effective_tenant
+        return user
+
+    # ── cloud 验签失败 → 判断是否可降级 ──
+    error_code = classify_jwt_error(cloud_error)
+    # cloud JWKS 不可达 → 不可降级（基础设施故障）
+    if error_code == TokenVerifyError.JWKS_UNAVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "JWKS_UNAVAILABLE", "message": "认证服务暂不可用"},
+        )
+
+    # ── 尝试本地 JWT 验签（子账号降级） ──
+    try:
+        local_payload = verify_local_token(token)
+    except Exception:
+        # 本地 JWT 也失败 → 最终 401
         status_map = {
             TokenVerifyError.EXPIRED: (401, "token 已过期，请刷新"),
-            TokenVerifyError.JWKS_UNAVAILABLE: (503, "认证服务暂不可用"),
         }
-        http_status, message = status_map.get(
-            error_code,
-            (401, "无效的认证凭证"),
-        )
+        http_status, message = status_map.get(error_code, (401, "无效的认证凭证"))
         raise HTTPException(
             status_code=http_status,
             detail={"code": error_code.value, "message": message},
         )
 
-    # 3. 从 cloud JWT 提取用户标识
-    cloud_uuid = payload.get("sub")
-    if not cloud_uuid:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "MISSING_TOKEN", "message": "Token 缺少 sub 声明"},
-        )
-
-    # 4. 查 mfg 本地用户（按 cloud_uuid 映射）
-    try:
-        repo = UserRepository(db)
-        user = await repo.get_by_cloud_uuid(cloud_uuid)
-    except Exception:
-        # DB 查询失败（如缺少 cloud_uuid 列、连接异常等）→ 533（认证临时不可用）
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "AUTH_UNAVAILABLE",
-                "message": "认证服务暂不可用，请稍后重试",
-            },
-        )
+    # 本地 JWT 验签成功 → 按本地用户流程
+    user_id = int(local_payload["sub"])
+    tenant_id = local_payload.get("tenant_id")
+    repo = UserRepository(db)
+    user = await repo.get(user_id)
     if not user:
         raise HTTPException(
             status_code=401,
-            detail={
-                "code": "401-0002",
-                "message": f"用户在 mfg 平台未注册 (cloud_uuid={cloud_uuid})",
-            },
+            detail={"code": "401-0002", "message": "用户不存在或已被禁用"},
         )
-
-    # 5. 注入 tenant_id（cloud JWT 优先，X-Tenant-Id Header 降级）
-    cloud_tenant = payload.get("tenant_id")
-    effective_tenant = cloud_tenant or x_tenant_id
+    # 设置租户（本地用户在 JWT payload 中已含 tenant_id）
+    effective_tenant = tenant_id or x_tenant_id or user.get("tenant_id")
     if effective_tenant and hasattr(repo, "set_tenant_id"):
         repo.set_tenant_id(effective_tenant)
-
-    # 6. 将 cloud claims 合并到 user dict（下游可能依赖）
-    user["cloud_uuid"] = cloud_uuid
-    user["cloud_email"] = payload.get("email")
-    user["cloud_products"] = payload.get("products", [])
     user["tenant_id"] = effective_tenant
-
+    user["auth_type"] = "local"
     return user
 
 

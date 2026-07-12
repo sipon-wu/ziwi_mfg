@@ -1,21 +1,21 @@
 """
 M00-认证 路由模块。
 
-变更说明 (2026-07-10):
-- 移除 POST /login（前端直接调 cloud.ziwi.cn 登录）→ 2026-07-11 恢复为代理转发
-- 移除 POST /refresh（前端直接调 cloud 刷新 token）
-- 保留 POST /logout, GET /me, POST /change-password
-- GET /me 适配新 get_current_user（cloud JWT 验签）
+变更说明 (2026-07-12):
+- POST /login 增加本地认证分支：子账号（用户名不含 @）走本地 bcrypt 验密降级
 """
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_tenant_repo
+from app.core.security import create_local_token, verify_password
 from app.repositories.user_repo import UserRepository
 from app.repositories.role_repo import RoleRepository
 from app.services.auth_service import AuthService
 from app.schemas.auth import ChangePasswordRequest, LoginRequest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/v1/auth", tags=["M00-认证"])
 
@@ -23,12 +23,24 @@ CLOUD_LOGIN_URL = "https://cloud.ziwi.cn/api/v1/auth/login"
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
-    """代理登录：转发凭证到 cloud.ziwi.cn IdP，返回 JWT。
+async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """登录（支持本地认证降级 + cloud 代理联登）。
 
-    前端保持原有 /auth/login 调用不变，后端代理转发（避免 CORS 问题）。
-    cloud 登录使用 email 字段，前端传 username（实际就是 email 地址）。
+    子账号（用户名不含 @）：走本地 bcrypt 验密 → 签发本地 JWT
+    管理员（用户名含 @）：代理转发到 cloud.ziwi.cn → 返回 cloud JWT
     """
+    # ── 本地认证降级：子账号走本地 bcrypt 验密 ──
+    if '@' not in req.username:
+        repo = UserRepository(db)
+        user = await repo.get_with_password(req.username, req.tenant_id)
+        if not user:
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        if not verify_password(req.password, user.get("password_hash", "")):
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        token = create_local_token(user["id"], user["tenant_id"])
+        return {"access_token": token, "token_type": "bearer", "refresh_token": ""}
+
+    # ── cloud 代理登录（原有逻辑） ──
     async with httpx.AsyncClient(timeout=15) as client:
         try:
             resp = await client.post(
