@@ -28,8 +28,13 @@ cd deploy
 docker rm -f mfg1-backend 2>/dev/null || true
 docker compose up -d --no-deps --build mfg-backend
 
-echo "[5/5] 等待健康 + 轻量验证"
-sleep 12
+echo "[5/6] 连接 DB 网络 mfg1_default（新版容器只连 deploy_default，DB 在 mfg1_default）"
+docker network connect mfg1_default mfg1-backend 2>/dev/null || true
+docker restart mfg1-backend 2>/dev/null
+sleep 3
+
+echo "[6/6] 等待健康 + 轻量验证"
+sleep 10
 docker ps --filter name=mfg1-backend --format "{{.Names}} | {{.Status}}"
 curl -s -o /dev/null -w "health: %{http_code}\n" http://localhost:8092/health || echo "health check skipped/failed"
 echo "DEPLOY DONE"
