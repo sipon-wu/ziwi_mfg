@@ -377,6 +377,7 @@ class ReceiptOrderService:
                 "voucher_no": order["receipt_no"] if order else "",
                 "material_id": item["material_id"],
                 "warehouse_id": order["warehouse_id"],
+                "from_location_id": None,
                 "to_location_id": ins_row.get("location_id"),
                 "batch_no": batch_no,
                 "quantity": delta,
@@ -652,6 +653,7 @@ class IssueOrderService:
             "material_id": item["material_id"],
             "warehouse_id": order["warehouse_id"] if order else None,
             "from_location_id": from_location_id,
+            "to_location_id": None,
             "batch_no": batch_no,
             "quantity": qty,
             "unit": item["unit"],
@@ -659,6 +661,7 @@ class IssueOrderService:
             "source_doc_no": order["issue_no"] if order else "",
             "reference_type": "issue_order",
             "reference_id": item["issue_id"],
+            "remark": "出库确认-扣减库存",
             "created_by": created_by,
         })
 
