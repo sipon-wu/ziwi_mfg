@@ -826,7 +826,7 @@ async def report_summary(
              COALESCE(SUM(i.quantity) - SUM(i.locked_qty), 0) as available_qty
              FROM materials m
              LEFT JOIN inventory i ON i.material_id = m.id AND i.tenant_id = m.tenant_id
-             WHERE m.is_active = 1"""
+             WHERE m.is_active = true"""
     params = {}
     if warehouse_id:
         sql += " AND (i.warehouse_id = :wid OR i.warehouse_id IS NULL)"
@@ -850,7 +850,7 @@ async def report_turnover(
              FROM materials m
              LEFT JOIN inventory i ON i.material_id = m.id
              LEFT JOIN inventory_transactions t ON t.material_id = m.id
-             WHERE m.is_active = 1"""
+             WHERE m.is_active = true"""
     params = {}
     if warehouse_id:
         sql += " AND (i.warehouse_id = :wid OR i.warehouse_id IS NULL)"
@@ -872,7 +872,7 @@ async def report_slow_moving(
              CAST(julianday('now') - julianday(COALESCE(MAX(i.last_transaction_at), i.updated_at, '1970-01-01')) AS INTEGER) as idle_days
              FROM materials m
              JOIN inventory i ON i.material_id = m.id
-             WHERE m.is_active = 1 AND i.quantity > 0"""
+             WHERE m.is_active = true AND i.quantity > 0"""
     params = {}
     if warehouse_id:
         sql += " AND i.warehouse_id = :wid"

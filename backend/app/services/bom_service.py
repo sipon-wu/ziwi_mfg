@@ -93,7 +93,7 @@ class BomService:
         # 使用 product_code 在产品BOM表中查找
         sql = """SELECT * FROM product_bom
                  WHERE product_id IN (SELECT id FROM products WHERE code = :code)
-                 AND is_active = 1
+                 AND is_active = true
                  ORDER BY material_code"""
         # 如果 products 表不存在，回退到更简单的查询
         # 由于设计中使用 product_id，假设可以从工单的 product_code 查询
@@ -101,9 +101,9 @@ class BomService:
         # 先尝试通过工单中的 product_code 获取
         all_boms = await self.repo.query(
             """SELECT pb.* FROM product_bom pb
-               WHERE pb.is_active = 1
+               WHERE pb.is_active = true
                AND pb.tenant_id = :tid
-               AND pb.version = (SELECT MAX(pb2.version) FROM product_bom pb2 WHERE pb2.product_id = pb.product_id AND pb2.is_active = 1)
+               AND pb.version = (SELECT MAX(pb2.version) FROM product_bom pb2 WHERE pb2.product_id = pb.product_id AND pb2.is_active = true)
                ORDER BY pb.product_id, pb.material_code""",
             {"tid": tenant_id},
         )

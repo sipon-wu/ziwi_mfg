@@ -163,7 +163,7 @@ async def revoke_consumer(
 ):
     """吊销消费者（禁用 API Key）"""
     affected = await repo.execute(
-        "UPDATE sync_consumer SET is_active = 0 WHERE id = :id",
+        "UPDATE sync_consumer SET is_active = false WHERE id = :id",
         {"id": consumer_id},
     )
     if affected == 0:
@@ -180,7 +180,7 @@ async def renew_consumer(
     """续租消费者（延长过期时间）"""
     expires_at = datetime.now(timezone.utc) + timedelta(days=expire_days)
     affected = await repo.execute(
-        "UPDATE sync_consumer SET expires_at = :expires_at, is_active = 1 WHERE id = :id",
+        "UPDATE sync_consumer SET expires_at = :expires_at, is_active = true WHERE id = :id",
         {"expires_at": expires_at, "id": consumer_id},
     )
     if affected == 0:

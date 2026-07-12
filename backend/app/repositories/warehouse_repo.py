@@ -41,7 +41,7 @@ class WarehouseRepository(MultiTenantRepository):
         return await self.execute("DELETE FROM warehouses WHERE id = :id", {"id": id})
 
     async def get_all_active(self) -> List[Dict]:
-        return await self.query("SELECT * FROM warehouses WHERE is_active = 1 ORDER BY code")
+        return await self.query("SELECT * FROM warehouses WHERE is_active = true ORDER BY code")
 
 
 class WarehouseZoneRepository(MultiTenantRepository):
@@ -165,14 +165,14 @@ class MaterialRepository(MultiTenantRepository):
             """SELECT m.*, COALESCE(SUM(i.quantity), 0) as current_stock
                FROM materials m
                LEFT JOIN inventory i ON i.material_id = m.id
-               WHERE m.is_active = 1 AND m.safety_stock_qty > 0
+               WHERE m.is_active = true AND m.safety_stock_qty > 0
                GROUP BY m.id
                HAVING current_stock < m.safety_stock_qty"""
         )
 
     async def search(self, keyword: str, limit: int = 20) -> List[Dict]:
         return await self.query(
-            "SELECT * FROM materials WHERE is_active = 1 AND (code LIKE :kw OR name LIKE :kw) ORDER BY code LIMIT :lim",
+            "SELECT * FROM materials WHERE is_active = true AND (code LIKE :kw OR name LIKE :kw) ORDER BY code LIMIT :lim",
             {"kw": f"%{keyword}%", "lim": limit},
         )
 

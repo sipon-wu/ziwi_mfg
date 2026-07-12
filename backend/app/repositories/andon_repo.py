@@ -109,7 +109,7 @@ class AndonRepository(MultiTenantRepository):
 
     async def get_active_rules(self, call_type: str = None, priority: str = None) -> List[Dict]:
         """获取匹配条件的活跃升级规则，按级别升序排列。"""
-        sql = "SELECT * FROM andon_escalation_rules WHERE is_active = 1"
+        sql = "SELECT * FROM andon_escalation_rules WHERE is_active = true"
         params = {}
         if call_type:
             sql += " AND (call_type = :call_type OR call_type = 'all')"

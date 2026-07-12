@@ -61,7 +61,7 @@ class BomRepository(MultiTenantRepository):
         """
         sql = """SELECT * FROM product_bom
                  WHERE product_id = :product_id
-                 AND is_active = 1
+                 AND is_active = true
                  AND (effective_from IS NULL OR effective_from <= :eff_date)"""
         params = {"product_id": product_id, "eff_date": effective_date}
         if version is not None:
@@ -69,7 +69,7 @@ class BomRepository(MultiTenantRepository):
             params["version"] = version
         else:
             # 取最高版本
-            sql += " AND version = (SELECT MAX(version) FROM product_bom WHERE product_id = :pid2 AND is_active = 1)"
+            sql += " AND version = (SELECT MAX(version) FROM product_bom WHERE product_id = :pid2 AND is_active = true)"
             params["pid2"] = product_id
         sql += " ORDER BY material_code"
         return await self.query(sql, params)

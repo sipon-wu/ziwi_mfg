@@ -124,7 +124,7 @@ class LocationService:
                 "location_type": location_type,
                 "max_capacity": max_capacity,
                 "current_qty": 0,
-                "is_active": 1,
+                "is_active": True,
             })
             created.append({"id": loc_id, "code": code})
         return {"created": created, "errors": errors, "total": len(created)}

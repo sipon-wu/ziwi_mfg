@@ -69,10 +69,10 @@ class MaterialCheckService:
         # 这里简化：使用 product_code 搜索 product_bom 表
         boms = await self.bom_repo.query(
             """SELECT pb.* FROM product_bom pb
-               WHERE pb.is_active = 1
+               WHERE pb.is_active = true
                AND pb.tenant_id = :tid
                AND pb.version = (SELECT MAX(pb2.version) FROM product_bom pb2
-                                  WHERE pb2.product_id = pb.product_id AND pb2.is_active = 1)
+                                  WHERE pb2.product_id = pb.product_id AND pb2.is_active = true)
                ORDER BY pb.product_id, pb.material_code""",
             {"tid": order.get("tenant_id", "")},
         )
