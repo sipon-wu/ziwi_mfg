@@ -44,11 +44,21 @@ class Repository(ABC):
         await self._session.rollback()
 
     async def execute(self, sql: str, params: Dict[str, Any] = None) -> int:
+        # INSERT 统一用 RETURNING id 取真实自增主键，兼容 SQLite(3.35+) 与 PostgreSQL(asyncpg)。
+        # 注意：asyncpg 不会为 INSERT 填充 cursor.lastrowid（返回 -1），故不能依赖 lastrowid；
+        # 改为在真正执行前把 RETURNING id 拼进 SQL，再用 fetchone()[0] 取 PK，做到 DB 可移植。
+        # UPDATE/DELETE 仍返回受影响行数（rowcount），保持原语义、无回归。
+        sql_stripped = sql.strip()
+        upper = sql_stripped.upper()
+        if upper.startswith("INSERT") and "RETURNING" not in upper:
+            sql = f"{sql_stripped.rstrip(';')} RETURNING id"
         result = await self._session.execute(text(sql), params or {})
         await self._session.flush()
-        # INSERT 语句返回自增主键（lastrowid），UPDATE/DELETE 返回受影响行数（rowcount）。
-        # 历史实现统一返回 rowcount，导致所有 create 响应 data.id 恒为 1（N3 正确性 bug）。
-        if sql.strip().upper().startswith("INSERT"):
+        if upper.startswith("INSERT"):
+            row = result.fetchone()
+            if row is not None:
+                return row[0]
+            # 极端兜底：极老 SQLite（<3.35）不支持 RETURNING 时回退到 lastrowid / rowcount
             lastrowid = result.lastrowid
             return lastrowid if lastrowid is not None else result.rowcount
         return result.rowcount
