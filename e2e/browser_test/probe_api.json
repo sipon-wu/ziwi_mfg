@@ -1,0 +1,78 @@
+{
+  "health": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "login": {
+    "status": 200,
+    "hasToken": false
+  },
+  "GET /wms/reports/stock-summary": {
+    "status": 401,
+    "body": "{\"detail\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header 缺失\"}}"
+  },
+  "GET /wms/receipt-orders": {
+    "status": 401,
+    "body": "{\"detail\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header 缺失\"}}"
+  },
+  "GET /wms/issue-orders": {
+    "status": 401,
+    "body": "{\"detail\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header 缺失\"}}"
+  },
+  "GET /factories": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /plants": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /materials": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /warehouses": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /suppliers": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /customers": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /boms": {
+    "status": 401,
+    "body": "{\"detail\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header 缺失\"}}"
+  },
+  "GET /purchase-orders": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /sales-orders": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /work-orders": {
+    "status": 401,
+    "body": "{\"detail\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header 缺失\"}}"
+  },
+  "GET /inventory": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /inventory-transactions": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /inspections": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  },
+  "GET /dashboard": {
+    "status": 404,
+    "body": "{\"detail\":\"Not Found\",\"code\":\"ROUTE_NOT_FOUND\"}"
+  }
+}

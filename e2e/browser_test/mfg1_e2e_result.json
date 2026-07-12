@@ -1,0 +1,132 @@
+{
+  "generatedAt": "2026-07-12T06:31:21.352Z",
+  "base": "https://mfg1.ziwi.cn",
+  "prefix": "E2E_BROWSER_",
+  "summary": {
+    "total": 9,
+    "PASS": 1,
+    "PARTIAL": 2,
+    "FAIL": 0,
+    "BLOCKED": 6
+  },
+  "results": [
+    {
+      "id": "TC-00",
+      "name": "登录与导航冒烟",
+      "status": "PASS",
+      "detail": "UI 登录成功，跳转 https://mfg1.ziwi.cn/#/cockpit；关键页面渲染检查：驾驶舱:OK，工单管理:OK，BOM:OK，物料主数据:OK，入库单:OK，库存查询:OK，安灯:OK；控制台 error 3 条（见 evidence）。",
+      "evidence": {
+        "url": "https://mfg1.ziwi.cn/#/cockpit",
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 500 ()",
+          "[pageerror] Request failed with status code 500",
+          "Failed to load resource: the server responded with a status of 422 ()"
+        ]
+      }
+    },
+    {
+      "id": "TC-01",
+      "name": "新建仿真工厂",
+      "status": "BLOCKED",
+      "detail": "后端无独立工厂/Plant 管理模块（无 /factories、/plants 路由）；工厂/租户建档需经 cloud.ziwi.cn IdP 或 /tenants 管理员接口（test_admin 探活 /tenants → 200）。按授权边界不在 mfg_demo 内新建租户，故未创建任何工厂数据。需主理人/用户决策建模方式。",
+      "evidence": {
+        "tenantsStatus": 200
+      }
+    },
+    {
+      "id": "TC-02",
+      "name": "主数据准备(工厂内)",
+      "status": "PARTIAL",
+      "detail": "物料 200(id=1)；仓库 200(id=1)；库位 200(id=1)。BOM 需产品主数据且工单下达链路被 BUG-5 阻断，未单独验证；供应商/客户主数据：后端无 /suppliers、/customers 路由(404/404)，无法建档。",
+      "evidence": {
+        "matStatus": 200,
+        "whStatus": 200,
+        "locStatus": 200,
+        "suppliersStatus": 404,
+        "customersStatus": 404
+      }
+    },
+    {
+      "id": "TC-03",
+      "name": "采购入库闭环",
+      "status": "BLOCKED",
+      "detail": "入库单创建 500（已知 BUG-1），request_id=98cb4519；库存无法增加，采购入库闭环中断。",
+      "evidence": {
+        "status": 500,
+        "body": {
+          "code": "500-0000",
+          "message": "内部服务异常",
+          "request_id": "98cb4519"
+        }
+      }
+    },
+    {
+      "id": "TC-04",
+      "name": "生产工单闭环",
+      "status": "BLOCKED",
+      "detail": "工单创建 200(id=232)；下达: 下达500(已知BUG-5) req=90709ec0；领料: 领料出库500(已知BUG-2/3) req=7d03d362；报工: 报工成功。BOM 快照/齐套性随下达链路阻断，completed_qty 回写未验证。",
+      "evidence": {
+        "woStatus": 200,
+        "releaseDetail": "下达500(已知BUG-5) req=90709ec0",
+        "issueDetail": "领料出库500(已知BUG-2/3) req=7d03d362",
+        "wrDetail": "报工成功"
+      }
+    },
+    {
+      "id": "TC-05",
+      "name": "销售出库闭环",
+      "status": "BLOCKED",
+      "detail": "销售出库(issue) 500（已知 BUG-2/3）req=3dc493b0；销售订单主数据：后端无 /sales-orders 路由(404)。",
+      "evidence": {
+        "ioStatus": 500,
+        "salesOrdersStatus": 404
+      }
+    },
+    {
+      "id": "TC-06",
+      "name": "库存联动与数据对不拢核对",
+      "status": "BLOCKED",
+      "detail": "库存汇总 stock-summary 500（已知 BUG-4）req=a59884b2；无法做收发存汇总对账。库存列表 200、流水 200 可查但无闭环数据联动可验。",
+      "evidence": {
+        "ssStatus": 500,
+        "invStatus": 200,
+        "txStatus": 200
+      }
+    },
+    {
+      "id": "TC-07",
+      "name": "异常与看板",
+      "status": "PARTIAL",
+      "detail": "驾驶舱可加载；安灯(andon)呼叫创建 200(可达)；看板数值与底层一致性因汇总接口 500 无法自动核对。",
+      "evidence": {
+        "andonStatus": 200,
+        "andonBody": {
+          "code": 0,
+          "message": "安灯呼叫已创建",
+          "data": {
+            "id": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "TC-08",
+      "name": "跨模块一致性总核对",
+      "status": "BLOCKED",
+      "detail": "工单(232)-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成（见 consistency-matrix.json）。",
+      "evidence": {
+        "work_order_id": 232,
+        "material_id": 1,
+        "warehouse_id": 1,
+        "note": "工单-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成，矩阵框架已建，待服务端部署修复后重跑。"
+      }
+    }
+  ],
+  "createdIds": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzMCIsInRlbmFudF9pZCI6Im1mZ19kZW1vIiwiaXNzIjoibWZnX2xvY2FsIiwidHlwZSI6ImxvY2FsIiwiaWF0IjoxNzgzODM3ODY4LCJleHAiOjE3ODM5MjQyNjh9.59U2OjUx5CsxFY5TEm0pHBFsZU59Em3AWCcY1wPkRUQ",
+    "matId": 1,
+    "whId": 1,
+    "locId": 1,
+    "woId": 232
+  }
+}

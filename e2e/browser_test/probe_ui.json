@@ -1,0 +1,200 @@
+{
+  "url": "https://mfg1.ziwi.cn/#/login",
+  "title": "知微制造 · ziwi",
+  "htmlLen": 2540,
+  "menuText": "知微制造\n首页\n驾驶舱\n车间大屏\n基础数据\n生产管理\n设备管理\n安灯管理\n品质管理\n能碳管理\n数据采集\n试产管理\n实验室\n系统管理\n© 2026 知微 版权所有\n知微制造管理系统\n测试系统管理员\n驾驶舱\n首页 / 首页\n驾驶舱 · 模块概览\n生产管理\n工单: 17\nTPM设备\n设备: 0\n品质管理\n—\n安灯系统\n—\n能碳管理\n—\n数据采集\n—",
+  "formFields": [
+    {
+      "type": "text",
+      "name": "",
+      "id": "van-field-1-input",
+      "placeholder": "请输入用户名",
+      "autocomplete": ""
+    },
+    {
+      "type": "password",
+      "name": "",
+      "id": "van-field-2-input",
+      "placeholder": "请输入密码",
+      "autocomplete": ""
+    }
+  ],
+  "console": [],
+  "failedReqs": [],
+  "urlAfterLogin": "https://mfg1.ziwi.cn/#/cockpit",
+  "titleAfterLogin": "知微制造 · ziwi",
+  "navLinks": [
+    {
+      "text": "驾驶舱",
+      "href": "https://mfg1.ziwi.cn/#/cockpit"
+    },
+    {
+      "text": "车间大屏",
+      "href": "https://mfg1.ziwi.cn/#/workshop"
+    },
+    {
+      "text": "工序定义",
+      "href": "https://mfg1.ziwi.cn/#/basics/operations"
+    },
+    {
+      "text": "工作中心",
+      "href": "https://mfg1.ziwi.cn/#/basics/work-centers"
+    },
+    {
+      "text": "工艺路线",
+      "href": "https://mfg1.ziwi.cn/#/basics/routes"
+    },
+    {
+      "text": "产品管理",
+      "href": "https://mfg1.ziwi.cn/#/basics/products"
+    },
+    {
+      "text": "工厂日历",
+      "href": "https://mfg1.ziwi.cn/#/basics/calendar"
+    },
+    {
+      "text": "工单管理",
+      "href": "https://mfg1.ziwi.cn/#/work-orders"
+    },
+    {
+      "text": "报工管理",
+      "href": "https://mfg1.ziwi.cn/#/work-reports"
+    },
+    {
+      "text": "生产报表",
+      "href": "https://mfg1.ziwi.cn/#/reports"
+    },
+    {
+      "text": "生产排产",
+      "href": "https://mfg1.ziwi.cn/#/schedule"
+    },
+    {
+      "text": "BOM管理",
+      "href": "https://mfg1.ziwi.cn/#/boms"
+    },
+    {
+      "text": "设备管理",
+      "href": "https://mfg1.ziwi.cn/#/equipment"
+    },
+    {
+      "text": "保养任务",
+      "href": "https://mfg1.ziwi.cn/#/equipment/maintenance-tasks"
+    },
+    {
+      "text": "维护计划",
+      "href": "https://mfg1.ziwi.cn/#/equipment/maintenance-plans"
+    },
+    {
+      "text": "安灯管理",
+      "href": "https://mfg1.ziwi.cn/#/andon"
+    },
+    {
+      "text": "升级规则",
+      "href": "https://mfg1.ziwi.cn/#/andon/escalation-rules"
+    },
+    {
+      "text": "品质管理",
+      "href": "https://mfg1.ziwi.cn/#/quality"
+    },
+    {
+      "text": "SPC控制限",
+      "href": "https://mfg1.ziwi.cn/#/quality/spc/control-limits"
+    },
+    {
+      "text": "PPAP等级",
+      "href": "https://mfg1.ziwi.cn/#/quality/ppap/levels"
+    },
+    {
+      "text": "PPAP提交",
+      "href": "https://mfg1.ziwi.cn/#/quality/ppap/submissions"
+    },
+    {
+      "text": "PPAP要素",
+      "href": "https://mfg1.ziwi.cn/#/quality/ppap/elements"
+    },
+    {
+      "text": "FMEA管理",
+      "href": "https://mfg1.ziwi.cn/#/quality/fmea"
+    },
+    {
+      "text": "能碳管理",
+      "href": "https://mfg1.ziwi.cn/#/energy"
+    },
+    {
+      "text": "用能概况",
+      "href": "https://mfg1.ziwi.cn/#/energy/overview"
+    },
+    {
+      "text": "能耗分析",
+      "href": "https://mfg1.ziwi.cn/#/energy/analysis"
+    },
+    {
+      "text": "碳管理",
+      "href": "https://mfg1.ziwi.cn/#/energy/carbon"
+    },
+    {
+      "text": "数据采集",
+      "href": "https://mfg1.ziwi.cn/#/data-collection"
+    },
+    {
+      "text": "试产工单",
+      "href": "https://mfg1.ziwi.cn/#/trials"
+    },
+    {
+      "text": "实验委托",
+      "href": "https://mfg1.ziwi.cn/#/lab"
+    },
+    {
+      "text": "标准库",
+      "href": "https://mfg1.ziwi.cn/#/lab/standards"
+    },
+    {
+      "text": "系统配置",
+      "href": "https://mfg1.ziwi.cn/#/system/config"
+    },
+    {
+      "text": "许可证",
+      "href": "https://mfg1.ziwi.cn/#/system/license"
+    },
+    {
+      "text": "首页",
+      "href": "https://mfg1.ziwi.cn/#/dashboard"
+    }
+  ],
+  "appRoutes": [
+    "https://mfg1.ziwi.cn/#/cockpit",
+    "https://mfg1.ziwi.cn/#/workshop",
+    "https://mfg1.ziwi.cn/#/basics/operations",
+    "https://mfg1.ziwi.cn/#/basics/work-centers",
+    "https://mfg1.ziwi.cn/#/basics/routes",
+    "https://mfg1.ziwi.cn/#/basics/products",
+    "https://mfg1.ziwi.cn/#/basics/calendar",
+    "https://mfg1.ziwi.cn/#/work-orders",
+    "https://mfg1.ziwi.cn/#/work-reports",
+    "https://mfg1.ziwi.cn/#/reports",
+    "https://mfg1.ziwi.cn/#/schedule",
+    "https://mfg1.ziwi.cn/#/boms",
+    "https://mfg1.ziwi.cn/#/equipment",
+    "https://mfg1.ziwi.cn/#/equipment/maintenance-tasks",
+    "https://mfg1.ziwi.cn/#/equipment/maintenance-plans",
+    "https://mfg1.ziwi.cn/#/andon",
+    "https://mfg1.ziwi.cn/#/andon/escalation-rules",
+    "https://mfg1.ziwi.cn/#/quality",
+    "https://mfg1.ziwi.cn/#/quality/spc/control-limits",
+    "https://mfg1.ziwi.cn/#/quality/ppap/levels",
+    "https://mfg1.ziwi.cn/#/quality/ppap/submissions",
+    "https://mfg1.ziwi.cn/#/quality/ppap/elements",
+    "https://mfg1.ziwi.cn/#/quality/fmea",
+    "https://mfg1.ziwi.cn/#/energy",
+    "https://mfg1.ziwi.cn/#/energy/overview",
+    "https://mfg1.ziwi.cn/#/energy/analysis",
+    "https://mfg1.ziwi.cn/#/energy/carbon",
+    "https://mfg1.ziwi.cn/#/data-collection",
+    "https://mfg1.ziwi.cn/#/trials",
+    "https://mfg1.ziwi.cn/#/lab",
+    "https://mfg1.ziwi.cn/#/lab/standards",
+    "https://mfg1.ziwi.cn/#/system/config",
+    "https://mfg1.ziwi.cn/#/system/license",
+    "https://mfg1.ziwi.cn/#/dashboard"
+  ]
+}
