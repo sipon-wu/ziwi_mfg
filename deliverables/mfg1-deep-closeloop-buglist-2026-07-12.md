@@ -55,3 +55,18 @@
 1. 由 mfg 团队或获授权者按 `cloud/deploy/runbook.md` 部署上述改动并重启 mfg1-backend。
 2. 重跑 `e2e/closed_loop_test.py`，预期：S1 核心闭环全绿、S2 FIFO/LIFO 正确、S3 齐套性返回明确结果、S4 异常+看板可用。
 3. 届时如仍有「数据对不拢」，将作为新 BUG 追加到本列表。
+
+## 提交与部署交接（2026-07-12 更新）
+
+- **已 commit（本地仓库，未 push）**，共 3 个提交：
+  - `92ed823` `fix(backend): 修复深度业务闭环 5 处 500 阻断`  ← 本轮 3 个修复文件（wms_repo.py / wms.py / production_repo.py）
+  - `78127bc` `fix(backend): 同步上一轮未提交的认证/依赖/安全层改动`  ← 顺带把此前**未提交**的后端改动（auth.py / dependencies.py / security.py / requirements.txt，含 JWT feature-flag 注入）纳入，**避免部署代码与运行态不一致**；若该提交仍属实验性可 `git revert 78127bc` 单独撤销
+  - `cb2cd7c` `test(e2e): 深度业务闭环测试脚本与 BUG 报告`  ← 测试脚本 + 本报告
+- **未 push**：遵守边界铁律，云端部署由 mfg 团队执行，主理人不碰 CVM。
+
+### mfg 团队部署要点
+1. 拉取上述 3 个提交（`git log` 应可见 `92ed823`/`78127bc`/`cb2cd7c`），重启 `mfg1-backend` 容器。
+2. 验证入口：重跑 `e2e/closed_loop_test.py`
+   - Base URL：`https://mfg1.ziwi.cn/api/v1`，租户 `mfg_demo`，账号 `test_admin / test123456`
+   - 重点确认：S1 核心闭环不再 500；S4 的 `GET /wms/reports/stock-summary` 不再 500 且返回 float 数值（非 Decimal 序列化报错）
+3. 若重跑后仍出现「数据对不拢」（FIFO/LIFO 拣选错误、库存增减不一致、流水数量偏差、工单 `completed_qty` 未回写、质检结果未联动），作为新 BUG 追加到本列表并回传。
