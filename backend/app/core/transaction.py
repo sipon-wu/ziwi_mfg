@@ -14,18 +14,25 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants.wms_constants import WMS_ERRORS
+
 
 class PostingError(Exception):
     """过账业务异常。
 
     携带错误码（与现有 ``400-0000`` 风格一致）与对应 HTTP 状态码，
     由 API 层统一映射为 ``HTTPException(4xx, detail={"code": ..., "message": ...})``。
+
+    http_status 优先从 WMS_ERROR_CODES 字典中自动解析（如 "WMS_409_ALREADY_CANCELLED" → 409），
+    查不到时回退为传入值或默认 400。
     """
 
     def __init__(self, code: str, message: str, http_status: int = 400):
         self.code = code
         self.message = message
-        self.http_status = http_status
+        # 自动从错误码常量字典解析 HTTP 状态码
+        entry = WMS_ERRORS.get(code)
+        self.http_status = entry[0] if entry else http_status
         super().__init__(message)
 
 
