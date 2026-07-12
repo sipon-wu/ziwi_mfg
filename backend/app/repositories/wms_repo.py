@@ -347,6 +347,25 @@ class InventoryRepository(MultiTenantRepository):
             {"qty": quantity, "id": id},
         )
 
+    async def find_available_batches(self, material_id: int, warehouse_id: int,
+                                     pick_strategy: str = "fifo", required_qty: float = None) -> list:
+        """按拣选策略查找可用批次库存，按优先级排序返回
+        pick_strategy: fifo → 按批次入库时间 ASC（最早的先出）
+                       lifo → 按批次入库时间 DESC（最新的先出）
+                       manual → 返回全部可用（由调用方/人工选择）
+        """
+        order_dir = "ASC" if pick_strategy == "fifo" else "DESC"
+        sql = f"""SELECT i.*, b.batch_no, b.manufacture_date, b.created_at as batch_created_at
+                   FROM inventory i
+                   JOIN batches b ON b.id = i.batch_id
+                   WHERE i.material_id = :mid
+                     AND i.warehouse_id = :wid
+                     AND (i.quantity - i.locked_qty) > 0
+                     AND b.is_locked IS NOT TRUE
+                     AND b.status = 'active'
+                   ORDER BY b.created_at {order_dir}"""
+        return await self.query(sql, {"mid": material_id, "wid": warehouse_id})
+
 
 class InventoryTransactionRepository(MultiTenantRepository):
     """库存交易流水"""

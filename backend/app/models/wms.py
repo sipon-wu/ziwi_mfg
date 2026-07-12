@@ -81,6 +81,7 @@ class Material(Base):
     lead_time_days    = Column(Integer, default=0, comment="采购提前期(天)")
     image_url         = Column(String(256), comment="图片URL")
     is_active         = Column(Boolean, default=True, comment="启用状态")
+    pick_strategy     = Column(String(20), default="fifo", comment="拣选策略: fifo/lifo/manual")
     created_at        = Column(DateTime(timezone=True), server_default=func.now())
     updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

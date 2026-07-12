@@ -73,6 +73,7 @@ class MaterialCreate(BaseModel):
     lead_time_days: int = 0
     image_url: Optional[str] = None
     is_active: bool = True
+    pick_strategy: str = "fifo"
 
 class MaterialUpdate(BaseModel):
     name: Optional[str] = None
@@ -80,6 +81,7 @@ class MaterialUpdate(BaseModel):
     unit: Optional[str] = None
     material_type: Optional[str] = None
     material_category: Optional[str] = None
+    pick_strategy: Optional[str] = None
     is_batch_managed: Optional[bool] = None
     is_serial_managed: Optional[bool] = None
     storage_condition: Optional[str] = None
@@ -386,6 +388,7 @@ class MaterialResponse(BaseModel):
     lead_time_days: int = 0
     image_url: Optional[str] = None
     is_active: bool = True
+    pick_strategy: str = "fifo"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)

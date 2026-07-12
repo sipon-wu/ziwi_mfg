@@ -465,35 +465,92 @@ class IssueOrderService:
 
     async def issue_item(self, item_id: int, data: dict, tenant_id: str,
                          created_by: int = None) -> dict:
-        """出库：扣减库存并更新状态"""
+        """出库：扣减库存并更新状态
+        若未指定 from_location_id，则按物料级 pick_strategy 自动拣选批次：
+          fifo → 最早批次先出
+          lifo → 最新批次先出
+          manual → 要求调用方指定，抛错提示
+        """
         item = await self.item_repo.get(item_id)
         if not item:
             raise ValueError(f"出库明细不存在: {item_id}")
 
         qty = data.get("issued_qty", item["required_qty"])
         location_id = data.get("from_location_id")
+        batch_no = data.get("batch_no")
 
-        # 扣减库存
-        await self.inv_repo.stock_out(item_id, qty)
-
-        # 记录交易流水
         order = await self.repo.get(item["issue_id"])
-        await self.tx_repo.create({
-            "tenant_id": tenant_id,
-            "transaction_type": "issue",
-            "voucher_no": order["issue_no"] if order else "",
-            "material_id": item["material_id"],
-            "warehouse_id": order["warehouse_id"] if order else None,
-            "from_location_id": location_id,
-            "batch_no": data.get("batch_no"),
-            "quantity": -qty,
-            "unit": item["unit"],
-            "source_type": "production",
-            "source_doc_no": order["issue_no"] if order else "",
-            "reference_type": "issue_order",
-            "reference_id": item["issue_id"],
-            "created_by": created_by,
-        })
+        warehouse_id = order["warehouse_id"] if order else None
+
+        # 未指定出库批次，自动按物料策略拣选
+        if not location_id and not batch_no:
+            from app.repositories.wms_repo import MaterialRepository
+            mat_repo = MaterialRepository(self.item_repo._session)
+            if self.item_repo._tenant_id:
+                mat_repo.set_tenant_id(self.item_repo._tenant_id)
+            material = await mat_repo.get(item["material_id"])
+            pick_strategy = material.get("pick_strategy", "fifo") if material else "fifo"
+
+            if pick_strategy == "manual":
+                raise ValueError(f"物料 {item['material_id']} 拣选策略为 manual，需指定批次出库")
+
+            batches = await self.inv_repo.find_available_batches(
+                item["material_id"], warehouse_id, pick_strategy, qty
+            )
+            if not batches:
+                raise ValueError(f"物料 {item['material_id']} 无可用的批次库存")
+
+            # 从最优先批次扣减，不足时顺延到下一批次
+            remaining = qty
+            for batch_inv in batches:
+                if remaining <= 0:
+                    break
+                avail = batch_inv["quantity"] - batch_inv["locked_qty"]
+                take = min(remaining, avail)
+                if take > 0:
+                    await self.inv_repo.stock_out(batch_inv["id"], take)
+                    await self.tx_repo.create({
+                        "tenant_id": tenant_id,
+                        "transaction_type": "issue",
+                        "voucher_no": order["issue_no"] if order else "",
+                        "material_id": item["material_id"],
+                        "warehouse_id": warehouse_id,
+                        "from_location_id": batch_inv.get("location_id"),
+                        "batch_id": batch_inv.get("batch_id"),
+                        "batch_no": batch_inv.get("batch_no"),
+                        "quantity": -take,
+                        "unit": item["unit"],
+                        "source_type": "production",
+                        "source_doc_no": order["issue_no"] if order else "",
+                        "reference_type": "issue_order",
+                        "reference_id": item["issue_id"],
+                        "created_by": created_by,
+                    })
+                    remaining -= take
+
+            if remaining > 0:
+                raise ValueError(f"物料库存不足，仍需 {remaining} {item['unit']}")
+
+        else:
+            # 指定了批次 → 直接扣减（兼容旧逻辑 + manual 策略）
+            loc_id = location_id or (await self.inv_repo.find_one(item["material_id"], warehouse_id)).get("location_id")
+            await self.inv_repo.stock_out(item_id, qty)
+            await self.tx_repo.create({
+                "tenant_id": tenant_id,
+                "transaction_type": "issue",
+                "voucher_no": order["issue_no"] if order else "",
+                "material_id": item["material_id"],
+                "warehouse_id": warehouse_id,
+                "from_location_id": loc_id,
+                "batch_no": batch_no or data.get("batch_no"),
+                "quantity": -qty,
+                "unit": item["unit"],
+                "source_type": "production",
+                "source_doc_no": order["issue_no"] if order else "",
+                "reference_type": "issue_order",
+                "reference_id": item["issue_id"],
+                "created_by": created_by,
+            })
 
         await self.item_repo.update(item_id, {"issued_qty": qty, "pick_status": "picked"})
 
