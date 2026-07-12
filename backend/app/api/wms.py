@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from typing import Optional
 from app.core.dependencies import get_current_user, get_tenant_repo
+from app.core.transaction import PostingError
 from app.repositories.wms_repo import (
     WarehouseRepository, WarehouseZoneRepository, WarehouseLocationRepository,
     MaterialRepository, BatchRepository,
@@ -424,7 +425,7 @@ async def delete_receipt_order(ro_id: int,
     return {"code": 0, "message": "入库单删除成功", "data": result}
 
 @router.post("/receipt-order-items/{item_id}/receive")
-async def receive_item(item_id: int, req: ReceiptOrderItemUpdate,
+async def receive_item(item_id: int, req: ReceiptOrderItemUpdate, current_user: dict = Depends(get_current_user),
     repo: ReceiptOrderRepository = Depends(get_tenant_repo(ReceiptOrderRepository, require_auth=True)),
     item_repo: ReceiptOrderItemRepository = Depends(get_tenant_repo(ReceiptOrderItemRepository, require_auth=True)),
     inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
@@ -432,8 +433,11 @@ async def receive_item(item_id: int, req: ReceiptOrderItemUpdate,
 ):
     svc = ReceiptOrderService(repo, item_repo, inv_repo, tx_repo)
     try:
-        result = await svc.receive_item(item_id, req.model_dump(exclude_unset=True))
-        return {"code": 0, "message": "收货成功", "data": result}
+        result = await svc.receive_item(item_id, req.model_dump(exclude_unset=True),
+                                         current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
+        return {"code": 0, "message": "收货登记成功（待检区入账）", "data": result}
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 
@@ -448,7 +452,9 @@ async def store_item(item_id: int, req: ReceiptOrderItemUpdate, current_user: di
     try:
         result = await svc.store_item(item_id, req.model_dump(exclude_unset=True),
                                       current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
-        return {"code": 0, "message": "上架成功", "data": result}
+        return {"code": 0, "message": "上架确认成功", "data": result}
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 
@@ -543,6 +549,8 @@ async def issue_item_action(item_id: int, req: IssueOrderItemUpdate, current_use
         result = await svc.issue_item(item_id, req.model_dump(exclude_unset=True),
                                       current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
         return {"code": 0, "message": "出库成功", "data": result}
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 

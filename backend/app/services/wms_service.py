@@ -1,6 +1,15 @@
 """M20 仓储管理（WMS）模块 — Service 层"""
 from datetime import date, datetime
 from typing import Optional, Dict, List
+from app.core.transaction import posting_scope, PostingError
+from app.constants.wms_constants import (
+    RECEIPT_PENDING, RECEIPT_INSPECTING, RECEIPT_PARTIALLY_STORED, RECEIPT_STORED,
+    RECEIPT_CANCELLED, RECEIPT_TRANSITION,
+    ISSUE_PENDING, ISSUE_APPROVED, ISSUE_PICKING, ISSUE_PARTIALLY_ISSUED, ISSUE_ISSUED,
+    ISSUE_CANCELLED, ISSUE_TRANSITION,
+    INSPECTION_QUALIFIED, INSPECTION_DISQUALIFIED,
+    ZONE_TYPE_INSPECTION,
+)
 from app.repositories.wms_repo import (
     WarehouseRepository, WarehouseZoneRepository, WarehouseLocationRepository,
     MaterialRepository, BatchRepository,
@@ -323,98 +332,163 @@ class ReceiptOrderService:
         await self.item_repo.delete_by_receipt(id)
         return {"affected": await self.repo.delete(id)}
 
-    async def receive_item(self, item_id: int, data: dict) -> dict:
-        """收货：更新实收数量"""
+    async def receive_item(self, item_id: int, data: dict, tenant_id: str = None,
+                           created_by: int = None) -> dict:
+        """收货登记（方案 B 过账节点 #1）：pending → inspecting，写待检区库存 + 流水。
+
+        关键点（决策#2/#5/#6）：
+        - 收货登记即进待检区：待检区入账（计入现存量、可用量不含），**不过账到正式台账**；
+        - IQC 通过是上架确认（→stored）的前置校验，不阻塞待检区入账；
+        - 用 receive_qty 的 **增量** 过账，避免重复收货时重复入账（幂等）。
+
+        过账内核整体包在 ``posting_scope`` 内，与同请求内其他写入共享事务。
+        """
         item = await self.item_repo.get(item_id)
         if not item:
             raise ValueError(f"入库明细不存在: {item_id}")
-        if data.get("received_qty") is not None:
-            await self.item_repo.update(item_id, {"received_qty": data["received_qty"]})
-
-        # 更新入库单汇总
         order = await self.repo.get(item["receipt_id"])
-        items = await self.item_repo.list_by_receipt(item["receipt_id"])
-        total_received = sum(i["received_qty"] or 0 for i in items)
-        total_expected = sum(i["expected_qty"] or 0 for i in items)
-        new_status = "stored" if total_received >= total_expected else "partially_stored"
-        if total_received > 0 and total_received < total_expected:
-            new_status = "partially_stored"
-        elif total_received == 0:
-            new_status = order["status"]
-        await self.repo.update(item["receipt_id"], {
-            "received_qty": total_received, "status": new_status,
-        })
-        return {"item_id": item_id, "order_status": new_status}
+        if not order:
+            raise ValueError(f"入库单不存在: {item['receipt_id']}")
+        if order["status"] == RECEIPT_CANCELLED:
+            raise PostingError("WMS_409_STATUS", "入库单已取消，无法收货登记")
+
+        old_received = item.get("received_qty") or 0
+        new_received = data.get("received_qty", old_received)
+        delta = (new_received or 0) - old_received
+        if delta <= 0:
+            # 减量/持平仅更新数量，不重复过账
+            if new_received != old_received:
+                await self.item_repo.update(item_id, {"received_qty": new_received})
+            return {"item_id": item_id, "posted_qty": 0, "order_status": order["status"]}
+
+        tenant_id = tenant_id or self.item_repo._tenant_id or "default"
+        batch_no = data.get("batch_no", item.get("batch_no"))
+
+        async with posting_scope(self.inv_repo._session):
+            # ① 待检区入账
+            ins_row = await self.inv_repo.find_or_create_in_inspection_zone(
+                tenant_id, item["material_id"], order["warehouse_id"], delta, item["unit"],
+                batch_no=batch_no,
+            )
+            # ② 流水
+            await self.tx_repo.create({
+                "tenant_id": tenant_id,
+                "transaction_type": "receipt",
+                "voucher_no": order["receipt_no"] if order else "",
+                "material_id": item["material_id"],
+                "warehouse_id": order["warehouse_id"],
+                "to_location_id": ins_row.get("location_id"),
+                "batch_no": batch_no,
+                "quantity": delta,
+                "unit": item["unit"],
+                "source_type": "purchase",
+                "source_doc_no": order["receipt_no"] if order else "",
+                "reference_type": "receipt_order",
+                "reference_id": item["receipt_id"],
+                "remark": "收货登记-待检区入账",
+                "created_by": created_by,
+            })
+            # ③ 明细：实收数量 + 进入待检
+            await self.item_repo.update(item_id, {
+                "received_qty": new_received,
+                "inspection_status": data.get("inspection_status", "待检"),
+            })
+            # ④ 入库单：pending → inspecting（已在 inspecting 则保持）
+            new_status = RECEIPT_INSPECTING if order["status"] in (RECEIPT_PENDING, RECEIPT_INSPECTING) else order["status"]
+            await self.repo.update(item["receipt_id"], {
+                "received_qty": (order.get("received_qty") or 0) + delta,
+                "status": new_status,
+            })
+        return {"item_id": item_id, "posted_qty": delta, "order_status": new_status}
 
     async def store_item(self, item_id: int, data: dict, tenant_id: str,
                          created_by: int = None) -> dict:
-        """上架：将收货物料放入指定库位"""
+        """上架确认（方案 B 过账节点 #2）：inspecting → stored，待检区转出 + 原子过账。
+
+        关键点（决策#5/#6）：
+        - 上架确认才把待检区库存 **转出** 到目标库位并计入正式现存量；
+        - IQC 未通过（disqualified）禁止上架（前置校验）；未接 IQC 模块时 inspection_status
+          为 None/待检 视为可上架（兼容）；
+        - 待检区扣减（stock_out）+ 目标库位入账（stock_in）+ 流水 三步在 ``posting_scope``
+          内原子完成。
+        """
         item = await self.item_repo.get(item_id)
         if not item:
             raise ValueError(f"入库明细不存在: {item_id}")
+        order = await self.repo.get(item["receipt_id"])
+        if not order:
+            raise ValueError(f"入库单不存在: {item['receipt_id']}")
+        if order["status"] not in (RECEIPT_INSPECTING, RECEIPT_PARTIALLY_STORED):
+            raise PostingError("WMS_409_STATUS", "仅 inspecting/partially_stored 状态可上架确认")
+
+        # IQC 前置校验
+        insp = item.get("inspection_status")
+        if insp == INSPECTION_DISQUALIFIED:
+            raise PostingError("WMS_409_INSPECTION", "IQC 判定不合格，禁止上架确认")
 
         qty = data.get("stored_qty", item["received_qty"] or item["expected_qty"])
         location_id = data.get("location_id", item.get("location_id"))
         batch_no = data.get("batch_no", item.get("batch_no"))
+        if not location_id:
+            raise PostingError("WMS_404_LOCATION", "上架确认必须指定目标库位")
 
-        # 更新库存
-        inv_data = {
-            "tenant_id": tenant_id,
-            "material_id": item["material_id"],
-            "warehouse_id": None,  # 从入库单获取
-            "location_id": location_id,
-            "batch_no": batch_no,
-            "quantity": qty,
-            "locked_qty": 0,
-            "unit": item["unit"],
-        }
-        order = await self.repo.get(item["receipt_id"])
-        if order:
-            inv_data["warehouse_id"] = order["warehouse_id"]
+        # 目标库位有效性校验（T04）
+        loc_repo = WarehouseLocationRepository(self.item_repo._session)
+        if self.item_repo._tenant_id:
+            loc_repo.set_tenant_id(self.item_repo._tenant_id)
+        loc = await loc_repo.get(location_id)
+        if not loc:
+            raise PostingError("WMS_404_LOCATION", "目标库位不存在")
 
-        # 获取或创建批次
-        if batch_no:
-            batch_repo = BatchRepository(self.item_repo._session)
-            if self.item_repo._tenant_id:
-                batch_repo.set_tenant_id(self.item_repo._tenant_id)
-            batch = await batch_repo.get_by_batch_no(item["material_id"], batch_no)
-            if batch:
-                inv_data["batch_id"] = batch["id"]
+        async with posting_scope(self.inv_repo._session):
+            # ① 待检区转出
+            ins_loc_id = await self.inv_repo.resolve_inspection_location(tenant_id, order["warehouse_id"])
+            ins_row = await self.inv_repo.find_one(item["material_id"], order["warehouse_id"], ins_loc_id, None)
+            if ins_row:
+                await self.inv_repo.stock_out(ins_row["id"], qty)
 
-        await self.inv_repo.stock_in(**inv_data)
+            # ② 目标库位入账
+            await self.inv_repo.stock_in(
+                tenant_id=tenant_id,
+                material_id=item["material_id"],
+                warehouse_id=order["warehouse_id"],
+                location_id=location_id,
+                quantity=qty,
+                unit=item["unit"],
+                batch_no=batch_no,
+            )
 
-        # 记录交易流水
-        await self.tx_repo.create({
-            "tenant_id": tenant_id,
-            "transaction_type": "receipt",
-            "voucher_no": order["receipt_no"] if order else "",
-            "material_id": item["material_id"],
-            "warehouse_id": inv_data["warehouse_id"],
-            "to_location_id": location_id,
-            "batch_no": batch_no,
-            "quantity": qty,
-            "unit": item["unit"],
-            "source_type": "purchase",
-            "source_doc_no": order["receipt_no"] if order else "",
-            "reference_type": "receipt_order",
-            "reference_id": item["receipt_id"],
-            "created_by": created_by,
-        })
+            # ③ 流水（待检区 → 目标库位）
+            await self.tx_repo.create({
+                "tenant_id": tenant_id,
+                "transaction_type": "receipt",
+                "voucher_no": order["receipt_no"] if order else "",
+                "material_id": item["material_id"],
+                "warehouse_id": order["warehouse_id"],
+                "from_location_id": ins_loc_id,
+                "to_location_id": location_id,
+                "batch_no": batch_no,
+                "quantity": qty,
+                "unit": item["unit"],
+                "source_type": "purchase",
+                "source_doc_no": order["receipt_no"] if order else "",
+                "reference_type": "receipt_order",
+                "reference_id": item["receipt_id"],
+                "remark": "上架确认-待检区转出",
+                "created_by": created_by,
+            })
 
-        # 更新明细状态
-        await self.item_repo.update(item_id, {
-            "stored_qty": qty, "location_id": location_id, "batch_no": batch_no,
-        })
-
-        # 更新入库单汇总
-        items = await self.item_repo.list_by_receipt(item["receipt_id"])
-        total_stored = sum(i["stored_qty"] or 0 for i in items)
-        total_expected = sum(i["expected_qty"] or 0 for i in items)
-        new_status = "stored" if total_stored >= total_expected else "partially_stored"
-        await self.repo.update(item["receipt_id"], {
-            "stored_qty": total_stored, "status": new_status,
-        })
-
+            # ④ 明细 + 入库单汇总
+            await self.item_repo.update(item_id, {
+                "stored_qty": qty, "location_id": location_id, "batch_no": batch_no,
+            })
+            items = await self.item_repo.list_by_receipt(item["receipt_id"])
+            total_stored = sum(i["stored_qty"] or 0 for i in items)
+            total_expected = sum(i["expected_qty"] or 0 for i in items)
+            new_status = RECEIPT_STORED if total_stored >= total_expected else RECEIPT_PARTIALLY_STORED
+            await self.repo.update(item["receipt_id"], {
+                "stored_qty": total_stored, "status": new_status,
+            })
         return {"item_id": item_id, "qty": qty, "order_status": new_status}
 
     async def complete(self, id: int) -> dict:
@@ -468,105 +542,125 @@ class IssueOrderService:
 
     async def issue_item(self, item_id: int, data: dict, tenant_id: str,
                          created_by: int = None) -> dict:
-        """出库：扣减库存并更新状态
-        若未指定 from_location_id，则按物料级 pick_strategy 自动拣选批次：
-          fifo → 最早批次先出
-          lifo → 最新批次先出
-          manual → 要求调用方指定，抛错提示
+        """出库确认（方案 B 过账节点）：picking → issued，扣减库存 + 写流水（原子过账）。
+
+        出库确认即 ``issued`` 才真正扣减库存并写流水（确认即过账）。
+        未指定批次/库位时按物料级 ``pick_strategy`` 自动拣选；若无批次库存，回退到
+        物料级库存行（含待检区，batch_id IS NULL），保证单物料单仓库场景下可正常出库。
+
+        修复：原显式路径误把 ``item_id``（出库明细 id）当作库存行 id 传入 ``stock_out``，
+        此处统一解析为正确的库存行 ``id``。
         """
         item = await self.item_repo.get(item_id)
         if not item:
             raise ValueError(f"出库明细不存在: {item_id}")
+        order = await self.repo.get(item["issue_id"])
+        if not order:
+            raise ValueError(f"出库单不存在: {item['issue_id']}")
+        if order["status"] == ISSUE_CANCELLED:
+            raise PostingError("WMS_409_STATUS", "出库单已取消，无法出库确认")
 
         qty = data.get("issued_qty", item["required_qty"])
         location_id = data.get("from_location_id")
         batch_no = data.get("batch_no")
-
-        order = await self.repo.get(item["issue_id"])
         warehouse_id = order["warehouse_id"] if order else None
 
-        # 未指定出库批次，自动按物料策略拣选
-        if not location_id and not batch_no:
-            from app.repositories.wms_repo import MaterialRepository
-            mat_repo = MaterialRepository(self.item_repo._session)
-            if self.item_repo._tenant_id:
-                mat_repo.set_tenant_id(self.item_repo._tenant_id)
-            material = await mat_repo.get(item["material_id"])
-            pick_strategy = material.get("pick_strategy", "fifo") if material else "fifo"
+        async with posting_scope(self.inv_repo._session):
+            if not location_id and not batch_no:
+                # 自动拣选：按物料级策略挑批次
+                from app.repositories.wms_repo import MaterialRepository
+                mat_repo = MaterialRepository(self.item_repo._session)
+                if self.item_repo._tenant_id:
+                    mat_repo.set_tenant_id(self.item_repo._tenant_id)
+                material = await mat_repo.get(item["material_id"])
+                pick_strategy = material.get("pick_strategy", "fifo") if material else "fifo"
+                if pick_strategy == "manual":
+                    raise ValueError(f"物料 {item['material_id']} 拣选策略为 manual，需指定批次出库")
 
-            if pick_strategy == "manual":
-                raise ValueError(f"物料 {item['material_id']} 拣选策略为 manual，需指定批次出库")
+                batches = await self.inv_repo.find_available_batches(
+                    item["material_id"], warehouse_id, pick_strategy, qty
+                )
+                if batches:
+                    remaining = qty
+                    for batch_inv in batches:
+                        if remaining <= 0:
+                            break
+                        avail = batch_inv["quantity"] - batch_inv["locked_qty"]
+                        take = min(remaining, avail)
+                        if take > 0:
+                            await self.inv_repo.stock_out(batch_inv["id"], take)
+                            await self._create_issue_tx(tenant_id, item, order, -take,
+                                                        batch_inv.get("location_id"),
+                                                        batch_inv.get("batch_no"), created_by)
+                            remaining -= take
+                    if remaining > 0:
+                        raise ValueError(f"物料库存不足，仍需 {remaining} {item['unit']}")
+                else:
+                    # 回退：物料级库存行（含待检区，batch_id IS NULL）
+                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id)
+                    if not inv_row:
+                        raise ValueError(f"物料 {item['material_id']} 无可用的库存记录")
+                    avail = inv_row["quantity"] - inv_row["locked_qty"]
+                    if avail < qty:
+                        raise ValueError(f"可用库存不足：现有 {avail}，需求 {qty}")
+                    await self.inv_repo.stock_out(inv_row["id"], qty)
+                    await self._create_issue_tx(tenant_id, item, order, -qty,
+                                                inv_row.get("location_id"), batch_no, created_by)
+            else:
+                # 显式指定库位/批次 → 解析正确的库存行 id
+                inv_row = None
+                if location_id:
+                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id, location_id)
+                if not inv_row and batch_no:
+                    from app.repositories.wms_repo import BatchRepository
+                    batch_repo = BatchRepository(self.item_repo._session)
+                    if self.item_repo._tenant_id:
+                        batch_repo.set_tenant_id(self.item_repo._tenant_id)
+                    batch = await batch_repo.get_by_batch_no(item["material_id"], batch_no)
+                    if batch:
+                        inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id, None, batch["id"])
+                if not inv_row:
+                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id)
+                if not inv_row:
+                    raise ValueError(f"物料 {item['material_id']} 未找到对应库存记录")
+                avail = inv_row["quantity"] - inv_row["locked_qty"]
+                if avail < qty:
+                    raise ValueError(f"可用库存不足：现有 {avail}，需求 {qty}")
+                await self.inv_repo.stock_out(inv_row["id"], qty)
+                await self._create_issue_tx(tenant_id, item, order, -qty,
+                                            inv_row.get("location_id"), batch_no, created_by)
 
-            batches = await self.inv_repo.find_available_batches(
-                item["material_id"], warehouse_id, pick_strategy, qty
-            )
-            if not batches:
-                raise ValueError(f"物料 {item['material_id']} 无可用的批次库存")
+            await self.item_repo.update(item_id, {"issued_qty": qty, "pick_status": "picked"})
 
-            # 从最优先批次扣减，不足时顺延到下一批次
-            remaining = qty
-            for batch_inv in batches:
-                if remaining <= 0:
-                    break
-                avail = batch_inv["quantity"] - batch_inv["locked_qty"]
-                take = min(remaining, avail)
-                if take > 0:
-                    await self.inv_repo.stock_out(batch_inv["id"], take)
-                    await self.tx_repo.create({
-                        "tenant_id": tenant_id,
-                        "transaction_type": "issue",
-                        "voucher_no": order["issue_no"] if order else "",
-                        "material_id": item["material_id"],
-                        "warehouse_id": warehouse_id,
-                        "from_location_id": batch_inv.get("location_id"),
-                        "batch_id": batch_inv.get("batch_id"),
-                        "batch_no": batch_inv.get("batch_no"),
-                        "quantity": -take,
-                        "unit": item["unit"],
-                        "source_type": "production",
-                        "source_doc_no": order["issue_no"] if order else "",
-                        "reference_type": "issue_order",
-                        "reference_id": item["issue_id"],
-                        "created_by": created_by,
-                    })
-                    remaining -= take
-
-            if remaining > 0:
-                raise ValueError(f"物料库存不足，仍需 {remaining} {item['unit']}")
-
-        else:
-            # 指定了批次 → 直接扣减（兼容旧逻辑 + manual 策略）
-            loc_id = location_id or (await self.inv_repo.find_one(item["material_id"], warehouse_id)).get("location_id")
-            await self.inv_repo.stock_out(item_id, qty)
-            await self.tx_repo.create({
-                "tenant_id": tenant_id,
-                "transaction_type": "issue",
-                "voucher_no": order["issue_no"] if order else "",
-                "material_id": item["material_id"],
-                "warehouse_id": warehouse_id,
-                "from_location_id": loc_id,
-                "batch_no": batch_no or data.get("batch_no"),
-                "quantity": -qty,
-                "unit": item["unit"],
-                "source_type": "production",
-                "source_doc_no": order["issue_no"] if order else "",
-                "reference_type": "issue_order",
-                "reference_id": item["issue_id"],
-                "created_by": created_by,
+            # 更新汇总
+            items = await self.item_repo.list_by_issue(item["issue_id"])
+            total_issued = sum(i["issued_qty"] or 0 for i in items)
+            total_required = sum(i["required_qty"] or 0 for i in items)
+            new_status = ISSUE_ISSUED if total_issued >= total_required else ISSUE_PARTIALLY_ISSUED
+            await self.repo.update(item["issue_id"], {
+                "issued_qty": total_issued, "status": new_status,
             })
-
-        await self.item_repo.update(item_id, {"issued_qty": qty, "pick_status": "picked"})
-
-        # 更新汇总
-        items = await self.item_repo.list_by_issue(item["issue_id"])
-        total_issued = sum(i["issued_qty"] or 0 for i in items)
-        total_required = sum(i["required_qty"] or 0 for i in items)
-        new_status = "issued" if total_issued >= total_required else "partially_issued"
-        await self.repo.update(item["issue_id"], {
-            "issued_qty": total_issued, "status": new_status,
-        })
-
         return {"item_id": item_id, "qty": qty, "order_status": new_status}
+
+    async def _create_issue_tx(self, tenant_id: str, item: dict, order: dict,
+                               qty: float, from_location_id, batch_no, created_by: int = None) -> None:
+        """写出库流水（统一封装，供自动拣选/回退/显式路径复用）。"""
+        await self.tx_repo.create({
+            "tenant_id": tenant_id,
+            "transaction_type": "issue",
+            "voucher_no": order["issue_no"] if order else "",
+            "material_id": item["material_id"],
+            "warehouse_id": order["warehouse_id"] if order else None,
+            "from_location_id": from_location_id,
+            "batch_no": batch_no,
+            "quantity": qty,
+            "unit": item["unit"],
+            "source_type": "production",
+            "source_doc_no": order["issue_no"] if order else "",
+            "reference_type": "issue_order",
+            "reference_id": item["issue_id"],
+            "created_by": created_by,
+        })
 
 
 # ============================================
