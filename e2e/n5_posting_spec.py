@@ -87,7 +87,7 @@ async def ensure_material(client: httpx.AsyncClient) -> int:
 async def current_stock(client: httpx.AsyncClient, material_id: int) -> float:
     """现存量 = 该物料在所有库位（含待检区）的 quantity 之和。"""
     resp = await client.get(f"{API}/wms/inventory", params={
-        "material_id": material_id, "page_size": 1000,
+        "material_id": material_id, "page_size": 100,
     })
     data = resp.json().get("data", {})
     items = data.get("items", []) if isinstance(data, dict) else []
@@ -97,7 +97,7 @@ async def current_stock(client: httpx.AsyncClient, material_id: int) -> float:
 async def tx_summary(client: httpx.AsyncClient, material_id: int):
     """返回 (流水条数, 数量增量和)。"""
     resp = await client.get(f"{API}/wms/inventory-transactions", params={
-        "material_id": material_id, "page_size": 1000,
+        "material_id": material_id, "page_size": 100,
     })
     data = resp.json().get("data", {})
     items = data.get("items", []) if isinstance(data, dict) else []
