@@ -140,8 +140,18 @@ async def delete_zone(zone_id: int, repo: WarehouseZoneRepository = Depends(get_
 # 库位 Location
 # ============================================
 
+@router.get("/locations")
+async def list_locations(
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    warehouse_id: Optional[int] = Query(None, description="按仓库过滤，不传则返回全部"),
+    repo: WarehouseLocationRepository = Depends(get_tenant_repo(WarehouseLocationRepository, require_auth=True)),
+):
+    svc = LocationService(repo)
+    data = await svc.list(warehouse_id=warehouse_id, page=page, page_size=page_size)
+    return {"code": 0, "message": "success", "data": data}
+
 @router.get("/zones/{zone_id}/locations")
-async def list_locations(zone_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+async def list_locations_by_zone(zone_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
     repo: WarehouseLocationRepository = Depends(get_tenant_repo(WarehouseLocationRepository, require_auth=True))):
     svc = LocationService(repo)
     data = await svc.list_by_zone(zone_id, page, page_size)

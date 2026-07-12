@@ -67,6 +67,9 @@ class LocationService:
     def __init__(self, repo: WarehouseLocationRepository):
         self.repo = repo
 
+    async def list(self, warehouse_id=None, page=1, page_size=20):
+        return await self.repo.list(warehouse_id, page, page_size)
+
     async def list_by_zone(self, zone_id: int, page=1, page_size=20):
         return await self.repo.list_by_zone(zone_id, page, page_size)
 

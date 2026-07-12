@@ -78,6 +78,16 @@ class WarehouseZoneRepository(MultiTenantRepository):
 class WarehouseLocationRepository(MultiTenantRepository):
     """库位"""
 
+    async def list(self, warehouse_id: int = None, page: int = 1, page_size: int = 20) -> dict:
+        """库位列表（支持按仓库过滤）；返回分页结构 {items, total, page, page_size}。"""
+        sql = "SELECT * FROM warehouse_locations WHERE 1=1"
+        params = {}
+        if warehouse_id:
+            sql += " AND warehouse_id = :wid"
+            params["wid"] = warehouse_id
+        sql += " ORDER BY location_code"
+        return await self.query_page(sql, params, page, page_size)
+
     async def list_by_zone(self, zone_id: int, page: int = 1, page_size: int = 20) -> dict:
         return await self.query_page(
             "SELECT * FROM warehouse_locations WHERE zone_id = :zid ORDER BY location_code",

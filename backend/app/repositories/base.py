@@ -46,6 +46,11 @@ class Repository(ABC):
     async def execute(self, sql: str, params: Dict[str, Any] = None) -> int:
         result = await self._session.execute(text(sql), params or {})
         await self._session.flush()
+        # INSERT 语句返回自增主键（lastrowid），UPDATE/DELETE 返回受影响行数（rowcount）。
+        # 历史实现统一返回 rowcount，导致所有 create 响应 data.id 恒为 1（N3 正确性 bug）。
+        if sql.strip().upper().startswith("INSERT"):
+            lastrowid = result.lastrowid
+            return lastrowid if lastrowid is not None else result.rowcount
         return result.rowcount
 
     async def query_one(self, sql: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
