@@ -187,6 +187,7 @@ class ReceiptOrderItem(Base):
     __tablename__ = "receipt_order_items"
 
     id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id        = Column(String(50), nullable=False, comment="租户ID")
     receipt_id       = Column(BigInteger, nullable=False, comment="入库单ID")
     line_no          = Column(Integer, nullable=False, comment="行号")
     material_id      = Column(BigInteger, nullable=False, comment="物料ID")
@@ -232,6 +233,7 @@ class IssueOrderItem(Base):
     __tablename__ = "issue_order_items"
 
     id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     issue_id        = Column(BigInteger, nullable=False, comment="出库单ID")
     line_no         = Column(Integer, nullable=False, comment="行号")
     material_id     = Column(BigInteger, nullable=False, comment="物料ID")
