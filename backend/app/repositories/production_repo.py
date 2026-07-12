@@ -43,9 +43,10 @@ class ProductionRepository(MultiTenantRepository):
 
     async def add_status_log(self, order_id: int, from_status: str, to_status: str, operator_id: int, remark: str = None) -> int:
         return await self.execute(
-            """INSERT INTO work_order_status_logs (work_order_id, from_status, to_status, operator_id, remark)
-               VALUES (:oid, :from_s, :to_s, :op, :remark)""",
-            {"oid": order_id, "from_s": from_status, "to_s": to_status, "op": operator_id, "remark": remark}
+            """INSERT INTO work_order_status_logs (tenant_id, work_order_id, from_status, to_status, operator_id, remark)
+               VALUES (:tid, :oid, :from_s, :to_s, :op, :remark)""",
+            {"tid": self._tenant_id, "oid": order_id, "from_s": from_status,
+             "to_s": to_status, "op": operator_id, "remark": remark}
         )
 
     async def get_status_logs(self, order_id: int) -> List[Dict]:

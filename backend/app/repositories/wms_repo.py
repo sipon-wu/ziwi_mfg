@@ -435,13 +435,12 @@ class ReceiptOrderRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM receipt_orders WHERE receipt_no = :no", {"no": receipt_no})
 
     async def create(self, data: dict) -> int:
-        return await self.execute(
-            """INSERT INTO receipt_orders (tenant_id, receipt_no, receipt_type, status, source_type, source_doc_no,
-               warehouse_id, supplier_id, total_qty, received_qty, stored_qty, created_by)
-               VALUES (:tenant_id, :receipt_no, :receipt_type, :status, :source_type, :source_doc_no,
-               :warehouse_id, :supplier_id, :total_qty, :received_qty, :stored_qty, :created_by)""",
-            data,
-        )
+        cols = [c for c in ("tenant_id", "receipt_no", "receipt_type", "status", "source_type",
+                            "source_doc_no", "warehouse_id", "supplier_id", "total_qty",
+                            "received_qty", "stored_qty", "created_by") if c in data]
+        sql = "INSERT INTO receipt_orders ({}) VALUES ({})".format(
+            ", ".join(cols), ", ".join(f":{c}" for c in cols))
+        return await self.execute(sql, data)
 
     async def update(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)
@@ -466,13 +465,12 @@ class ReceiptOrderItemRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM receipt_order_items WHERE id = :id", {"id": id})
 
     async def create(self, data: dict) -> int:
-        return await self.execute(
-            """INSERT INTO receipt_order_items (receipt_id, line_no, material_id, expected_qty, received_qty, stored_qty,
-               unit, batch_no, location_id, inspection_status, remark)
-               VALUES (:receipt_id, :line_no, :material_id, :expected_qty, :received_qty, :stored_qty,
-               :unit, :batch_no, :location_id, :inspection_status, :remark)""",
-            data,
-        )
+        cols = [c for c in ("receipt_id", "line_no", "material_id", "expected_qty", "received_qty",
+                            "stored_qty", "unit", "batch_no", "location_id",
+                            "inspection_status", "remark") if c in data]
+        sql = "INSERT INTO receipt_order_items ({}) VALUES ({})".format(
+            ", ".join(cols), ", ".join(f":{c}" for c in cols))
+        return await self.execute(sql, data)
 
     async def batch_create(self, items: list) -> int:
         count = 0
@@ -522,13 +520,12 @@ class IssueOrderRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM issue_orders WHERE issue_no = :no", {"no": issue_no})
 
     async def create(self, data: dict) -> int:
-        return await self.execute(
-            """INSERT INTO issue_orders (tenant_id, issue_no, issue_type, status, source_type, source_doc_no,
-               warehouse_id, department_id, recipient, total_qty, issued_qty, created_by)
-               VALUES (:tenant_id, :issue_no, :issue_type, :status, :source_type, :source_doc_no,
-               :warehouse_id, :department_id, :recipient, :total_qty, :issued_qty, :created_by)""",
-            data,
-        )
+        cols = [c for c in ("tenant_id", "issue_no", "issue_type", "status", "source_type",
+                            "source_doc_no", "warehouse_id", "department_id", "recipient",
+                            "total_qty", "issued_qty", "created_by") if c in data]
+        sql = "INSERT INTO issue_orders ({}) VALUES ({})".format(
+            ", ".join(cols), ", ".join(f":{c}" for c in cols))
+        return await self.execute(sql, data)
 
     async def update(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)
@@ -553,13 +550,11 @@ class IssueOrderItemRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM issue_order_items WHERE id = :id", {"id": id})
 
     async def create(self, data: dict) -> int:
-        return await self.execute(
-            """INSERT INTO issue_order_items (issue_id, line_no, material_id, required_qty, issued_qty,
-               unit, batch_no, from_location_id, pick_status, remark)
-               VALUES (:issue_id, :line_no, :material_id, :required_qty, :issued_qty,
-               :unit, :batch_no, :from_location_id, :pick_status, :remark)""",
-            data,
-        )
+        cols = [c for c in ("issue_id", "line_no", "material_id", "required_qty", "issued_qty",
+                            "unit", "batch_no", "from_location_id", "pick_status", "remark") if c in data]
+        sql = "INSERT INTO issue_order_items ({}) VALUES ({})".format(
+            ", ".join(cols), ", ".join(f":{c}" for c in cols))
+        return await self.execute(sql, data)
 
     async def batch_create(self, items: list) -> int:
         count = 0

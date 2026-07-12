@@ -732,8 +732,9 @@ async def stock_summary(warehouse_id: Optional[int] = Query(None),
     """库存汇总报表：按仓库+物料汇总"""
     sql = """SELECT i.warehouse_id, w.name as warehouse_name, i.material_id, m.code as material_code,
              m.name as material_name, m.spec, m.unit,
-             SUM(i.quantity) as total_qty, SUM(i.locked_qty) as total_locked_qty,
-             SUM(i.quantity) - SUM(i.locked_qty) as available_qty
+             CAST(SUM(i.quantity) AS DOUBLE PRECISION) as total_qty,
+             CAST(SUM(i.locked_qty) AS DOUBLE PRECISION) as total_locked_qty,
+             CAST(SUM(i.quantity) - SUM(i.locked_qty) AS DOUBLE PRECISION) as available_qty
              FROM inventory i
              JOIN materials m ON m.id = i.material_id
              JOIN warehouses w ON w.id = i.warehouse_id
@@ -742,7 +743,7 @@ async def stock_summary(warehouse_id: Optional[int] = Query(None),
     if warehouse_id:
         sql += " AND i.warehouse_id = :wid"
         params["wid"] = warehouse_id
-    sql += " GROUP BY i.warehouse_id, i.material_id ORDER BY w.name, m.code"
+    sql += " GROUP BY i.warehouse_id, i.material_id, w.name, m.code, m.name, m.spec, m.unit ORDER BY w.name, m.code"
     data = await repo.query(sql, params)
     return {"code": 0, "message": "success", "data": data}
 
