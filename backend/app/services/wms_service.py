@@ -248,7 +248,7 @@ class InventoryService:
 
         # 扣减源库存
         await self.repo.execute(
-            "UPDATE inventory SET quantity = quantity - :qty, last_transaction_at = datetime('now') WHERE id = :id",
+            "UPDATE inventory SET quantity = quantity - :qty, last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
             {"qty": data["quantity"], "id": source["id"]},
         )
 

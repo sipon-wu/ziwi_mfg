@@ -295,7 +295,7 @@ class InventoryRepository(MultiTenantRepository):
             new_qty = existing["quantity"] + data.get("quantity", 0)
             new_locked = existing["locked_qty"] + data.get("locked_qty", 0)
             return await self.execute(
-                "UPDATE inventory SET quantity = :qty, locked_qty = :lq, last_transaction_at = datetime('now') WHERE id = :id",
+                "UPDATE inventory SET quantity = :qty, locked_qty = :lq, last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
                 {"qty": new_qty, "lq": new_locked, "id": existing["id"]},
             )
         else:
@@ -313,7 +313,7 @@ class InventoryRepository(MultiTenantRepository):
         if existing:
             new_qty = existing["quantity"] + quantity
             await self.execute(
-                "UPDATE inventory SET quantity = :qty, last_transaction_at = datetime('now') WHERE id = :id",
+                "UPDATE inventory SET quantity = :qty, last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
                 {"qty": new_qty, "id": existing["id"]},
             )
             return existing
@@ -339,7 +339,7 @@ class InventoryRepository(MultiTenantRepository):
         if inv["quantity"] - inv["locked_qty"] < quantity:
             raise ValueError(f"可用库存不足：现有 {inv['quantity'] - inv['locked_qty']}，需求 {quantity}")
         return await self.execute(
-            "UPDATE inventory SET quantity = quantity - :qty, last_transaction_at = datetime('now') WHERE id = :id AND quantity >= :qty",
+            "UPDATE inventory SET quantity = quantity - :qty, last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id AND quantity >= :qty",
             {"qty": quantity, "id": id},
         )
 
