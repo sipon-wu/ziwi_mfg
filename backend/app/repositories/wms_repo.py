@@ -338,9 +338,10 @@ class InventoryRepository(MultiTenantRepository):
                 "batch_id": batch_id, "batch_no": batch_no,
                 "quantity": quantity, "locked_qty": 0, "unit": unit,
             }
+            # INSERT 路径补 last_transaction_at（UPDATE 路径已写，T01 收口一致性）
             new_id = await self.execute(
-                """INSERT INTO inventory (tenant_id, material_id, warehouse_id, location_id, batch_id, batch_no, quantity, locked_qty, unit)
-                   VALUES (:tenant_id, :material_id, :warehouse_id, :location_id, :batch_id, :batch_no, :quantity, :locked_qty, :unit)""",
+                """INSERT INTO inventory (tenant_id, material_id, warehouse_id, location_id, batch_id, batch_no, quantity, locked_qty, unit, last_transaction_at)
+                   VALUES (:tenant_id, :material_id, :warehouse_id, :location_id, :batch_id, :batch_no, :quantity, :locked_qty, :unit, datetime('now'))""",
                 ins_data,
             )
             return {"id": new_id}
@@ -375,6 +376,67 @@ class InventoryRepository(MultiTenantRepository):
                      AND b.status = 'active'
                    ORDER BY b.created_at {order_dir}"""
         return await self.query(sql, {"mid": material_id, "wid": warehouse_id})
+
+    async def resolve_inspection_location(self, tenant_id: str, warehouse_id: int) -> int:
+        """解析（必要时惰性创建）待检区库位，返回 location_id。
+
+        待检区以 ``zone_type='待检'`` 的独立库位行承载（决策#6）。若仓库尚未配置待检区
+        库区/库位，则按 ``ZONE-INS-{warehouse_id}`` / ``LOC-INS-{warehouse_id}`` 规则惰性创建，
+        保证过账收口不依赖外部预置数据。
+        """
+        zone = await self.query_one(
+            "SELECT * FROM warehouse_zones WHERE warehouse_id = :wid AND zone_type = :zt ORDER BY id LIMIT 1",
+            {"wid": warehouse_id, "zt": "待检"},
+        )
+        if not zone:
+            zone_id = await self.execute(
+                """INSERT INTO warehouse_zones (tenant_id, warehouse_id, zone_code, zone_name, zone_type, is_active)
+                   VALUES (:tenant_id, :warehouse_id, :zone_code, :zone_name, '待检', true)""",
+                {"tenant_id": tenant_id, "warehouse_id": warehouse_id,
+                 "zone_code": f"ZONE-INS-{warehouse_id}", "zone_name": "待检区"},
+            )
+        else:
+            zone_id = zone["id"]
+        loc = await self.query_one(
+            "SELECT * FROM warehouse_locations WHERE warehouse_id = :wid AND zone_id = :zid ORDER BY id LIMIT 1",
+            {"wid": warehouse_id, "zid": zone_id},
+        )
+        if not loc:
+            return await self.execute(
+                """INSERT INTO warehouse_locations (tenant_id, warehouse_id, zone_id, location_code, location_type, current_qty, is_active)
+                   VALUES (:tenant_id, :warehouse_id, :zone_id, :location_code, 'area', 0, true)""",
+                {"tenant_id": tenant_id, "warehouse_id": warehouse_id, "zone_id": zone_id,
+                 "location_code": f"LOC-INS-{warehouse_id}"},
+            )
+        return loc["id"]
+
+    async def find_or_create_in_inspection_zone(self, tenant_id: str, material_id: int,
+                                                warehouse_id: int, qty: float, unit: str,
+                                                batch_no: str = None) -> dict:
+        """待检区入账（UPSERT 到 zone_type='待检' 的独立库位行），返回该行 dict。
+
+        - 待检区 ``quantity`` 计入现存量（决策#6）；
+        - 按 (物料, 仓库, 待检库位) 聚合，``batch_id`` 置空以简化待检区行；
+        - 写入 ``last_transaction_at``，与 stock_in/stock_out 两条路径保持一致。
+        """
+        loc_id = await self.resolve_inspection_location(tenant_id, warehouse_id)
+        existing = await self.find_one(material_id, warehouse_id, loc_id, None)
+        if existing:
+            new_qty = existing["quantity"] + qty
+            await self.execute(
+                "UPDATE inventory SET quantity = :qty, last_transaction_at = datetime('now') WHERE id = :id",
+                {"qty": new_qty, "id": existing["id"]},
+            )
+            existing["quantity"] = new_qty
+            existing["location_id"] = loc_id
+            return existing
+        new_id = await self.execute(
+            """INSERT INTO inventory (tenant_id, material_id, warehouse_id, location_id, batch_id, batch_no, quantity, locked_qty, unit, last_transaction_at)
+               VALUES (:tenant_id, :material_id, :warehouse_id, :location_id, NULL, :batch_no, :quantity, 0, :unit, datetime('now'))""",
+            {"tenant_id": tenant_id, "material_id": material_id, "warehouse_id": warehouse_id,
+             "location_id": loc_id, "batch_no": batch_no, "quantity": qty, "unit": unit},
+        )
+        return {"id": new_id, "location_id": loc_id, "quantity": qty}
 
 
 class InventoryTransactionRepository(MultiTenantRepository):
@@ -485,7 +547,8 @@ class ReceiptOrderItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
@@ -569,7 +632,8 @@ class IssueOrderItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
@@ -653,7 +717,8 @@ class InventoryCountItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
@@ -781,7 +846,8 @@ class MaterialRequestItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:

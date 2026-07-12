@@ -454,7 +454,8 @@ class ReceiptOrderItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
@@ -541,7 +542,8 @@ class IssueOrderItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
@@ -625,7 +627,8 @@ class InventoryCountItemRepository(MultiTenantRepository):
     async def batch_create(self, items: list) -> int:
         count = 0
         for item in items:
-            count += await self.create(item)
+            await self.create(item)
+            count += 1
         return count
 
     async def update(self, id: int, data: dict) -> int:
