@@ -66,4 +66,5 @@ WMS_ERRORS: Dict[str, Tuple[int, str]] = {
     "WMS_409_NEG_INV": (409, "可用库存不足，无法过账"),
     "WMS_409_INSPECTION": (409, "IQC 未通过，禁止上架确认"),
     "WMS_404_LOCATION": (404, "目标库位不存在"),
+    "WMS_409_ALREADY_CANCELLED": (409, "单据已取消，不可重复操作"),
 }

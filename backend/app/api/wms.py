@@ -1,6 +1,7 @@
 """M20 仓储管理（WMS）模块 — API 路由"""
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from typing import Optional
+from pydantic import BaseModel, Field
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.core.transaction import PostingError
 from app.repositories.wms_repo import (
@@ -36,6 +37,11 @@ from app.schemas.wms import (
 )
 
 router = APIRouter(prefix="/api/v1/wms", tags=["仓储管理-WMS"])
+
+
+class CancelOrderRequest(BaseModel):
+    """取消单据请求体。"""
+    reason: str = Field(..., min_length=1, description="取消原因（强制留痕）")
 
 
 # ============================================
@@ -469,6 +475,33 @@ async def complete_receipt_order(ro_id: int,
     result = await svc.complete(ro_id)
     return {"code": 0, "message": "入库已完成", "data": result}
 
+@router.post("/receipt-orders/{ro_id}/cancel")
+async def cancel_receipt_order(ro_id: int, req: CancelOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: ReceiptOrderRepository = Depends(get_tenant_repo(ReceiptOrderRepository, require_auth=True)),
+    item_repo: ReceiptOrderItemRepository = Depends(get_tenant_repo(ReceiptOrderItemRepository, require_auth=True)),
+    inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+    tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+):
+    """取消入库单（方案 B 状态感知红冲）。
+
+    - pending 状态：仅置 cancelled，零库存影响，不写流水
+    - inspecting / stored / partially_stored 状态：回滚库存 + 写 cancel 冲销流水
+    - 已是 cancelled：409 Already Cancelled
+    """
+    svc = ReceiptOrderService(repo, item_repo, inv_repo, tx_repo)
+    try:
+        result = await svc.cancel_receipt_order(
+            ro_id, req.reason,
+            current_user.get("tenant_id", "default"),
+            created_by=current_user.get("id"),
+        )
+        return {"code": 0, "message": "入库单已取消", "data": result}
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
 
 # ============================================
 # 出库单 Issue Order
@@ -549,6 +582,33 @@ async def issue_item_action(item_id: int, req: IssueOrderItemUpdate, current_use
         result = await svc.issue_item(item_id, req.model_dump(exclude_unset=True),
                                       current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
         return {"code": 0, "message": "出库成功", "data": result}
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+@router.post("/issue-orders/{io_id}/cancel")
+async def cancel_issue_order(io_id: int, req: CancelOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: IssueOrderRepository = Depends(get_tenant_repo(IssueOrderRepository, require_auth=True)),
+    item_repo: IssueOrderItemRepository = Depends(get_tenant_repo(IssueOrderItemRepository, require_auth=True)),
+    inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+    tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+):
+    """取消出库单（方案 B 状态感知红冲）。
+
+    - pending / picking 状态：仅置 cancelled，零库存影响，不写流水
+    - issued / partially_issued 状态：回滚库存 + 写 cancel 冲销流水
+    - 已是 cancelled：409 Already Cancelled
+    """
+    svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
+    try:
+        result = await svc.cancel_issue_order(
+            io_id, req.reason,
+            current_user.get("tenant_id", "default"),
+            created_by=current_user.get("id"),
+        )
+        return {"code": 0, "message": "出库单已取消", "data": result}
     except PostingError as e:
         raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:

@@ -182,6 +182,106 @@ async def main():
         check("出-5后流水=3", c3, EXP_TX_COUNT)
         check("增量和=85", s3, float(EXP_TX_SUM))
 
+        # ============================================
+        # T05 扩展 — cancel 状态感知红冲验收
+        # ============================================
+
+        # cancel-10：取消 pending 状态的收货单（零库存影响）
+        ro_pending = await client.post(f"{API}/wms/receipt-orders", json={
+            "receipt_no": f"N5RC-{os.getpid()}", "receipt_type": "purchase",
+            "warehouse_id": warehouse_id,
+            "items": [{"line_no": 1, "material_id": material_id,
+                       "expected_qty": 50, "unit": "PCS"}],
+        })
+        ro_pending_id = ro_pending.json()["data"]["id"]
+        cancel10 = await client.post(
+            f"{API}/wms/receipt-orders/{ro_pending_id}/cancel",
+            json={"reason": "测试-取消未收货单据"},
+        )
+        if cancel10.status_code != 200:
+            raise SpecError(f"cancel-10 失败 {cancel10.status_code}: {cancel10.text}")
+        ro_pending_status = (await client.get(
+            f"{API}/wms/receipt-orders/{ro_pending_id}",
+        )).json()["data"]["status"]
+        check("cancel-10 入库单 status=cancelled", ro_pending_status, "cancelled")
+        check("cancel-10 库存不变=85", await current_stock(client, material_id), float(EXP_FINAL_STOCK))
+        c10, _ = await tx_summary(client, material_id)
+        check("cancel-10 流水数不变=3", c10, EXP_TX_COUNT)
+
+        # cancel-11：取消已收货（inspecting）状态的收货单
+        N_CANCEL11 = 30
+        ro_insp = await client.post(f"{API}/wms/receipt-orders", json={
+            "receipt_no": f"N5RI-{os.getpid()}", "receipt_type": "purchase",
+            "warehouse_id": warehouse_id,
+            "items": [{"line_no": 1, "material_id": material_id,
+                       "expected_qty": N_CANCEL11, "unit": "PCS"}],
+        })
+        ro_insp_id = ro_insp.json()["data"]["id"]
+        ro_insp_items = (await client.get(
+            f"{API}/wms/receipt-orders/{ro_insp_id}",
+        )).json()["data"]["items"]
+        recv_insp = await client.post(
+            f"{API}/wms/receipt-order-items/{ro_insp_items[0]['id']}/receive",
+            json={"received_qty": N_CANCEL11},
+        )
+        if recv_insp.status_code != 200:
+            raise SpecError(f"cancel-11 收货失败 {recv_insp.status_code}: {recv_insp.text}")
+        stock_before_c11 = await current_stock(client, material_id)
+        tx_before_c11, _ = await tx_summary(client, material_id)
+        cancel11 = await client.post(
+            f"{API}/wms/receipt-orders/{ro_insp_id}/cancel",
+            json={"reason": "来料不合格"},
+        )
+        if cancel11.status_code != 200:
+            raise SpecError(f"cancel-11 失败 {cancel11.status_code}: {cancel11.text}")
+        ro_insp_status = (await client.get(
+            f"{API}/wms/receipt-orders/{ro_insp_id}",
+        )).json()["data"]["status"]
+        check("cancel-11 入库单 status=cancelled", ro_insp_status, "cancelled")
+        check("cancel-11 库存-N（待检区回滚）",
+              await current_stock(client, material_id),
+              float(stock_before_c11 - N_CANCEL11))
+        c11, _ = await tx_summary(client, material_id)
+        check("cancel-11 流水+1（多一条 cancel 流水）",
+              c11, tx_before_c11 + 1)
+
+        # cancel-12：取消已出库（issued）状态的出库单
+        M_CANCEL12 = 8
+        io_issued = await client.post(f"{API}/wms/issue-orders", json={
+            "issue_no": f"N5II-{os.getpid()}", "issue_type": "production",
+            "warehouse_id": warehouse_id,
+            "items": [{"line_no": 1, "material_id": material_id,
+                       "required_qty": M_CANCEL12, "unit": "PCS"}],
+        })
+        io_issued_id = io_issued.json()["data"]["id"]
+        io_issued_items = (await client.get(
+            f"{API}/wms/issue-orders/{io_issued_id}",
+        )).json()["data"]["items"]
+        iss12 = await client.post(
+            f"{API}/wms/issue-order-items/{io_issued_items[0]['id']}/issue",
+            json={"issued_qty": M_CANCEL12},
+        )
+        if iss12.status_code != 200:
+            raise SpecError(f"cancel-12 出库失败 {iss12.status_code}: {iss12.text}")
+        stock_before_c12 = await current_stock(client, material_id)
+        tx_before_c12, _ = await tx_summary(client, material_id)
+        cancel12 = await client.post(
+            f"{API}/wms/issue-orders/{io_issued_id}/cancel",
+            json={"reason": "发错料"},
+        )
+        if cancel12.status_code != 200:
+            raise SpecError(f"cancel-12 失败 {cancel12.status_code}: {cancel12.text}")
+        io_issued_status = (await client.get(
+            f"{API}/wms/issue-orders/{io_issued_id}",
+        )).json()["data"]["status"]
+        check("cancel-12 出库单 status=cancelled", io_issued_status, "cancelled")
+        check("cancel-12 库存+M（原库位回滚）",
+              await current_stock(client, material_id),
+              float(stock_before_c12 + M_CANCEL12))
+        c12, _ = await tx_summary(client, material_id)
+        check("cancel-12 流水+1（多一条 cancel 流水）",
+              c12, tx_before_c12 + 1)
+
     print("\n== N5 验收全部通过 ✅ ==")
 
 

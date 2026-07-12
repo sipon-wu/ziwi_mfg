@@ -503,6 +503,137 @@ class ReceiptOrderService:
             "completed_at": datetime.now().isoformat(),
         })
 
+    async def cancel_receipt_order(self, order_id: int, reason: str,
+                                   tenant_id: str, created_by: int = None) -> dict:
+        """取消入库单（方案 B 状态感知红冲）。
+
+        状态感知语义：
+        - pending：仅置 cancelled，零库存影响，不写流水
+        - inspecting：置 cancelled + 待检区出库回滚 + 写 cancel 流水
+        - stored / partially_stored：置 cancelled + 目标库位出库回滚 + 写 cancel 流水
+        - 已是 cancelled：409 Already Cancelled
+
+        红冲路径包 ``posting_scope``，异常自动 rollback。
+        """
+        order = await self.repo.get(order_id)
+        if not order:
+            raise ValueError(f"入库单不存在: {order_id}")
+        if order["status"] == RECEIPT_CANCELLED:
+            raise PostingError("WMS_409_ALREADY_CANCELLED",
+                               "单据已取消，不可重复操作")
+
+        current_status = order["status"]
+        items = await self.item_repo.list_by_receipt(order_id)
+
+        if current_status == RECEIPT_PENDING:
+            # 仅置 cancelled，零库存影响
+            await self.repo.update(order_id, {"status": RECEIPT_CANCELLED})
+            return {"order_id": order_id, "status": RECEIPT_CANCELLED,
+                    "reversed_qty": 0, "tx_count": 0}
+
+        # inspecting / stored / partially_stored → 需要回滚库存
+        total_reversed: float = 0.0
+        tx_count: int = 0
+
+        async with posting_scope(self.inv_repo._session):
+            for item in items:
+                stored_qty = item.get("stored_qty") or 0
+                received_qty = item.get("received_qty") or 0
+
+                if stored_qty > 0:
+                    # 已上架 → 从目标库位回滚
+                    location_id = item.get("location_id")
+                    if location_id:
+                        inv_row = await self.inv_repo.find_one(
+                            item["material_id"], order["warehouse_id"],
+                            location_id, None,
+                        )
+                        if inv_row:
+                            await self.inv_repo.stock_out(inv_row["id"], stored_qty)
+                    await self._create_cancel_tx(
+                        tenant_id=tenant_id,
+                        material_id=item["material_id"],
+                        warehouse_id=order["warehouse_id"],
+                        voucher_no=order.get("receipt_no", ""),
+                        quantity=-stored_qty,
+                        from_location_id=location_id,
+                        to_location_id=None,
+                        batch_no=item.get("batch_no"),
+                        unit=item.get("unit", ""),
+                        source_type=order.get("source_type", "purchase"),
+                        source_doc_no=order.get("receipt_no", ""),
+                        reference_type="receipt_order",
+                        reference_id=order_id,
+                        remark=f"取消收货单: {reason}",
+                        created_by=created_by,
+                    )
+                    total_reversed += stored_qty
+                    tx_count += 1
+                elif received_qty > 0:
+                    # 仅收货未上架 → 从待检区回滚
+                    ins_loc_id = await self.inv_repo.resolve_inspection_location(
+                        tenant_id, order["warehouse_id"],
+                    )
+                    ins_row = await self.inv_repo.find_one(
+                        item["material_id"], order["warehouse_id"],
+                        ins_loc_id, None,
+                    )
+                    if ins_row:
+                        await self.inv_repo.stock_out(ins_row["id"], received_qty)
+                    await self._create_cancel_tx(
+                        tenant_id=tenant_id,
+                        material_id=item["material_id"],
+                        warehouse_id=order["warehouse_id"],
+                        voucher_no=order.get("receipt_no", ""),
+                        quantity=-received_qty,
+                        from_location_id=ins_loc_id,
+                        to_location_id=None,
+                        batch_no=item.get("batch_no"),
+                        unit=item.get("unit", ""),
+                        source_type=order.get("source_type", "purchase"),
+                        source_doc_no=order.get("receipt_no", ""),
+                        reference_type="receipt_order",
+                        reference_id=order_id,
+                        remark=f"取消收货单: {reason}",
+                        created_by=created_by,
+                    )
+                    total_reversed += received_qty
+                    tx_count += 1
+
+            await self.repo.update(order_id, {"status": RECEIPT_CANCELLED})
+
+        return {"order_id": order_id, "status": RECEIPT_CANCELLED,
+                "reversed_qty": total_reversed, "tx_count": tx_count}
+
+    async def _create_cancel_tx(self, tenant_id: str, material_id: int,
+                                warehouse_id: int, voucher_no: str,
+                                quantity: float, from_location_id,
+                                to_location_id, batch_no: str, unit: str,
+                                source_type: str, source_doc_no: str,
+                                reference_type: str, reference_id: int,
+                                remark: str, created_by: int = None) -> None:
+        """写 cancel 冲销流水（统一封装，供 cancel_receipt_order / cancel_issue_order 复用）。"""
+        await self.tx_repo.create({
+            "tenant_id": tenant_id,
+            "transaction_type": "cancel",
+            "voucher_no": voucher_no,
+            "material_id": material_id,
+            "warehouse_id": warehouse_id,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "batch_id": None,
+            "batch_no": batch_no,
+            "quantity": quantity,
+            "unit": unit,
+            "unit_price": None,
+            "source_type": source_type,
+            "source_doc_no": source_doc_no,
+            "reference_type": reference_type,
+            "reference_id": reference_id,
+            "remark": remark,
+            "created_by": created_by,
+        })
+
 
 # ============================================
 # 出库 Service
@@ -668,6 +799,133 @@ class IssueOrderService:
             "reference_type": "issue_order",
             "reference_id": item["issue_id"],
             "remark": "出库确认-扣减库存",
+            "created_by": created_by,
+        })
+
+    async def cancel_issue_order(self, order_id: int, reason: str,
+                                  tenant_id: str, created_by: int = None) -> dict:
+        """取消出库单（方案 B 状态感知红冲）。
+
+        状态感知语义：
+        - pending / picking：仅置 cancelled，零库存影响，不写流水
+        - issued / partially_issued：置 cancelled + 原库位入库回滚 + 写 cancel 流水
+        - 已是 cancelled：409 Already Cancelled
+
+        红冲路径包 ``posting_scope``，异常自动 rollback。
+        """
+        order = await self.repo.get(order_id)
+        if not order:
+            raise ValueError(f"出库单不存在: {order_id}")
+        if order["status"] == ISSUE_CANCELLED:
+            raise PostingError("WMS_409_ALREADY_CANCELLED",
+                               "单据已取消，不可重复操作")
+
+        current_status = order["status"]
+        items = await self.item_repo.list_by_issue(order_id)
+
+        if current_status in (ISSUE_PENDING, ISSUE_APPROVED, ISSUE_PICKING):
+            # 仅置 cancelled，零库存影响
+            await self.repo.update(order_id, {"status": ISSUE_CANCELLED})
+            return {"order_id": order_id, "status": ISSUE_CANCELLED,
+                    "reversed_qty": 0, "tx_count": 0}
+
+        # issued / partially_issued → 需要回滚库存
+        total_reversed: float = 0.0
+        tx_count: int = 0
+
+        async with posting_scope(self.inv_repo._session):
+            for item in items:
+                issued_qty = item.get("issued_qty") or 0
+                if issued_qty <= 0:
+                    continue
+
+                # 优先使用 item 上的 from_location_id
+                location_id = item.get("from_location_id")
+                if not location_id:
+                    # 回退：从原始 issue 流水中查找 from_location_id
+                    orig_txs = await self.tx_repo.query(
+                        """SELECT from_location_id FROM inventory_transactions
+                           WHERE reference_type = 'issue_order'
+                             AND reference_id = :rid
+                             AND material_id = :mid
+                             AND transaction_type = 'issue'
+                           ORDER BY created_at DESC LIMIT 1""",
+                        {"rid": order_id, "mid": item["material_id"]},
+                    )
+                    if orig_txs:
+                        location_id = orig_txs[0].get("from_location_id")
+                if not location_id:
+                    # 最后兜底：查找物料在仓库的任意库存行
+                    inv_row = await self.inv_repo.find_one(
+                        item["material_id"], order["warehouse_id"],
+                    )
+                    if inv_row:
+                        location_id = inv_row.get("location_id")
+                if not location_id:
+                    raise ValueError(
+                        f"无法确定回退库位: material_id={item['material_id']}",
+                    )
+
+                await self.inv_repo.stock_in(
+                    tenant_id=tenant_id,
+                    material_id=item["material_id"],
+                    warehouse_id=order["warehouse_id"],
+                    location_id=location_id,
+                    quantity=issued_qty,
+                    unit=item.get("unit", ""),
+                    batch_no=item.get("batch_no"),
+                )
+                await self._create_cancel_tx(
+                    tenant_id=tenant_id,
+                    material_id=item["material_id"],
+                    warehouse_id=order["warehouse_id"],
+                    voucher_no=order.get("issue_no", ""),
+                    quantity=issued_qty,
+                    from_location_id=None,
+                    to_location_id=location_id,
+                    batch_no=item.get("batch_no"),
+                    unit=item.get("unit", ""),
+                    source_type=order.get("source_type", "production"),
+                    source_doc_no=order.get("issue_no", ""),
+                    reference_type="issue_order",
+                    reference_id=order_id,
+                    remark=f"取消出库单: {reason}",
+                    created_by=created_by,
+                )
+                total_reversed += issued_qty
+                tx_count += 1
+
+            await self.repo.update(order_id, {"status": ISSUE_CANCELLED})
+
+        return {"order_id": order_id, "status": ISSUE_CANCELLED,
+                "reversed_qty": total_reversed, "tx_count": tx_count}
+
+    async def _create_cancel_tx(self, tenant_id: str, material_id: int,
+                                warehouse_id: int, voucher_no: str,
+                                quantity: float, from_location_id,
+                                to_location_id, batch_no: str, unit: str,
+                                source_type: str, source_doc_no: str,
+                                reference_type: str, reference_id: int,
+                                remark: str, created_by: int = None) -> None:
+        """写 cancel 冲销流水（统一封装，供 cancel_issue_order 复用）。"""
+        await self.tx_repo.create({
+            "tenant_id": tenant_id,
+            "transaction_type": "cancel",
+            "voucher_no": voucher_no,
+            "material_id": material_id,
+            "warehouse_id": warehouse_id,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "batch_id": None,
+            "batch_no": batch_no,
+            "quantity": quantity,
+            "unit": unit,
+            "unit_price": None,
+            "source_type": source_type,
+            "source_doc_no": source_doc_no,
+            "reference_type": reference_type,
+            "reference_id": reference_id,
+            "remark": remark,
             "created_by": created_by,
         })
 
