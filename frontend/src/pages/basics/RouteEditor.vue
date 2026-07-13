@@ -97,7 +97,7 @@ const STEP_TYPE_OPTIONS = [
 
 async function loadRoute() {
   try {
-    const res = await get(`/api/v1/routes/${routeId}`)
+    const res = await get(`/routes/${routeId}`)
     routeInfo.value = res
   } catch (e: any) {
     showToast('加载路线信息失败')
@@ -107,7 +107,7 @@ async function loadRoute() {
 
 async function loadSteps() {
   try {
-    const res = await get(`/api/v1/routes/${routeId}/steps`)
+    const res = await get(`/routes/${routeId}/steps`)
     steps.value = res || []
   } catch (e: any) {
     showToast('加载步骤失败')
@@ -116,14 +116,14 @@ async function loadSteps() {
 
 async function loadOperations() {
   try {
-    const res = await get('/api/v1/operations', { params: { page_size: 500 } })
+    const res = await get('/operations', { params: { page_size: 500 } })
     allOperations.value = res.items || []
   } catch (_) { /* ignore */ }
 }
 
 async function loadWorkCenters() {
   try {
-    const res = await get('/api/v1/work-centers', { params: { page_size: 500 } })
+    const res = await get('/work-centers', { params: { page_size: 500 } })
     allWorkCenters.value = res.items || []
   } catch (_) { /* ignore */ }
 }
@@ -260,7 +260,7 @@ async function saveSteps() {
       parallel_group: s.parallel_group,
       remark: s.remark,
     }))
-    await put(`/api/v1/routes/${routeId}/steps`, payload)
+    await put(`/routes/${routeId}/steps`, payload)
     showToast('步骤保存成功')
   } catch (e: any) {
     showToast(e?.detail?.message || '保存失败')

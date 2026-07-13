@@ -68,7 +68,7 @@ function isWeekend(d: CalendarDay | null, index: number): boolean {
 async function loadYear() {
   loading.value = true
   try {
-    const res = await get(`/api/v1/calendars/${currentYear.value}`)
+    const res = await get(`/calendars/${currentYear.value}`)
     days.value = res.days || []
     yearSummary.value = res.summary || {}
   } catch (e: any) {
@@ -112,7 +112,7 @@ function openDayDetail(day: CalendarDay) {
 
 async function saveDay() {
   try {
-    await post('/api/v1/calendars/day', {
+    await post('/calendars/day', {
       year: editingDay.value.year,
       cal_date: editingDay.value.cal_date,
       day_type: editingDay.value.day_type,
@@ -147,7 +147,7 @@ async function confirmInit() {
         }
       })
     }
-    await post(`/api/v1/calendars/${currentYear.value}/init`, {
+    await post(`/calendars/${currentYear.value}/init`, {
       work_weekends: initWorkWeekends.value,
       holidays,
     })

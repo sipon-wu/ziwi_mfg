@@ -44,7 +44,7 @@ async function fetchData() {
     const params: Record<string, any> = { page: page.value, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (wcTypeFilter.value) params.wc_type = wcTypeFilter.value
-    const res = await get('/api/v1/work-centers', { params })
+    const res = await get('/work-centers', { params })
     if (page.value === 1) {
       list.value = res.items
     } else {
@@ -105,10 +105,10 @@ async function handleSave() {
   try {
     const data = { ...editing.value }
     if (isEdit.value) {
-      await put(`/api/v1/work-centers/${data.id}`, data)
+      await put(`/work-centers/${data.id}`, data)
       showToast('工作中心更新成功')
     } else {
-      await post('/api/v1/work-centers', data)
+      await post('/work-centers', data)
       showToast('工作中心创建成功')
     }
     showDialog_.value = false
@@ -127,7 +127,7 @@ async function handleDelete(item: WorkCenter) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await del(`/api/v1/work-centers/${item.id}`)
+        await del(`/work-centers/${item.id}`)
         showToast('删除成功')
         page.value = 1
         fetchData()

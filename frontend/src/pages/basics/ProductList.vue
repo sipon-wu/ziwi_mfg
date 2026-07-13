@@ -48,7 +48,7 @@ async function fetchData() {
     if (keyword.value) params.keyword = keyword.value
     if (typeFilter.value) params.product_type = typeFilter.value
     if (categoryFilter.value) params.category = categoryFilter.value
-    const res = await get('/api/v1/products', { params })
+    const res = await get('/products', { params })
     if (page.value === 1) list.value = res.items
     else list.value.push(...res.items)
     total.value = res.total
@@ -80,10 +80,10 @@ async function handleSave() {
   try {
     const data = { ...editing.value }
     if (isEdit.value) {
-      await put(`/api/v1/products/${data.id}`, data)
+      await put(`/products/${data.id}`, data)
       showToast('更新成功')
     } else {
-      await post('/api/v1/products', data)
+      await post('/products', data)
       showToast('创建成功')
     }
     showDialog_.value = false
@@ -102,7 +102,7 @@ async function handleDelete(item: Product) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await del(`/api/v1/products/${item.id}`)
+        await del(`/products/${item.id}`)
         showToast('删除成功')
         page.value = 1
         fetchData()

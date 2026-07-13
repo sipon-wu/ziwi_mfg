@@ -52,7 +52,7 @@ async function fetchData() {
     const params: Record<string, any> = { page: page.value, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (opTypeFilter.value) params.op_type = opTypeFilter.value
-    const res = await get('/api/v1/operations', { params })
+    const res = await get('/operations', { params })
     if (page.value === 1) {
       list.value = res.items
     } else {
@@ -112,10 +112,10 @@ async function handleSave() {
   try {
     const data = { ...editing.value }
     if (isEdit.value) {
-      await put(`/api/v1/operations/${data.id}`, data)
+      await put(`/operations/${data.id}`, data)
       showToast('工序更新成功')
     } else {
-      await post('/api/v1/operations', data)
+      await post('/operations', data)
       showToast('工序创建成功')
     }
     showDialog_.value = false
@@ -134,7 +134,7 @@ async function handleDelete(item: Operation) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await del(`/api/v1/operations/${item.id}`)
+        await del(`/operations/${item.id}`)
         showToast('删除成功')
         page.value = 1
         fetchData()

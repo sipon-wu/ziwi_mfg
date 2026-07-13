@@ -59,7 +59,7 @@ async function fetchData() {
     const params: Record<string, any> = { page: page.value, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (statusFilter.value) params.status = statusFilter.value
-    const res = await get('/api/v1/routes', { params })
+    const res = await get('/routes', { params })
     if (page.value === 1) {
       list.value = res.items
     } else {
@@ -115,10 +115,10 @@ async function handleSave() {
   try {
     const data = { ...editing.value }
     if (isEdit.value) {
-      await put(`/api/v1/routes/${data.id}`, data)
+      await put(`/routes/${data.id}`, data)
       showToast('更新成功')
     } else {
-      await post('/api/v1/routes', data)
+      await post('/routes', data)
       showToast('创建成功')
     }
     showEditDialog.value = false
@@ -137,7 +137,7 @@ async function handlePublish(item: RouteItem) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await post(`/api/v1/routes/${item.id}/publish`)
+        await post(`/routes/${item.id}/publish`)
         showToast('已发布')
         fetchData()
       } catch (e: any) {
@@ -155,7 +155,7 @@ async function handleArchive(item: RouteItem) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await post(`/api/v1/routes/${item.id}/archive`)
+        await post(`/routes/${item.id}/archive`)
         showToast('已归档')
         fetchData()
       } catch (e: any) {
@@ -167,7 +167,7 @@ async function handleArchive(item: RouteItem) {
 
 async function handleNewVersion(item: RouteItem) {
   try {
-    const res = await post(`/api/v1/routes/${item.id}/new-version`)
+    const res = await post(`/routes/${item.id}/new-version`)
     showToast(`已创建 V${res.version}`)
     fetchData()
   } catch (e: any) {
@@ -187,7 +187,7 @@ async function handleDelete(item: RouteItem) {
   }).then(async (action: string) => {
     if (action === 'confirm') {
       try {
-        await del(`/api/v1/routes/${item.id}`)
+        await del(`/routes/${item.id}`)
         showToast('删除成功')
         page.value = 1
         fetchData()
