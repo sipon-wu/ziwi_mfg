@@ -31,7 +31,8 @@ client.interceptors.response.use(
 export default client
 
 export async function get<T>(url: string, params?: Record<string, any>): Promise<T> {
-  const { data } = await client.get(url, { params })
+  const p = params && typeof params === 'object' && 'params' in params ? (params as any).params : params
+  const { data } = await client.get(url, { params: p })
   return data.data ?? data
 }
 
