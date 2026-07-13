@@ -22,11 +22,9 @@ interface RouteItem {
 
 const router = useRouter()
 const list = ref<RouteItem[]>([])
-const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = 100
 const loading = ref(false)
-const finished = ref(false)
 const keyword = ref('')
 const statusFilter = ref('')
 const showEditDialog = ref(false)
@@ -56,17 +54,11 @@ function routeTypeLabel(v: string): string {
 async function fetchData() {
   loading.value = true
   try {
-    const params: Record<string, any> = { page: page.value, page_size: pageSize }
+    const params: Record<string, any> = { page: 1, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (statusFilter.value) params.status = statusFilter.value
     const res = await get('/routes', { params })
-    if (page.value === 1) {
-      list.value = res.items
-    } else {
-      list.value.push(...res.items)
-    }
-    total.value = res.total
-    finished.value = list.value.length >= total.value
+    list.value = res.items || []
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工艺路线列表失败')
   } finally {
@@ -74,11 +66,7 @@ async function fetchData() {
   }
 }
 
-function onLoad() { fetchData() }
-
 function onSearch() {
-  page.value = 1
-  finished.value = false
   fetchData()
 }
 
@@ -228,61 +216,61 @@ onMounted(fetchData)
     </div>
 
     <!-- 列表 -->
-    <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
-      <van-cell-group>
-        <van-cell
-          v-for="item in list"
-          :key="item.id"
-          @click="goEditor(item)"
-          is-link
-        >
-          <template #title>
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-medium">{{ item.code }}</span>
-              <van-tag :type="statusColor(item.status)" size="small">{{ statusLabel(item.status) }}</van-tag>
-              <van-tag plain size="small">V{{ item.version }}</van-tag>
-              <van-tag plain size="small">{{ routeTypeLabel(item.route_type) }}</van-tag>
-            </div>
-            <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
-          </template>
-          <template #label>
-            <div class="text-xs text-gray-400 mt-1">
-              工序步骤: {{ item.step_count }} 道
-              <span v-if="item.published_at"> | 发布于 {{ item.published_at?.slice(0, 10) }}</span>
-            </div>
-          </template>
-          <template #right-icon>
-            <div class="flex gap-1" @click.stop>
-              <van-button
-                v-if="item.status === 'draft'"
-                icon="edit" size="small" type="primary" plain
-                @click="openEdit(item)"
-              />
-              <van-button
-                v-if="item.status === 'draft'"
-                icon="success" size="small" type="success" plain
-                @click="handlePublish(item)"
-              />
-              <van-button
-                v-if="item.status === 'published'"
-                icon="records" size="small" type="warning" plain
-                @click="handleNewVersion(item)"
-              />
-              <van-button
-                v-if="item.status !== 'archived'"
-                icon="folder" size="small" plain
-                @click="handleArchive(item)"
-              />
-              <van-button
-                v-if="item.status === 'draft'"
-                icon="delete" size="small" type="danger" plain
-                @click="handleDelete(item)"
-              />
-            </div>
-          </template>
-        </van-cell>
-      </van-cell-group>
-    </van-list>
+    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
+    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
+    <van-cell-group v-else>
+      <van-cell
+        v-for="item in list"
+        :key="item.id"
+        @click="goEditor(item)"
+        is-link
+      >
+        <template #title>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-medium">{{ item.code }}</span>
+            <van-tag :type="statusColor(item.status)" size="small">{{ statusLabel(item.status) }}</van-tag>
+            <van-tag plain size="small">V{{ item.version }}</van-tag>
+            <van-tag plain size="small">{{ routeTypeLabel(item.route_type) }}</van-tag>
+          </div>
+          <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
+        </template>
+        <template #label>
+          <div class="text-xs text-gray-400 mt-1">
+            工序步骤: {{ item.step_count }} 道
+            <span v-if="item.published_at"> | 发布于 {{ item.published_at?.slice(0, 10) }}</span>
+          </div>
+        </template>
+        <template #right-icon>
+          <div class="flex gap-1" @click.stop>
+            <van-button
+              v-if="item.status === 'draft'"
+              icon="edit" size="small" type="primary" plain
+              @click="openEdit(item)"
+            />
+            <van-button
+              v-if="item.status === 'draft'"
+              icon="success" size="small" type="success" plain
+              @click="handlePublish(item)"
+            />
+            <van-button
+              v-if="item.status === 'published'"
+              icon="records" size="small" type="warning" plain
+              @click="handleNewVersion(item)"
+            />
+            <van-button
+              v-if="item.status !== 'archived'"
+              icon="folder" size="small" plain
+              @click="handleArchive(item)"
+            />
+            <van-button
+              v-if="item.status === 'draft'"
+              icon="delete" size="small" type="danger" plain
+              @click="handleDelete(item)"
+            />
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog

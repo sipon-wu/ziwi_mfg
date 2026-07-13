@@ -35,11 +35,9 @@ const OP_TYPE_OPTIONS = [
 ]
 
 const list = ref<Operation[]>([])
-const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = 100
 const loading = ref(false)
-const finished = ref(false)
 const keyword = ref('')
 const opTypeFilter = ref('')
 const showDialog_ = ref(false)
@@ -49,17 +47,11 @@ const isEdit = ref(false)
 async function fetchData() {
   loading.value = true
   try {
-    const params: Record<string, any> = { page: page.value, page_size: pageSize }
+    const params: Record<string, any> = { page: 1, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (opTypeFilter.value) params.op_type = opTypeFilter.value
     const res = await get('/operations', { params })
-    if (page.value === 1) {
-      list.value = res.items
-    } else {
-      list.value.push(...res.items)
-    }
-    total.value = res.total
-    finished.value = list.value.length >= total.value
+    list.value = res.items || []
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工序列表失败')
   } finally {
@@ -67,13 +59,7 @@ async function fetchData() {
   }
 }
 
-function onLoad() {
-  fetchData()
-}
-
 function onSearch() {
-  page.value = 1
-  finished.value = false
   fetchData()
 }
 
@@ -177,34 +163,34 @@ onMounted(() => {
     </div>
 
     <!-- 列表 -->
-    <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
-      <van-cell-group>
-        <van-cell
-          v-for="item in list"
-          :key="item.id"
-        >
-          <template #title>
-            <div class="flex items-center gap-2">
-              <span class="font-medium">{{ item.code }}</span>
-              <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
-              <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
-            </div>
-            <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
-          </template>
-          <template #label>
-            <div class="text-xs text-gray-400 mt-1">
-              准备: {{ item.setup_time }}min | 单件: {{ item.unit_time }}min/件
-            </div>
-          </template>
-          <template #right-icon>
-            <div class="flex gap-1">
-              <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
-              <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
-            </div>
-          </template>
-        </van-cell>
-      </van-cell-group>
-    </van-list>
+    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
+    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
+    <van-cell-group v-else>
+      <van-cell
+        v-for="item in list"
+        :key="item.id"
+      >
+        <template #title>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">{{ item.code }}</span>
+            <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
+            <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
+          </div>
+          <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
+        </template>
+        <template #label>
+          <div class="text-xs text-gray-400 mt-1">
+            准备: {{ item.setup_time }}min | 单件: {{ item.unit_time }}min/件
+          </div>
+        </template>
+        <template #right-icon>
+          <div class="flex gap-1">
+            <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
+            <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog

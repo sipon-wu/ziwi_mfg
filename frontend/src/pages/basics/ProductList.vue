@@ -25,11 +25,9 @@ const PRODUCT_TYPE_OPTIONS = [
 ]
 
 const list = ref<Product[]>([])
-const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = 100
 const loading = ref(false)
-const finished = ref(false)
 const keyword = ref('')
 const typeFilter = ref('')
 const categoryFilter = ref('')
@@ -44,15 +42,12 @@ function productTypeLabel(v: string): string {
 async function fetchData() {
   loading.value = true
   try {
-    const params: Record<string, any> = { page: page.value, page_size: pageSize }
+    const params: Record<string, any> = { page: 1, page_size: pageSize }
     if (keyword.value) params.keyword = keyword.value
     if (typeFilter.value) params.product_type = typeFilter.value
     if (categoryFilter.value) params.category = categoryFilter.value
     const res = await get('/products', { params })
-    if (page.value === 1) list.value = res.items
-    else list.value.push(...res.items)
-    total.value = res.total
-    finished.value = list.value.length >= total.value
+    list.value = res.items || []
   } catch (e: any) {
     showToast(e?.detail?.message || '获取产品列表失败')
   } finally {
@@ -60,8 +55,7 @@ async function fetchData() {
   }
 }
 
-function onLoad() { fetchData() }
-function onSearch() { page.value = 1; finished.value = false; fetchData() }
+function onSearch() { page.value = 1; fetchData() }
 function onReset() { keyword.value = ''; typeFilter.value = ''; categoryFilter.value = ''; onSearch() }
 
 function openCreate() {
@@ -133,32 +127,32 @@ onMounted(fetchData)
     </div>
 
     <!-- 列表 -->
-    <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
-      <van-cell-group>
-        <van-cell v-for="item in list" :key="item.id">
-          <template #title>
-            <div class="flex items-center gap-2">
-              <span class="font-medium">{{ item.code }}</span>
-              <van-tag type="primary" size="small">{{ productTypeLabel(item.product_type) }}</van-tag>
-              <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
-            </div>
-            <div class="text-sm text-gray-500 mt-1">{{ item.name }} <span v-if="item.spec">/ {{ item.spec }}</span></div>
-          </template>
-          <template #label>
-            <div class="text-xs text-gray-400 mt-1">
-              单位: {{ item.unit }} | 分类: {{ item.category || '-' }}
-              <span v-if="item.weight"> | 重量: {{ item.weight }}kg</span>
-            </div>
-          </template>
-          <template #right-icon>
-            <div class="flex gap-1">
-              <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
-              <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
-            </div>
-          </template>
-        </van-cell>
-      </van-cell-group>
-    </van-list>
+    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
+    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
+    <van-cell-group v-else>
+      <van-cell v-for="item in list" :key="item.id">
+        <template #title>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">{{ item.code }}</span>
+            <van-tag type="primary" size="small">{{ productTypeLabel(item.product_type) }}</van-tag>
+            <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
+          </div>
+          <div class="text-sm text-gray-500 mt-1">{{ item.name }} <span v-if="item.spec">/ {{ item.spec }}</span></div>
+        </template>
+        <template #label>
+          <div class="text-xs text-gray-400 mt-1">
+            单位: {{ item.unit }} | 分类: {{ item.category || '-' }}
+            <span v-if="item.weight"> | 重量: {{ item.weight }}kg</span>
+          </div>
+        </template>
+        <template #right-icon>
+          <div class="flex gap-1">
+            <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
+            <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog v-model:show="showDialog_" :title="isEdit ? '编辑产品' : '新增产品'" show-cancel-button @confirm="handleSave" class="!w-[500px]">
