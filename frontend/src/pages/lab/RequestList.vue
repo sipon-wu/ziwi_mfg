@@ -1,18 +1,46 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showDialog, showConfirmDialog } from 'vant'
 import { listRequests, createRequest } from '@/api/lab'
 import type { LabRequest } from '@/api/lab'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 const router = useRouter()
-const requests = ref<LabRequest[]>([])
+const rawRequests = ref<LabRequest[]>([])
 const total = ref(0)
 const page = ref(1)
 const loading = ref(false)
 const filterStatus = ref('')
 const filterType = ref('')
 const filterPriority = ref('')
+
+// 高级检索 + 行展开
+const cfg = getSearchConfig('lab/requests')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<LabRequest>(cfg)
+const requests = computed<LabRequest[]>(() =>
+  conditions.value.length ? applyFilter(rawRequests.value) : rawRequests.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
 
 const typeOptions = [
   { value: '', text: '全部类型' },
@@ -84,7 +112,7 @@ async function fetch() {
       request_type: filterType.value || undefined,
       priority: filterPriority.value || undefined,
     })
-    requests.value = res.items || []
+    rawRequests.value = res.items || []
     total.value = res.total || 0
   } finally { loading.value = false }
 }
@@ -149,6 +177,18 @@ async function handleCreate() {
     </van-row>
 
     <!-- 委托列表 -->
+    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+    </div>
     <van-list v-model:loading="loading" :finished="requests.length >= total" @load="fetch">
       <van-cell v-for="item in requests" :key="item.id" @click="viewDetail(item.id)">
         <template #title>
@@ -166,6 +206,10 @@ async function handleCreate() {
           <div>{{ typeMap[item.request_type] || item.request_type }} | 优先级: {{ priorityMap[item.priority] || item.priority }}</div>
           <div v-if="item.source_type">来源: {{ item.source_type }}</div>
           <div style="font-size: 12px; color: #999">创建: {{ item.created_at?.slice(0, 10) }}</div>
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
+        </template>
+        <template #right-icon>
+          <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain style="margin-left:4px" @click.stop="toggleExpand(item.id)" />
         </template>
       </van-cell>
     </van-list>
@@ -188,6 +232,13 @@ async function handleCreate() {
     <!-- 类型选择器 -->
     <van-action-sheet v-model:show="showTypePicker" :actions="typeOptions" @select="(a: any) => { form.request_type = a.value; showTypePicker = false }" />
     <van-action-sheet v-model:show="showPriorityPicker" :actions="priorityOptions.filter(o => o.value)" @select="(a: any) => { form.priority = a.value; showPriorityPicker = false }" />
+
+    <AdvancedSearchPanel
+      v-model:show="showSearch"
+      :config="cfg"
+      @search="onSearchSubmit"
+      @reset="onResetSubmit"
+    />
   </div>
 </template>
 

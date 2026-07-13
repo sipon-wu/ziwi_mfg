@@ -1,17 +1,45 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import type { Equipment, PaginatedResponse } from '@/types'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 const router = useRouter()
-const list = ref<Equipment[]>([])
+const rawList = ref<Equipment[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
 const keyword = ref('')
 const activeStatus = ref('')
+
+// 高级检索 + 行展开
+const cfg = getSearchConfig('equipment')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<Equipment>(cfg)
+const list = computed<Equipment[]>(() =>
+  conditions.value.length ? applyFilter(rawList.value) : rawList.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
 
 const statusTabs = [
   { text: '全部', value: '' },
@@ -49,7 +77,7 @@ async function fetchData() {
       params.status = activeStatus.value
     }
     const res = await get<PaginatedResponse<Equipment>>('/equipment', params)
-    list.value = res.items || []
+    rawList.value = res.items || []
     total.value = res.total || 0
   } finally {
     loading.value = false
@@ -117,6 +145,19 @@ onMounted(fetchData)
       />
     </van-tabs>
 
+    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+    </div>
+
     <!-- Loading state -->
     <div v-if="loading && list.length === 0" class="loading-container">
       <van-loading type="spinner" size="24px">加载中...</van-loading>
@@ -134,14 +175,20 @@ onMounted(fetchData)
         v-for="item in list"
         :key="item.id"
         :title="item.equipment_name"
-        :label="`${item.equipment_code} | ${item.model} | ${item.location}`"
         is-link
         @click="viewDetail(item.id)"
       >
+        <template #label>
+          {{ item.equipment_code }} | {{ item.model }} | {{ item.location }}
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
+        </template>
         <template #value>
-          <van-tag :type="statusTypes[item.status] || 'default'">
-            {{ statusLabels[item.status] || item.status }}
-          </van-tag>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <van-tag :type="statusTypes[item.status] || 'default'">
+              {{ statusLabels[item.status] || item.status }}
+            </van-tag>
+            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
+          </div>
         </template>
       </van-cell>
 
@@ -155,6 +202,13 @@ onMounted(fetchData)
         />
       </div>
     </div>
+
+    <AdvancedSearchPanel
+      v-model:show="showSearch"
+      :config="cfg"
+      @search="onSearchSubmit"
+      @reset="onResetSubmit"
+    />
   </div>
 </template>
 

@@ -1,0 +1,94 @@
+classDiagram
+    class Operator {
+        <<enum>>
+        EQ 等于
+        NEQ 不等于
+        CONTAINS 包含
+        NOT_CONTAINS 不包含
+        GT 大于
+        LT 小于
+        BETWEEN 区间
+        IS_EMPTY 为空
+        NOT_EMPTY 不为空
+    }
+    class Option {
+        +string label
+        +string value
+    }
+    class FieldDef {
+        +string key
+        +string label
+        +string type: 'string'|'number'|'date'|'enum'|'boolean'
+        +Option[] options
+        +Operator[] operators
+        +boolean hidden
+    }
+    class SearchCondition {
+        +string field
+        +Operator operator
+        +any value
+        +any value2
+        +toParams() Record~string,any~
+    }
+    class ResourceSearchConfig {
+        +string resource
+        +string listEndpoint
+        +string detailEndpoint
+        +FieldDef[] searchFields
+        +FieldDef[] rowDetailFields
+    }
+    class AdvancedSearchPanel {
+        +ResourceSearchConfig config
+        +SearchCondition[] conditions
+        +addCondition()
+        +removeCondition(idx)
+        +onSearch()
+        +onReset()
+    }
+    class ListRowDetail {
+        +object item
+        +FieldDef[] fields
+        +loadDetail(id)
+    }
+    class KpiState {
+        <<enum>>
+        LOADING 加载中
+        REAL 真实值
+        UNAVAILABLE 未接入
+    }
+    class DashboardKpi {
+        +string key
+        +string label
+        +number|null value
+        +string unit
+        +KpiState state
+    }
+    class CockpitModule {
+        +string code
+        +string name
+        +DashboardKpi[] kpis
+    }
+    class DashboardStatsResponse {
+        +DashboardKpi[] workshop
+        +CockpitModule[] cockpit
+    }
+    class DashboardService {
+        +get_workshop_stats(tenant) DashboardKpi[]
+        +get_cockpit_stats(tenant) CockpitModule[]
+    }
+    class DashboardRouter {
+        +GET /api/v1/dashboard/stats
+    }
+
+    SearchCondition --> Operator
+    FieldDef --> Operator
+    FieldDef --> Option
+    ResourceSearchConfig --> FieldDef
+    AdvancedSearchPanel --> ResourceSearchConfig
+    AdvancedSearchPanel --> SearchCondition
+    ListRowDetail --> FieldDef
+    DashboardKpi --> KpiState
+    CockpitModule --> DashboardKpi
+    DashboardStatsResponse --> CockpitModule
+    DashboardRouter ..> DashboardService
+    DashboardStatsResponse <.. DashboardService

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { showToast, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 interface Operation {
   id: number
@@ -34,7 +39,7 @@ const OP_TYPE_OPTIONS = [
   { value: 'transport', label: '转运' },
 ]
 
-const list = ref<Operation[]>([])
+const rawList = ref<Operation[]>([])
 const page = ref(1)
 const pageSize = 100
 const loading = ref(false)
@@ -44,6 +49,29 @@ const showDialog_ = ref(false)
 const editing = ref<Partial<Operation>>({})
 const isEdit = ref(false)
 
+// 高级检索 + 行展开
+const cfg = getSearchConfig('operations')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<Operation>(cfg)
+const list = computed<Operation[]>(() =>
+  conditions.value.length ? applyFilter(rawList.value) : rawList.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
+
 async function fetchData() {
   loading.value = true
   try {
@@ -51,7 +79,7 @@ async function fetchData() {
     if (keyword.value) params.keyword = keyword.value
     if (opTypeFilter.value) params.op_type = opTypeFilter.value
     const res = await get('/operations', { params })
-    list.value = res.items || []
+    rawList.value = res.items || []
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工序列表失败')
   } finally {
@@ -159,7 +187,21 @@ onMounted(() => {
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
         <van-button type="success" size="small" @click="openCreate">新增工序</van-button>
+        <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       </div>
+    </div>
+
+    <!-- 高级检索条件 chips -->
+    <div v-if="conditions.length" class="flex flex-wrap gap-2 mb-3 px-1">
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
 
     <!-- 列表 -->
@@ -169,6 +211,7 @@ onMounted(() => {
       <van-cell
         v-for="item in list"
         :key="item.id"
+        @click="toggleExpand(item.id)"
       >
         <template #title>
           <div class="flex items-center gap-2">
@@ -182,11 +225,13 @@ onMounted(() => {
           <div class="text-xs text-gray-400 mt-1">
             准备: {{ item.setup_time }}min | 单件: {{ item.unit_time }}min/件
           </div>
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #right-icon>
           <div class="flex gap-1">
-            <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
-            <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
+            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="small" plain @click.stop="toggleExpand(item.id)" />
+            <van-button icon="edit" size="small" type="primary" plain @click.stop="openEdit(item)" />
+            <van-button icon="delete" size="small" type="danger" plain @click.stop="handleDelete(item)" />
           </div>
         </template>
       </van-cell>
@@ -213,5 +258,12 @@ onMounted(() => {
         <van-field v-model="editing.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
     </van-dialog>
+
+    <AdvancedSearchPanel
+      v-model:show="showSearch"
+      :config="cfg"
+      @search="onSearchSubmit"
+      @reset="onResetSubmit"
+    />
   </div>
 </template>

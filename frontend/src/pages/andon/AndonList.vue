@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
 import { showToast } from 'vant'
 import type { PaginatedResponse, AndonCall } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import KpiCard from '@/components/KpiCard.vue'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
 import SearchBar from '@/components/SearchBar.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 const router = useRouter()
 
@@ -29,8 +34,31 @@ const CALLTYPE_MAP: Record<string, string> = {
   other: '其他',
 }
 
-const calls = ref<AndonCall[]>([])
+const rawCalls = ref<AndonCall[]>([])
 const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+
+// 高级检索 + 行展开
+const cfg = getSearchConfig('andon/calls')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<AndonCall>(cfg)
+const calls = computed<AndonCall[]>(() =>
+  conditions.value.length ? applyFilter(rawCalls.value) : rawCalls.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
 
 // 安灯概览 KPI（真实统计，失败显示 "—"）
 const kpi = ref<{ pending: string | number; responding: string | number; resolvedToday: string | number }>({
@@ -91,7 +119,7 @@ async function loadData() {
   const items = await fetchPage(async (p) => {
     return get<PaginatedResponse<AndonCall>>('/andon/calls', { ...params, ...p })
   })
-  calls.value = items as AndonCall[]
+  rawCalls.value = items as AndonCall[]
 }
 
 function onSearch(val: string) {
@@ -125,6 +153,19 @@ onMounted(() => {
 
     <SearchBar v-model:keyword="keyword" @search="onSearch" />
 
+    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+    </div>
+
     <div style="display:flex; gap:8px; margin:12px 0; flex-wrap:wrap;">
       <van-tag
         v-for="opt in statusOptions" :key="opt.value"
@@ -138,14 +179,30 @@ onMounted(() => {
       <van-cell
         v-for="item in calls" :key="item.id"
         :title="item.call_title || '呼叫#'+item.id"
-        :label="item.source_desc || (CALLTYPE_MAP[item.call_type] || item.call_type)"
-        :value="STATUS_MAP[item.status] || item.status"
         is-link
         @click="goDetail(item.id)"
-      />
+      >
+        <template #label>
+          {{ item.source_desc || (CALLTYPE_MAP[item.call_type] || item.call_type) }}
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
+        </template>
+        <template #value>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span>{{ STATUS_MAP[item.status] || item.status }}</span>
+            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
+          </div>
+        </template>
+      </van-cell>
     </van-list>
 
     <van-empty v-if="!loading && calls.length === 0" description="暂无安灯呼叫" />
+
+    <AdvancedSearchPanel
+      v-model:show="showSearch"
+      :config="cfg"
+      @search="onSearchSubmit"
+      @reset="onResetSubmit"
+    />
   </div>
 
 </template>

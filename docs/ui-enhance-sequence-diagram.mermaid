@@ -1,0 +1,74 @@
+%% ============ 图1：高级检索组合面板 ============
+sequenceDiagram
+    actor U as 用户
+    participant P as 列表页(如OperationList)
+    participant A as AdvancedSearchPanel
+    participant C as useAdvancedSearch(composable)
+    participant API as get()(client.ts)
+
+    U->>A: 点击"高级检索"打开面板
+    A->>A: 读取 config.searchFields 渲染字段下拉
+    U->>A: 选择字段+条件+值，点"+"叠加多条
+    U->>A: 点击"查询"
+    A->>P: emit search(conditions: SearchCondition[])
+    alt MVP：前端本地过滤
+        P->>C: applyLocal(conditions, loadedItems)
+        C->>C: 逐条按9种算子求值(含区间/为空/不为空)
+        C-->>P: filteredItems
+        P->>P: 重新渲染 van-cell / van-list
+    else 增强(P1)：后端过滤
+        P->>API: get(listEndpoint, { filters: conditions })
+        API-->>P: PaginatedResponse
+        P->>P: 渲染
+    end
+    U->>A: 点击"重置"
+    A->>P: emit reset()
+    P->>C: clearConditions()
+    P->>P: 恢复原始列表
+
+%% ============ 图2：列表行展开查看全部字段 ============
+sequenceDiagram
+    actor U as 用户
+    participant P as 列表页
+    participant R as ListRowDetail
+    participant API as get()(client.ts)
+
+    U->>P: 点击某行展开
+    P->>R: 传入 item + config.rowDetailFields
+    alt P0：列表项已含隐藏字段
+        R->>R: 按 rowDetailFields 渲染 item 全部字段(含 created_at/remark)
+    else P1：需详情补全
+        R->>API: get(detailEndpoint + item.id)
+        API-->>R: 完整对象(含关联字段)
+        R->>R: 合并并渲染
+    end
+    R-->>U: 展示全部字段面板
+
+%% ============ 图3：车间大屏真实数据化 ============
+sequenceDiagram
+    participant WS as WorkshopScreen.vue
+    participant S as DashboardService(后端)
+    participant R as 各 Repository
+    participant API as get()(client.ts)
+
+    WS->>API: get('/dashboard/stats?scope=workshop')
+    API->>S: 聚合请求
+    S->>R: 设备状态计数 / work_orders 计数 / daily_report / andon 计数
+    R-->>S: 原始聚合
+    S-->>API: DashboardKpi[] (state=real|unavailable)
+    API-->>WS: 渲染 KPI 三态(loading 期间显示加载中)
+    WS->>WS: 定时刷新(startRefresh) 重新请求
+    Note over WS: 无数据来源的 KPI → state=unavailable → 显示"未接入"
+
+%% ============ 图4：驾驶舱模块真实数据化 ============
+sequenceDiagram
+    participant CP as Cockpit.vue
+    participant S as DashboardService(后端)
+    participant API as get()(client.ts)
+
+    CP->>API: get('/dashboard/stats?scope=cockpit')
+    API->>S: 按模块聚合(M01/M02/M03/M05/M11/M12...)
+    S-->>API: CockpitModule[]{ kpis: DashboardKpi[] }
+    API-->>CP: 渲染各模块卡片
+    CP->>CP: 每张卡片按 kpi.state 显示 加载中/真实值/未接入
+    Note over CP: MVP备选(零后端): 直接并行调 /work-orders /work-reports /equipment 等 total

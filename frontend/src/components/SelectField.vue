@@ -36,11 +36,16 @@ function open() {
   showPopup.value = true
 }
 
-function onConfirm(value: any) {
-  // van-picker 在对象列下 confirm 的 value 可能是选项的 value 字段，也可能为整个对象，做兼容
-  let v = value
-  if (value && typeof value === 'object' && 'value' in value) {
-    v = value.value
+function onConfirm(params: any) {
+  // Vant 4 的 van-picker confirm 回传对象 { selectedValues, selectedOptions, selectedIndexes }
+  // selectedValues 为各列选中值的数组，单列选择器取 selectedValues[0] 才是真正的选项 value
+  let v: any = null
+  if (params && Array.isArray(params.selectedValues) && params.selectedValues.length) {
+    v = params.selectedValues[0]
+  } else if (params && typeof params === 'object' && 'value' in params) {
+    v = (params as any).value
+  } else {
+    v = params
   }
   emit('update:modelValue', v)
   emit('change', v)

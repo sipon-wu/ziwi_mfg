@@ -1,17 +1,45 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showDialog, showToast } from 'vant'
 import { listTrials, advanceStage, terminateTrial, convertToProduction } from '@/api/trial'
 import type { TrialOrder } from '@/api/trial'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 const router = useRouter()
-const orders = ref<TrialOrder[]>([])
+const rawOrders = ref<TrialOrder[]>([])
 const total = ref(0)
 const page = ref(1)
 const loading = ref(false)
 const filterType = ref('')
 const filterStatus = ref('')
+
+// 高级检索 + 行展开
+const cfg = getSearchConfig('trials')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<TrialOrder>(cfg)
+const orders = computed<TrialOrder[]>(() =>
+  conditions.value.length ? applyFilter(rawOrders.value) : rawOrders.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
 
 const typeOptions = [
   { value: '', label: '全部类型' },
@@ -52,7 +80,7 @@ async function fetch() {
       trial_type: filterType.value || undefined,
       status: filterStatus.value || undefined,
     })
-    orders.value = (res as any).items || []
+    rawOrders.value = (res as any).items || []
     total.value = (res as any).total || 0
   } finally { loading.value = false }
 }
@@ -119,6 +147,18 @@ function formatStageActions(status: string): string[] {
         </van-dropdown-menu>
       </van-col>
     </van-row>
+    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+    </div>
     <van-list v-model:loading="loading" :finished="orders.length >= total" @load="fetch">
       <van-cell v-for="item in orders" :key="item.id" @click="viewDetail(item.id)">
         <template #title>
@@ -131,12 +171,16 @@ function formatStageActions(status: string): string[] {
           <div>{{ typeMap[item.trial_type] || item.trial_type }} | {{ item.product_name }}</div>
           <div v-if="item.planned_qty">计划数量: {{ item.planned_qty }} | 已完成: {{ item.completed_qty }}</div>
           <div style="font-size: 12px; color: #999">创建: {{ item.created_at?.slice(0, 10) }}</div>
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #value>
-          <van-space>
-            <van-button v-if="formatStageActions(item.status).includes('推进')" size="mini" type="primary" @click.stop="handleAdvance(item)">推进</van-button>
-            <van-button v-if="item.status === 'review'" size="mini" type="success" @click.stop="handleConvert(item)">转量产</van-button>
-            <van-button v-if="formatStageActions(item.status).includes('终止')" size="mini" type="danger" @click.stop="handleTerminate(item)">终止</van-button>
+          <van-space direction="column" align="end">
+            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
+            <van-space>
+              <van-button v-if="formatStageActions(item.status).includes('推进')" size="mini" type="primary" @click.stop="handleAdvance(item)">推进</van-button>
+              <van-button v-if="item.status === 'review'" size="mini" type="success" @click.stop="handleConvert(item)">转量产</van-button>
+              <van-button v-if="formatStageActions(item.status).includes('终止')" size="mini" type="danger" @click.stop="handleTerminate(item)">终止</van-button>
+            </van-space>
           </van-space>
         </template>
       </van-cell>

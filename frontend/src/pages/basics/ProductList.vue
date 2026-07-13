@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { showToast, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
+import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
+import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ListRowDetail from '@/components/ListRowDetail.vue'
+import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import type { SearchCondition } from '@/types/search'
 
 interface Product {
   id: number
@@ -24,7 +29,7 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: 'raw', label: '原材料' },
 ]
 
-const list = ref<Product[]>([])
+const rawList = ref<Product[]>([])
 const page = ref(1)
 const pageSize = 100
 const loading = ref(false)
@@ -34,6 +39,29 @@ const categoryFilter = ref('')
 const showDialog_ = ref(false)
 const editing = ref<Partial<Product>>({})
 const isEdit = ref(false)
+
+// 高级检索 + 行展开
+const cfg = getSearchConfig('products')
+const { conditions, applyFilter, removeCondition } = useAdvancedSearch<Product>(cfg)
+const list = computed<Product[]>(() =>
+  conditions.value.length ? applyFilter(rawList.value) : rawList.value,
+)
+const showSearch = ref(false)
+const expandedId = ref<number | null>(null)
+function toggleExpand(id: number) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+function onSearchSubmit(c: SearchCondition[]) {
+  conditions.value = c
+  showSearch.value = false
+}
+function onResetSubmit() {
+  conditions.value = []
+  showSearch.value = false
+}
+function condText(c: SearchCondition) {
+  return describeCondition(c, cfg)
+}
 
 function productTypeLabel(v: string): string {
   return PRODUCT_TYPE_OPTIONS.find(o => o.value === v)?.label || v
@@ -47,7 +75,7 @@ async function fetchData() {
     if (typeFilter.value) params.product_type = typeFilter.value
     if (categoryFilter.value) params.category = categoryFilter.value
     const res = await get('/products', { params })
-    list.value = res.items || []
+    rawList.value = res.items || []
   } catch (e: any) {
     showToast(e?.detail?.message || '获取产品列表失败')
   } finally {
@@ -123,14 +151,28 @@ onMounted(fetchData)
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
         <van-button type="success" size="small" @click="openCreate">新增产品</van-button>
+        <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       </div>
+    </div>
+
+    <!-- 高级检索条件 chips -->
+    <div v-if="conditions.length" class="flex flex-wrap gap-2 mb-3 px-1">
+      <van-tag
+        v-for="c in conditions"
+        :key="c.uid"
+        type="primary"
+        closeable
+        size="medium"
+        @close="removeCondition(c.uid)"
+      >{{ condText(c) }}</van-tag>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
 
     <!-- 列表 -->
     <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
     <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
     <van-cell-group v-else>
-      <van-cell v-for="item in list" :key="item.id">
+      <van-cell v-for="item in list" :key="item.id" @click="toggleExpand(item.id)">
         <template #title>
           <div class="flex items-center gap-2">
             <span class="font-medium">{{ item.code }}</span>
@@ -144,11 +186,13 @@ onMounted(fetchData)
             单位: {{ item.unit }} | 分类: {{ item.category || '-' }}
             <span v-if="item.weight"> | 重量: {{ item.weight }}kg</span>
           </div>
+          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #right-icon>
           <div class="flex gap-1">
-            <van-button icon="edit" size="small" type="primary" plain @click="openEdit(item)" />
-            <van-button icon="delete" size="small" type="danger" plain @click="handleDelete(item)" />
+            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="small" plain @click.stop="toggleExpand(item.id)" />
+            <van-button icon="edit" size="small" type="primary" plain @click.stop="openEdit(item)" />
+            <van-button icon="delete" size="small" type="danger" plain @click.stop="handleDelete(item)" />
           </div>
         </template>
       </van-cell>
@@ -171,5 +215,12 @@ onMounted(fetchData)
         <van-field v-model="editing.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
     </van-dialog>
+
+    <AdvancedSearchPanel
+      v-model:show="showSearch"
+      :config="cfg"
+      @search="onSearchSubmit"
+      @reset="onResetSubmit"
+    />
   </div>
 </template>
