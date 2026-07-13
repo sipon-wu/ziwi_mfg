@@ -597,7 +597,7 @@ async def cancel_issue_order(io_id: int, req: CancelOrderRequest,
 ):
     """取消出库单（方案 B 状态感知红冲）。
 
-    - pending / picking 状态：仅置 cancelled，零库存影响，不写流水
+    - pending / approved / picking 状态：仅置 cancelled，零库存影响，不写流水
     - issued / partially_issued 状态：回滚库存 + 写 cancel 冲销流水
     - 已是 cancelled：409 Already Cancelled
     """
@@ -947,7 +947,7 @@ async def report_slow_moving(
     sql = """SELECT m.id as material_id, m.code as material_code, m.name as material_name, m.spec, m.unit,
              COALESCE(SUM(i.quantity), 0) as total_qty,
              MAX(i.last_transaction_at) as last_transaction_date,
-             CAST(julianday('now') - julianday(COALESCE(MAX(i.last_transaction_at), i.updated_at, '1970-01-01')) AS INTEGER) as idle_days
+             CAST((EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - EXTRACT(EPOCH FROM COALESCE(MAX(i.last_transaction_at), i.updated_at, TIMESTAMP '1970-01-01'))) / 86400.0 AS INTEGER) as idle_days
              FROM materials m
              JOIN inventory i ON i.material_id = m.id
              WHERE m.is_active = true AND i.quantity > 0"""

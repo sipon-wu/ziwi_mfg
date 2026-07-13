@@ -145,7 +145,7 @@ class PpapSubmissionRepository(MultiTenantRepository):
         """查询超30天未回复的提交记录"""
         return await self.query(
             "SELECT * FROM ppap_submissions WHERE status = 'pending' "
-            "AND submitted_at <= datetime('now', '-30 days') AND due_reminder = 0"
+            "AND submitted_at <= NOW() - INTERVAL '30 days' AND due_reminder = 0"
         )
 
 

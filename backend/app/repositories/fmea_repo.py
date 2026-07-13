@@ -229,7 +229,7 @@ class FmeaActionRepository(MultiTenantRepository):
         """完成措施并记录复评值"""
         re_rpn = re_s * re_o * re_d
         return await self.execute(
-            "UPDATE fmea_actions SET status = 'verified', completed_at = datetime('now'), "
+            "UPDATE fmea_actions SET status = 'verified', completed_at = NOW(), "
             "re_severity = :re_s, re_occurrence = :re_o, re_detection = :re_d, re_rpn = :re_rpn "
             "WHERE id = :id",
             {"id": id, "re_s": re_s, "re_o": re_o, "re_d": re_d, "re_rpn": re_rpn},
@@ -238,7 +238,7 @@ class FmeaActionRepository(MultiTenantRepository):
     async def list_overdue(self) -> List[Dict]:
         return await self.query(
             "SELECT * FROM fmea_actions WHERE status IN ('open', 'in_progress') "
-            "AND target_date < date('now')"
+            "AND target_date < CURRENT_DATE"
         )
 
     async def delete_by_doc_id(self, doc_id: int) -> int:

@@ -292,6 +292,40 @@ class InventoryService:
 
 
 # ============================================
+# 共享工具函数
+# ============================================
+
+async def _build_cancel_tx_dict(tx_repo, tenant_id: str, material_id: int,
+                                 warehouse_id: int, voucher_no: str,
+                                 quantity: float, from_location_id,
+                                 to_location_id, batch_no: str, unit: str,
+                                 source_type: str, source_doc_no: str,
+                                 reference_type: str, reference_id: int,
+                                 remark: str, created_by: int = None) -> None:
+    """写 cancel 冲销流水（模块级共享，供 ReceiptOrderService / IssueOrderService 复用）。"""
+    await tx_repo.create({
+        "tenant_id": tenant_id,
+        "transaction_type": "cancel",
+        "voucher_no": voucher_no,
+        "material_id": material_id,
+        "warehouse_id": warehouse_id,
+        "from_location_id": from_location_id,
+        "to_location_id": to_location_id,
+        "batch_id": None,
+        "batch_no": batch_no,
+        "quantity": quantity,
+        "unit": unit,
+        "unit_price": None,
+        "source_type": source_type,
+        "source_doc_no": source_doc_no,
+        "reference_type": reference_type,
+        "reference_id": reference_id,
+        "remark": remark,
+        "created_by": created_by,
+    })
+
+
+# ============================================
 # 入库 Service
 # ============================================
 
@@ -612,27 +646,13 @@ class ReceiptOrderService:
                                 source_type: str, source_doc_no: str,
                                 reference_type: str, reference_id: int,
                                 remark: str, created_by: int = None) -> None:
-        """写 cancel 冲销流水（统一封装，供 cancel_receipt_order / cancel_issue_order 复用）。"""
-        await self.tx_repo.create({
-            "tenant_id": tenant_id,
-            "transaction_type": "cancel",
-            "voucher_no": voucher_no,
-            "material_id": material_id,
-            "warehouse_id": warehouse_id,
-            "from_location_id": from_location_id,
-            "to_location_id": to_location_id,
-            "batch_id": None,
-            "batch_no": batch_no,
-            "quantity": quantity,
-            "unit": unit,
-            "unit_price": None,
-            "source_type": source_type,
-            "source_doc_no": source_doc_no,
-            "reference_type": reference_type,
-            "reference_id": reference_id,
-            "remark": remark,
-            "created_by": created_by,
-        })
+        """写 cancel 冲销流水（统一封装，供 cancel_receipt_order 复用）。"""
+        await _build_cancel_tx_dict(self.tx_repo, tenant_id, material_id,
+                                    warehouse_id, voucher_no, quantity,
+                                    from_location_id, to_location_id, batch_no,
+                                    unit, source_type, source_doc_no,
+                                    reference_type, reference_id, remark,
+                                    created_by)
 
 
 # ============================================
@@ -908,26 +928,12 @@ class IssueOrderService:
                                 reference_type: str, reference_id: int,
                                 remark: str, created_by: int = None) -> None:
         """写 cancel 冲销流水（统一封装，供 cancel_issue_order 复用）。"""
-        await self.tx_repo.create({
-            "tenant_id": tenant_id,
-            "transaction_type": "cancel",
-            "voucher_no": voucher_no,
-            "material_id": material_id,
-            "warehouse_id": warehouse_id,
-            "from_location_id": from_location_id,
-            "to_location_id": to_location_id,
-            "batch_id": None,
-            "batch_no": batch_no,
-            "quantity": quantity,
-            "unit": unit,
-            "unit_price": None,
-            "source_type": source_type,
-            "source_doc_no": source_doc_no,
-            "reference_type": reference_type,
-            "reference_id": reference_id,
-            "remark": remark,
-            "created_by": created_by,
-        })
+        await _build_cancel_tx_dict(self.tx_repo, tenant_id, material_id,
+                                    warehouse_id, voucher_no, quantity,
+                                    from_location_id, to_location_id, batch_no,
+                                    unit, source_type, source_doc_no,
+                                    reference_type, reference_id, remark,
+                                    created_by)
 
 
 # ============================================

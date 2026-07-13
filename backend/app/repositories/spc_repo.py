@@ -174,7 +174,7 @@ class SpcAlertRepository(MultiTenantRepository):
 
     async def acknowledge_alert(self, id: int, user_id: int) -> int:
         return await self.execute(
-            "UPDATE spc_alerts SET is_read = 1, acknowledged_at = datetime('now'), acknowledged_by = :user_id WHERE id = :id",
+            "UPDATE spc_alerts SET is_read = 1, acknowledged_at = NOW(), acknowledged_by = :user_id WHERE id = :id",
             {"id": id, "user_id": user_id},
         )
 

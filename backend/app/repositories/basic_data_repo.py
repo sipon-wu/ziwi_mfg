@@ -309,14 +309,14 @@ class CalendarRepository(MultiTenantRepository):
 
     async def list_by_month(self, year: int, month: int) -> List[Dict]:
         return await self.query(
-            "SELECT * FROM factory_calendars WHERE year = :year AND strftime('%m', cal_date) = :month ORDER BY cal_date ASC",
+            "SELECT * FROM factory_calendars WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month ORDER BY cal_date ASC",
             {"year": year, "month": f"{month:02d}"},
         )
 
     async def get_by_date(self, year: int, month: int, day: int) -> Optional[Dict]:
         return await self.query_one(
             """SELECT * FROM factory_calendars
-               WHERE year = :year AND strftime('%m', cal_date) = :month AND strftime('%d', cal_date) = :day""",
+               WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month AND EXTRACT(DAY FROM cal_date) = :day""",
             {"year": year, "month": f"{month:02d}", "day": f"{day:02d}"},
         )
 
@@ -345,7 +345,7 @@ class CalendarRepository(MultiTenantRepository):
     async def delete_range(self, year: int, month: int = None) -> int:
         if month:
             return await self.execute(
-                "DELETE FROM factory_calendars WHERE year = :year AND strftime('%m', cal_date) = :month",
+                "DELETE FROM factory_calendars WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month",
                 {"year": year, "month": f"{month:02d}"},
             )
         return await self.execute(
