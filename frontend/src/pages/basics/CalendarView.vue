@@ -69,8 +69,8 @@ async function loadYear() {
   loading.value = true
   try {
     const res = await get(`/api/v1/calendars/${currentYear.value}`)
-    days.value = res.data.days || []
-    yearSummary.value = res.data.summary || {}
+    days.value = res.days || []
+    yearSummary.value = res.summary || {}
   } catch (e: any) {
     showToast('加载日历失败')
   } finally {

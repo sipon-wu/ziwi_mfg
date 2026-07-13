@@ -46,11 +46,11 @@ async function fetchData() {
     if (wcTypeFilter.value) params.wc_type = wcTypeFilter.value
     const res = await get('/api/v1/work-centers', { params })
     if (page.value === 1) {
-      list.value = res.data.items
+      list.value = res.items
     } else {
-      list.value.push(...res.data.items)
+      list.value.push(...res.items)
     }
-    total.value = res.data.total
+    total.value = res.total
     finished.value = list.value.length >= total.value
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工作中心列表失败')

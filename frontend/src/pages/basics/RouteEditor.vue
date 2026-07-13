@@ -98,7 +98,7 @@ const STEP_TYPE_OPTIONS = [
 async function loadRoute() {
   try {
     const res = await get(`/api/v1/routes/${routeId}`)
-    routeInfo.value = res.data
+    routeInfo.value = res
   } catch (e: any) {
     showToast('加载路线信息失败')
     router.push('/basics/routes')
@@ -108,7 +108,7 @@ async function loadRoute() {
 async function loadSteps() {
   try {
     const res = await get(`/api/v1/routes/${routeId}/steps`)
-    steps.value = res.data || []
+    steps.value = res || []
   } catch (e: any) {
     showToast('加载步骤失败')
   }
@@ -117,14 +117,14 @@ async function loadSteps() {
 async function loadOperations() {
   try {
     const res = await get('/api/v1/operations', { params: { page_size: 500 } })
-    allOperations.value = res.data.items || []
+    allOperations.value = res.items || []
   } catch (_) { /* ignore */ }
 }
 
 async function loadWorkCenters() {
   try {
     const res = await get('/api/v1/work-centers', { params: { page_size: 500 } })
-    allWorkCenters.value = res.data.items || []
+    allWorkCenters.value = res.items || []
   } catch (_) { /* ignore */ }
 }
 

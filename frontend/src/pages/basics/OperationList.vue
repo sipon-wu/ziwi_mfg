@@ -54,11 +54,11 @@ async function fetchData() {
     if (opTypeFilter.value) params.op_type = opTypeFilter.value
     const res = await get('/api/v1/operations', { params })
     if (page.value === 1) {
-      list.value = res.data.items
+      list.value = res.items
     } else {
-      list.value.push(...res.data.items)
+      list.value.push(...res.items)
     }
-    total.value = res.data.total
+    total.value = res.total
     finished.value = list.value.length >= total.value
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工序列表失败')

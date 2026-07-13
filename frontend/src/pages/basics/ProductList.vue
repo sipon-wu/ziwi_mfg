@@ -49,9 +49,9 @@ async function fetchData() {
     if (typeFilter.value) params.product_type = typeFilter.value
     if (categoryFilter.value) params.category = categoryFilter.value
     const res = await get('/api/v1/products', { params })
-    if (page.value === 1) list.value = res.data.items
-    else list.value.push(...res.data.items)
-    total.value = res.data.total
+    if (page.value === 1) list.value = res.items
+    else list.value.push(...res.items)
+    total.value = res.total
     finished.value = list.value.length >= total.value
   } catch (e: any) {
     showToast(e?.detail?.message || '获取产品列表失败')

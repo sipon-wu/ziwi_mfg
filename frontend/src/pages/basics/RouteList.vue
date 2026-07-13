@@ -61,11 +61,11 @@ async function fetchData() {
     if (statusFilter.value) params.status = statusFilter.value
     const res = await get('/api/v1/routes', { params })
     if (page.value === 1) {
-      list.value = res.data.items
+      list.value = res.items
     } else {
-      list.value.push(...res.data.items)
+      list.value.push(...res.items)
     }
-    total.value = res.data.total
+    total.value = res.total
     finished.value = list.value.length >= total.value
   } catch (e: any) {
     showToast(e?.detail?.message || '获取工艺路线列表失败')
@@ -168,7 +168,7 @@ async function handleArchive(item: RouteItem) {
 async function handleNewVersion(item: RouteItem) {
   try {
     const res = await post(`/api/v1/routes/${item.id}/new-version`)
-    showToast(`已创建 V${res.data.version}`)
+    showToast(`已创建 V${res.version}`)
     fetchData()
   } catch (e: any) {
     showToast(e?.detail?.message || '创建新版本失败')
