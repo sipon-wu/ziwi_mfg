@@ -95,6 +95,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'wms/receipt-orders', name: 'ReceiptOrderList', component: () => import('@/pages/wms/ReceiptOrderList.vue'), meta: { title: '入库单管理' } },
       { path: 'wms/issue-orders', name: 'IssueOrderList', component: () => import('@/pages/wms/IssueOrderList.vue'), meta: { title: '出库单管理' } },
       { path: 'wms/stock-query', name: 'StockQuery', component: () => import('@/pages/wms/StockQuery.vue'), meta: { title: '库存查询' } },
+      { path: 'wms/inventory', redirect: '/wms/stock-query' },
       { path: 'wms/stock-move', name: 'StockMove', component: () => import('@/pages/wms/StockMove.vue'), meta: { title: '库存移动' } },
       { path: 'wms/inventory-counts', name: 'CountList', component: () => import('@/pages/wms/CountList.vue'), meta: { title: '盘点管理' } },
       { path: 'wms/batches', name: 'BatchList', component: () => import('@/pages/wms/BatchList.vue'), meta: { title: '批次管理' } },
