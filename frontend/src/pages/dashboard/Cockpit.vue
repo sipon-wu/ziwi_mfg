@@ -80,11 +80,35 @@ onMounted(async () => {
     setKpi('M05', 1, null, 'unavailable')
   }
 
-  // M11 能碳 / M12 数据采集：无确认前端聚合接口 → 未接入
-  setKpi('M11', 0, null, 'unavailable')
-  setKpi('M11', 1, null, 'unavailable')
-  setKpi('M12', 0, null, 'unavailable')
-  setKpi('M12', 1, null, 'unavailable')
+  // M11 能碳管理：调 /energy/devices 取总数 + /energy/carbon/emissions 求和碳排放量
+  try {
+    const r = await get<PaginatedResponse<any>>('/energy/devices', { page_size: 1 })
+    setKpi('M11', 0, r.total || 0, 'real')
+  } catch {
+    setKpi('M11', 0, null, 'unavailable')
+  }
+  try {
+    const r = await get<PaginatedResponse<any>>('/energy/carbon/emissions', { page_size: 100 })
+    const items: any[] = r.items || []
+    const totalEmission = items.reduce((sum: number, item: any) => sum + Number(item.emission_amount || 0), 0)
+    setKpi('M11', 1, Math.round(totalEmission * 100) / 100, 'real')
+  } catch {
+    setKpi('M11', 1, null, 'unavailable')
+  }
+
+  // M12 数据采集：调 /collect/data-sources 取总数 + /collect/records 取总数
+  try {
+    const r = await get<PaginatedResponse<any>>('/collect/data-sources', { page_size: 1 })
+    setKpi('M12', 0, r.total || 0, 'real')
+  } catch {
+    setKpi('M12', 0, null, 'unavailable')
+  }
+  try {
+    const r = await get<PaginatedResponse<any>>('/collect/records', { page_size: 1 })
+    setKpi('M12', 1, r.total || 0, 'real')
+  } catch {
+    setKpi('M12', 1, null, 'unavailable')
+  }
 })
 </script>
 
