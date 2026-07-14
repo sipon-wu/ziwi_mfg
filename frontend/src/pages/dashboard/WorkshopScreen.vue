@@ -67,7 +67,7 @@ async function fetchStats() {
       get<PaginatedResponse<WorkOrder>>('/work-orders', { page_size: 1 }),
       get<PaginatedResponse<WorkOrder>>('/work-orders', { page_size: 1, status: 'completed' }),
       get<PaginatedResponse<WorkReport>>('/work-reports', { page_size: 1 }),
-      get<PaginatedResponse<Equipment>>('/equipment', { page_size: 1000 }),
+      get<PaginatedResponse<Equipment>>('/equipment', { page_size: 100 }),
     ])
 
     // 工单总数

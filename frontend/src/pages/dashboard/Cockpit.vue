@@ -68,7 +68,7 @@ onMounted(async () => {
 
   // M05 安灯系统：调 /andon/calls 取总数 + 未处理
   try {
-    const r = await get<PaginatedResponse<AndonCall>>('/andon/calls', { page_size: 1000 })
+    const r = await get<PaginatedResponse<AndonCall>>('/andon/calls', { page_size: 100 })
     const items: AndonCall[] = r.items || []
     const unresolved = items.filter((c) =>
       ['pending', 'in_progress', 'acknowledged', 'escalated'].includes(c.status),

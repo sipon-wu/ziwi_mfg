@@ -92,7 +92,7 @@ function isToday(dateStr?: string): boolean {
 async function loadKpi() {
   kpiLoading.value = true
   try {
-    const res = await get<PaginatedResponse<AndonCall>>('/andon/calls', { page: 1, page_size: 1000 })
+    const res = await get<PaginatedResponse<AndonCall>>('/andon/calls', { page: 1, page_size: 100 })
     const items: AndonCall[] = res.items || []
     let pending = 0
     let responding = 0
