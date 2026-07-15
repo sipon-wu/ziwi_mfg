@@ -1,0 +1,64 @@
+{
+  "generatedAt": "2026-07-15T15:43:51.477Z",
+  "summary": {
+    "表头9列": "PASS",
+    "表头名称正确": "PASS",
+    "首行9td": "PASS",
+    "数据行存在": "PASS",
+    "操作按钮2个": "PASS",
+    "状态tag": "PASS",
+    "深色可读": "PASS",
+    "编辑弹窗": "PASS",
+    "窄屏横向滚动": "PASS",
+    "控制台错误": "PASS"
+  },
+  "consoleErrors": [],
+  "detail": {
+    "thCount": 9,
+    "trCount": 12,
+    "thTexts": [
+      "物料名称",
+      "物料编码",
+      "类型",
+      "用量",
+      "版本",
+      "生效日期",
+      "状态",
+      "备注",
+      "操作"
+    ],
+    "firstTdCount": 9,
+    "opBtnCount": 2,
+    "color": "rgb(30, 41, 59)",
+    "wrapScrollW": 1200,
+    "wrapClientW": 1200,
+    "hasStatusTag": true
+  },
+  "results": [
+    {
+      "name": "LOGIN",
+      "status": "PASS",
+      "detail": "登录成功，获得 access_token"
+    },
+    {
+      "name": "BOM表格",
+      "status": "PASS",
+      "detail": "th数=9(=9:true)，表头名称正确:true，首行td数=9(=9:true)，tr数=12(≥1:true)，操作按钮=2(=2:true)，状态tag=true，color=rgb(30, 41, 59) 亮度=0.022 深:true，PC横滚=false(scrollW=1200,clientW=1200) | 表头=[物料名称/物料编码/类型/用量/版本/生效日期/状态/备注/操作]"
+    },
+    {
+      "name": "BOM编辑弹窗",
+      "status": "PASS",
+      "detail": "点击编辑弹出 van-dialog(编辑物料)"
+    },
+    {
+      "name": "窄屏横向滚动",
+      "status": "PASS",
+      "detail": "scrollW=720,clientW=135,横向滚动:true"
+    },
+    {
+      "name": "控制台错误",
+      "status": "PASS",
+      "detail": "共 0 条: []"
+    }
+  ]
+}

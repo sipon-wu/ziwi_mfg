@@ -48,6 +48,12 @@ const materialTypeOptions = [
   { value: 'consumable', label: '消耗品' },
 ]
 
+/** Map a material_type value to its display label; fall back to the raw value when unknown. */
+function typeLabel(t: string): string {
+  const found = materialTypeOptions.find((o) => o.value === t)
+  return found ? found.label : t
+}
+
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
   if (productFilter.value) params.product_id = productFilter.value
@@ -142,23 +148,44 @@ onMounted(loadData)
     <van-search v-model="productFilter" placeholder="搜索产品ID" @search="onSearch" />
 
     <van-list v-model:loading="loading" :finished="!total || list.length >= total" finished-text="没有更多了" @load="loadData">
-      <van-cell v-for="item in list" :key="item.id">
-        <template #title>
-          <span>{{ item.material_name }}</span>
-          <van-tag v-if="item.is_active" type="success" style="margin-left:8px">当前版本</van-tag>
-        </template>
-        <template #label>
-          <div>物料编码: {{ item.material_code }}</div>
-          <div>用量: {{ item.qty_per_unit }} {{ item.unit }} | 版本: V{{ item.version }}</div>
-          <div v-if="item.effective_from">生效: {{ item.effective_from }}</div>
-        </template>
-        <template #value>
-          <div style="display:flex; gap:4px">
-            <van-button size="mini" plain type="primary" @click="openEdit(item)">编辑</van-button>
-            <van-button size="mini" plain type="danger" @click="handleDelete(item)">删除</van-button>
-          </div>
-        </template>
-      </van-cell>
+      <div v-if="list.length" class="bom-table-wrap">
+        <table class="bom-table">
+          <thead>
+            <tr>
+              <th>物料名称</th>
+              <th>物料编码</th>
+              <th>类型</th>
+              <th class="num">用量</th>
+              <th>版本</th>
+              <th>生效日期</th>
+              <th>状态</th>
+              <th>备注</th>
+              <th class="op">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in list" :key="item.id">
+              <td>{{ item.material_name }}</td>
+              <td>{{ item.material_code }}</td>
+              <td>{{ typeLabel(item.material_type) }}</td>
+              <td class="num">{{ item.qty_per_unit }} {{ item.unit }}</td>
+              <td>V{{ item.version }}</td>
+              <td>{{ item.effective_from || '--' }}</td>
+              <td>
+                <van-tag v-if="item.is_active" type="success">当前版本</van-tag>
+                <van-tag v-else type="default">停用</van-tag>
+              </td>
+              <td class="remark" :title="item.remark || ''">{{ item.remark || '--' }}</td>
+              <td class="op">
+                <div class="op-btns">
+                  <van-button size="mini" plain type="primary" @click="openEdit(item)">编辑</van-button>
+                  <van-button size="mini" plain type="danger" @click="handleDelete(item)">删除</van-button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </van-list>
 
     <van-empty v-if="!loading && list.length === 0" description="暂无BOM记录" />
@@ -194,3 +221,84 @@ onMounted(loadData)
     </van-dialog>
   </div>
 </template>
+
+<style scoped>
+.bom-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bom-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: var(--ziwi-text-primary, #1e293b);
+  background: var(--ziwi-bg, #fff);
+}
+
+/* Sticky header that stays at the top of the scrolling list */
+.bom-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ziwi-bg-elevated, #f5f7fa);
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.bom-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  text-align: left;
+  vertical-align: middle;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+/* Numeric columns aligned right */
+.bom-table tbody td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Operation column aligned right, buttons spaced */
+.bom-table tbody td.op {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.op-btns {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Remarks truncated with full-text on hover via title attribute */
+.bom-table tbody td.remark {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* PC hover highlight */
+.bom-table tbody tr:hover {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.04));
+}
+
+/* Narrow screens rely on the wrap's horizontal scroll;
+   the min-width above keeps columns from being squeezed. */
+@media (max-width: 768px) {
+  .bom-table {
+    font-size: 13px;
+  }
+  .bom-table thead th,
+  .bom-table tbody td {
+    padding: 8px 10px;
+  }
+}
+</style>
