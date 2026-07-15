@@ -1,0 +1,206 @@
+{
+  "generatedAt": "2026-07-15T14:02:58.022Z",
+  "summary": {
+    "多列布局通过率": "5/5",
+    "字段全集通过率": "5/5",
+    "无折叠通过率": "5/5",
+    "横向滚动通过率": "5/5",
+    "控制台错误通过率": "1/1",
+    "控制台错误数": 0
+  },
+  "consoleErrors": [],
+  "pages": [
+    {
+      "name": "产品",
+      "route": "#/basics/products",
+      "expected": 11,
+      "detail": {
+        "colCount": 11,
+        "gridTemplateColumns": "150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px",
+        "cellCount": 11,
+        "expected": 11,
+        "fieldMatch": true,
+        "headerText": "11 字段",
+        "headerMatch": true,
+        "hasFold": false,
+        "rdScrollWidth": 1036,
+        "vanCellWidth": 1200,
+        "containerOverflow": false,
+        "innerScroll": true,
+        "rdScrollLeft": 255,
+        "rdScrollRight": 1291,
+        "lastCellRight": 2065,
+        "lastCellVisible": false,
+        "pageHorizontalScroll": false,
+        "horizontalScroll": true,
+        "valueColor": "rgb(30, 41, 59)",
+        "valueLuminance": 0.021776624192530118,
+        "darkReadable": true,
+        "labelColor": "rgb(153, 153, 153)",
+        "gridPresent": true,
+        "scrollPresent": true
+      }
+    },
+    {
+      "name": "工单",
+      "route": "#/work-orders",
+      "expected": 19,
+      "detail": {
+        "colCount": 19,
+        "gridTemplateColumns": "150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px 150px",
+        "cellCount": 19,
+        "expected": 19,
+        "fieldMatch": true,
+        "headerText": "19 字段",
+        "headerMatch": true,
+        "hasFold": false,
+        "rdScrollWidth": 539,
+        "vanCellWidth": 1200,
+        "containerOverflow": false,
+        "innerScroll": true,
+        "rdScrollLeft": 255,
+        "rdScrollRight": 794,
+        "lastCellRight": 3393,
+        "lastCellVisible": false,
+        "pageHorizontalScroll": false,
+        "horizontalScroll": true,
+        "valueColor": "rgb(30, 41, 59)",
+        "valueLuminance": 0.021776624192530118,
+        "darkReadable": true,
+        "labelColor": "rgb(153, 153, 153)",
+        "gridPresent": true,
+        "scrollPresent": true
+      }
+    },
+    {
+      "name": "设备",
+      "route": "#/equipment",
+      "expected": 10,
+      "detail": {
+        "colCount": 10,
+        "gridTemplateColumns": "150px 150px 150px 150px 150px 150px 150px 150px 150px 150px",
+        "cellCount": 10,
+        "expected": 10,
+        "fieldMatch": true,
+        "headerText": "10 字段",
+        "headerMatch": true,
+        "hasFold": false,
+        "rdScrollWidth": 539,
+        "vanCellWidth": 1200,
+        "containerOverflow": false,
+        "innerScroll": true,
+        "rdScrollLeft": 255,
+        "rdScrollRight": 794,
+        "lastCellRight": 1899,
+        "lastCellVisible": false,
+        "pageHorizontalScroll": false,
+        "horizontalScroll": true,
+        "valueColor": "rgb(30, 41, 59)",
+        "valueLuminance": 0.021776624192530118,
+        "darkReadable": true,
+        "labelColor": "rgb(153, 153, 153)",
+        "gridPresent": true,
+        "scrollPresent": true
+      }
+    },
+    {
+      "name": "质检",
+      "route": "#/quality",
+      "expected": 9,
+      "detail": {
+        "colCount": 9,
+        "gridTemplateColumns": "150px 150px 150px 150px 150px 150px 150px 150px 150px",
+        "cellCount": 9,
+        "expected": 9,
+        "fieldMatch": true,
+        "headerText": "9 字段",
+        "headerMatch": true,
+        "hasFold": false,
+        "rdScrollWidth": 1107,
+        "vanCellWidth": 1200,
+        "containerOverflow": false,
+        "innerScroll": true,
+        "rdScrollLeft": 255,
+        "rdScrollRight": 1362,
+        "lastCellRight": 1733,
+        "lastCellVisible": false,
+        "pageHorizontalScroll": false,
+        "horizontalScroll": true,
+        "valueColor": "rgb(30, 41, 59)",
+        "valueLuminance": 0.021776624192530118,
+        "darkReadable": true,
+        "labelColor": "rgb(153, 153, 153)",
+        "gridPresent": true,
+        "scrollPresent": true
+      }
+    },
+    {
+      "name": "收货单",
+      "route": "#/wms/receipt-orders",
+      "expected": 10,
+      "detail": {
+        "colCount": 10,
+        "gridTemplateColumns": "150px 150px 150px 150px 150px 150px 150px 150px 150px 150px",
+        "cellCount": 10,
+        "expected": 10,
+        "fieldMatch": true,
+        "headerText": "10 字段",
+        "headerMatch": true,
+        "hasFold": false,
+        "rdScrollWidth": 1107,
+        "vanCellWidth": 1200,
+        "containerOverflow": false,
+        "innerScroll": true,
+        "rdScrollLeft": 255,
+        "rdScrollRight": 1362,
+        "lastCellRight": 1899,
+        "lastCellVisible": false,
+        "pageHorizontalScroll": false,
+        "horizontalScroll": true,
+        "valueColor": "rgb(30, 41, 59)",
+        "valueLuminance": 0.021776624192530118,
+        "darkReadable": true,
+        "labelColor": "rgb(153, 153, 153)",
+        "gridPresent": true,
+        "scrollPresent": true
+      }
+    }
+  ],
+  "results": [
+    {
+      "name": "LOGIN",
+      "status": "PASS",
+      "detail": "登录成功，获得 access_token"
+    },
+    {
+      "name": "并集-产品",
+      "status": "PASS",
+      "detail": "列数=11(>1:true)，字段=11/预期11(一致:true)，header=\"11 字段\"(N一致:true)，折叠按钮=false，rd-scroll宽=1036/单元格=1200(溢出被裁:false)，内部滚动=true，末列可见=false，value色=rgb(30, 41, 59) 深:true | grid:true 备注:value亮度=0.022"
+    },
+    {
+      "name": "并集-工单",
+      "status": "PASS",
+      "detail": "列数=19(>1:true)，字段=19/预期19(一致:true)，header=\"19 字段\"(N一致:true)，折叠按钮=false，rd-scroll宽=539/单元格=1200(溢出被裁:false)，内部滚动=true，末列可见=false，value色=rgb(30, 41, 59) 深:true | grid:true 备注:value亮度=0.022"
+    },
+    {
+      "name": "并集-设备",
+      "status": "PASS",
+      "detail": "列数=10(>1:true)，字段=10/预期10(一致:true)，header=\"10 字段\"(N一致:true)，折叠按钮=false，rd-scroll宽=539/单元格=1200(溢出被裁:false)，内部滚动=true，末列可见=false，value色=rgb(30, 41, 59) 深:true | grid:true 备注:value亮度=0.022"
+    },
+    {
+      "name": "并集-质检",
+      "status": "PASS",
+      "detail": "列数=9(>1:true)，字段=9/预期9(一致:true)，header=\"9 字段\"(N一致:true)，折叠按钮=false，rd-scroll宽=1107/单元格=1200(溢出被裁:false)，内部滚动=true，末列可见=false，value色=rgb(30, 41, 59) 深:true | grid:true 备注:value亮度=0.022"
+    },
+    {
+      "name": "并集-收货单",
+      "status": "PASS",
+      "detail": "列数=10(>1:true)，字段=10/预期10(一致:true)，header=\"10 字段\"(N一致:true)，折叠按钮=false，rd-scroll宽=1107/单元格=1200(溢出被裁:false)，内部滚动=true，末列可见=false，value色=rgb(30, 41, 59) 深:true | grid:true 备注:value亮度=0.022"
+    },
+    {
+      "name": "控制台错误",
+      "status": "PASS",
+      "detail": "共 0 条: []"
+    }
+  ]
+}
