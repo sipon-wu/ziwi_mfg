@@ -1,0 +1,67 @@
+{
+  "rowExpand": "5/5",
+  "advSearch": "5/5",
+  "consoleErrors": 0,
+  "results": [
+    {
+      "name": "LOGIN",
+      "status": "PASS",
+      "detail": "登录成功，获得 access_token"
+    },
+    {
+      "name": "行展开-产品",
+      "status": "PASS",
+      "detail": "可见行 9，header计数=9(一致:true)，label/value配对 9/9，折叠按钮=false，截断=false"
+    },
+    {
+      "name": "高级检索-产品",
+      "status": "PASS",
+      "detail": "标题=true，添加条件=true，查询关闭弹层=true"
+    },
+    {
+      "name": "行展开-工单",
+      "status": "PASS",
+      "detail": "可见行 16，header计数=16(一致:true)，label/value配对 16/16，折叠按钮=false，截断=false"
+    },
+    {
+      "name": "高级检索-工单",
+      "status": "PASS",
+      "detail": "标题=true，添加条件=true，查询关闭弹层=true"
+    },
+    {
+      "name": "行展开-设备",
+      "status": "PASS",
+      "detail": "可见行 8，header计数=8(一致:true)，label/value配对 8/8，折叠按钮=false，截断=false"
+    },
+    {
+      "name": "高级检索-设备",
+      "status": "PASS",
+      "detail": "标题=true，添加条件=true，查询关闭弹层=true"
+    },
+    {
+      "name": "行展开-质检",
+      "status": "PASS",
+      "detail": "可见行 7，header计数=7(一致:true)，label/value配对 7/7，折叠按钮=false，截断=false"
+    },
+    {
+      "name": "高级检索-质检",
+      "status": "PASS",
+      "detail": "标题=true，添加条件=true，查询关闭弹层=true"
+    },
+    {
+      "name": "行展开-收货单",
+      "status": "PASS",
+      "detail": "可见行 9，header计数=9(一致:true)，label/value配对 9/9，折叠按钮=false，截断=false"
+    },
+    {
+      "name": "高级检索-收货单",
+      "status": "PASS",
+      "detail": "标题=true，添加条件=true，查询关闭弹层=true"
+    },
+    {
+      "name": "控制台错误",
+      "status": "PASS",
+      "detail": "共 0 条: []"
+    }
+  ]
+}
