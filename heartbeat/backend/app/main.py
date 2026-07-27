@@ -639,9 +639,14 @@ def get_license(
 
 
 @app.get("/admin", include_in_schema=False)
-def admin_page(_api_key: str = Depends(verify_api_key)):
-    """License management dashboard (HTML). Requires X-Api-Key header for access."""
+def admin_page(key: Optional[str] = None):
+    """License management dashboard (HTML).
+
+    Authenticate via ?key=<api_key> query param. If missing or wrong,
+    shows a simple login form. No X-Api-Key header needed.
+    """
     api_key = settings.api_key
+    validated = key == api_key
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -653,6 +658,12 @@ def admin_page(_api_key: str = Depends(verify_api_key)):
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f6fa;color:#333;padding:24px}}
 h1{{font-size:22px;margin-bottom:16px;color:#1a3a6b}}
 h2{{font-size:16px;margin:24px 0 12px;color:#333;border-bottom:2px solid #e8ecf1;padding-bottom:6px}}
+.login-box{{max-width:360px;margin:80px auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center}}
+.login-box h2{{border:none;margin-bottom:20px}}
+.login-box input{{width:100%;padding:10px 14px;margin-bottom:16px;border:1px solid #dcdfe6;border-radius:6px;font-size:14px;outline:0}}
+.login-box input:focus{{border-color:#1a3a6b}}
+.login-box .btn{{width:100%;padding:10px;font-size:14px}}
+.login-box .error{{color:#f56c6c;font-size:13px;margin-top:10px}}
 .stats{{display:flex;gap:16px;margin-bottom:20px}}
 .stat{{background:#fff;border-radius:8px;padding:14px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);flex:1}}
 .stat-label{{font-size:12px;color:#888}}
@@ -702,7 +713,22 @@ input:focus,select:focus{{border-color:#1a3a6b;box-shadow:0 0 0 2px rgba(26,58,1
 </head>
 <body>
 <div class="toast" id="toast"></div>
+"""
+    if not validated:
+        html += """
+<h1>🔑 知微 · License 管理</h1>
+<div class="login-box">
+  <h2>请输入 API Key</h2>
+  <form onsubmit="event.preventDefault(); var k=this.querySelector('input').value; if(k)location.href='/admin?key='+encodeURIComponent(k)">
+    <input type="password" placeholder="API Key" autofocus>
+    <button class="btn btn-primary" type="submit">登录</button>
+  </form>
+</div>
+</body></html>"""
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html, status_code=200)
 
+    html += """
 <h1>🔑 知微 · License 管理</h1>
 <div class="stats" id="stats"></div>
 
@@ -733,73 +759,29 @@ input:focus,select:focus{{border-color:#1a3a6b;box-shadow:0 0 0 2px rgba(26,58,1
 </div>
 
 <script>
-const KEY='{api_key}';
-const HEADERS={{'X-Api-Key':KEY,'Content-Type':'application/json'}};
-function $(id){{return document.getElementById(id)}}
-function toast(msg,type){{var t=$('toast');t.textContent=msg;t.className='toast toast-'+type+' show';setTimeout(function(){{t.className='toast toast-'+type}},3000)}}
-function switchTab(name){{document.querySelectorAll('.tab').forEach(function(t){{t.classList.toggle('active',t.dataset.tab==name)}});document.querySelectorAll('.tab-content').forEach(function(t){{t.classList.toggle('active',t.id=='tab-'+name)}})}}
-function fmtDate(d){{if(!d)return'-';return new Date(d).toLocaleString('zh-CN',{{timeZone:'Asia/Shanghai'}})}}
-function badge(status){{var m={{'active':'badge-active','trial':'badge-trial','none':'badge-none','online':'badge-online','offline':'badge-offline'}};return'<span class="badge '+(m[status]||'badge-none')+'">'+status+'</span>'}}
+var KEY='""" + api_key + """';
+var HEADERS={'X-Api-Key':KEY,'Content-Type':'application/json'};
+function $(id){return document.getElementById(id)}
+function toast(msg,type){var t=$('toast');t.textContent=msg;t.className='toast toast-'+type+' show';setTimeout(function(){t.className='toast toast-'+type},3000)}
+function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab==name)});document.querySelectorAll('.tab-content').forEach(function(t){t.classList.toggle('active',t.id=='tab-'+name)})}
+function fmtDate(d){if(!d)return'-';return new Date(d).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}
+function badge(status){var m={'active':'badge-active','trial':'badge-trial','none':'badge-none','online':'badge-online','offline':'badge-offline'};return'<span class="badge '+(m[status]||'badge-none')+'">'+status+'</span>'}
 
-async function loadStats(){{
-  try{{
-    var l=await(await fetch('/api/v1/admin/licenses',{{headers:HEADERS}})).json();
-    var d=await(await fetch('/api/v1/status',{{headers:HEADERS}})).json();
-    var a=await(await fetch('/api/v1/alerts',{{headers:HEADERS}})).json();
-    var active=0,trial=0,online=0,offline=0;
-    l.forEach(function(x){{if(x.status=='active')active++;if(x.status=='trial')trial++}});
-    d.forEach(function(x){{if(x.status=='online')online++;if(x.status=='offline')offline++}});
-    $('stats').innerHTML='<div class="stat"><div class="stat-label">活跃 License</div><div class="stat-value ok">'+active+'</div></div><div class="stat"><div class="stat-label">试用 License</div><div class="stat-value warn">'+trial+'</div></div><div class="stat"><div class="stat-label">在线部署</div><div class="stat-value ok">'+online+'</div></div><div class="stat"><div class="stat-label">离线部署</div><div class="stat-value danger">'+offline+'</div></div><div class="stat"><div class="stat-label">告警</div><div class="stat-value '+(a.count>0?'warn':'ok')+'">'+a.count+'</div></div>';
-  }}catch(e){{}}
-}}
+async function loadStats(){try{var l=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();var d=await(await fetch('/api/v1/status',{headers:HEADERS})).json();var a=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();var active=0,trial=0,online=0,offline=0;l.forEach(function(x){if(x.status=='active')active++;if(x.status=='trial')trial++});d.forEach(function(x){if(x.status=='online')online++;if(x.status=='offline')offline++});$('stats').innerHTML='<div class=\"stat\"><div class=\"stat-label\">活跃 License</div><div class=\"stat-value ok\">'+active+'</div></div><div class=\"stat\"><div class=\"stat-label\">试用 License</div><div class=\"stat-value warn\">'+trial+'</div></div><div class=\"stat\"><div class=\"stat-label\">在线部署</div><div class=\"stat-value ok\">'+online+'</div></div><div class=\"stat\"><div class=\"stat-label\">离线部署</div><div class=\"stat-value danger\">'+offline+'</div></div><div class=\"stat\"><div class=\"stat-label\">告警</div><div class=\"stat-value '+(a.count>0?'warn':'ok')+'\">'+a.count+'</div></div>'}catch(e){}}
 
-async function loadLicenses(){{
-  try{{
-    var data=await(await fetch('/api/v1/admin/licenses',{{headers:HEADERS}})).json();
-    if(!data.length){{$('license-tbody').innerHTML='<tr><td colspan="6" class="empty">暂无 License 记录</td></tr>';return}}
-    $('license-tbody').innerHTML=data.map(function(x){{return'<tr><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+fmtDate(x.expires_at)+'</td><td>'+fmtDate(x.updated_at)+'</td><td><button class="btn btn-primary btn-sm" onclick="editLicense(\\''+x.tenant_id+'\\',\\''+x.product+'\\',\\''+x.status+'\\',\\''+(x.expires_at||'')+'\\')">编辑</button></td></tr>'}}).join('');
-  }}catch(e){{$('license-tbody').innerHTML='<tr><td colspan="6" class="empty">加载失败: '+e.message+'</td></tr>'}}
-}}
+async function loadLicenses(){try{var data=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();if(!data.length){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">暂无 License 记录</td></tr>';return}$('license-tbody').innerHTML=data.map(function(x){return'<tr><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+fmtDate(x.expires_at)+'</td><td>'+fmtDate(x.updated_at)+'</td><td><button class=\"btn btn-primary btn-sm\" onclick=\"editLicense(\\''+x.tenant_id+'\\',\\''+x.product+'\\',\\''+x.status+'\\',\\''+(x.expires_at||'')+'\\')\">编辑</button></td></tr>'}).join('')}catch(e){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
 
-async function loadDeployments(){{
-  try{{
-    var data=await(await fetch('/api/v1/status',{{headers:HEADERS}})).json();
-    if(!data.length){{$('deploy-tbody').innerHTML='<tr><td colspan="7" class="empty">暂无部署记录</td></tr>';return}}
-    $('deploy-tbody').innerHTML=data.map(function(x){{return'<tr><td>'+x.deployment_id+'</td><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+x.version+'</td><td>'+fmtDate(x.last_heartbeat_at)+'</td><td>'+x.consecutive_misses+'</td></tr>'}}).join('');
-  }}catch(e){{$('deploy-tbody').innerHTML='<tr><td colspan="7" class="empty">加载失败: '+e.message+'</td></tr>'}}
-}}
+async function loadDeployments(){try{var data=await(await fetch('/api/v1/status',{headers:HEADERS})).json();if(!data.length){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">暂无部署记录</td></tr>';return}$('deploy-tbody').innerHTML=data.map(function(x){return'<tr><td>'+x.deployment_id+'</td><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+x.version+'</td><td>'+fmtDate(x.last_heartbeat_at)+'</td><td>'+x.consecutive_misses+'</td></tr>'}).join('')}catch(e){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
 
-async function loadAlerts(){{
-  try{{
-    var data=await(await fetch('/api/v1/alerts',{{headers:HEADERS}})).json();
-    if(!data.alerts.length){{$('alert-list').innerHTML='<div class="empty">🎉 无告警</div>';return}}
-    $('alert-list').innerHTML=data.alerts.map(function(a){{var cls=a.alert_type=='offline'?'critical':a.alert_type=='license_critical'?'critical':a.alert_type=='license_warn'?'warn':'info';return'<div class="alert-box '+cls+'"><div class="alert-title">'+a.alert_type+' · '+a.message+'</div><div class="alert-detail">'+(a.detail?JSON.stringify(a.detail):'')+'</div></div>'}}).join('');
-  }}catch(e){{$('alert-list').innerHTML='<div class="empty">加载失败: '+e.message+'</div>'}}
-}}
+async function loadAlerts(){try{var data=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();if(!data.alerts.length){$('alert-list').innerHTML='<div class=\"empty\">🎉 无告警</div>';return}$('alert-list').innerHTML=data.alerts.map(function(a){var cls=a.alert_type=='offline'?'critical':a.alert_type=='license_critical'?'critical':a.alert_type=='license_warn'?'warn':'info';return'<div class=\"alert-box '+cls+'\"><div class=\"alert-title\">'+a.alert_type+' · '+a.message+'</div><div class=\"alert-detail\">'+(a.detail?JSON.stringify(a.detail):'')+'</div></div>'}).join('')}catch(e){$('alert-list').innerHTML='<div class=\"empty\">加载失败: '+e.message+'</div>'}}
 
-function editLicense(tid,prod,status,expires){{
-  $('f-tenant').value=tid;$('f-product').value=prod;$('f-status').value=status;
-  if(expires){{var d=new Date(expires);$('f-expires').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}}else{{$('f-expires').value=''}}
-  window.scrollTo({{top:0,behavior:'smooth'}})
-}}
+function editLicense(tid,prod,status,expires){$('f-tenant').value=tid;$('f-product').value=prod;$('f-status').value=status;if(expires){var d=new Date(expires);$('f-expires').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}else{$('f-expires').value=''}window.scrollTo({top:0,behavior:'smooth'})}
 
-async function saveLicense(){{
-  var tid=$('f-tenant').value.trim(),status=$('f-status').value,expires=$('f-expires').value,prod=$('f-product').value;
-  if(!tid){{toast('请输入 Tenant ID','error');return}}
-  var body={{tenant_id:tid,product:prod,status:status}};
-  if(expires)body.expires_at=new Date(expires).toISOString();
-  try{{
-    var r=await fetch('/api/v1/admin/licenses',{{method:'POST',headers:HEADERS,body:JSON.stringify(body)}});
-    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
-    toast('License '+tid+' 已更新为 '+status,'success');
-    loadLicenses();loadStats()
-  }}catch(e){{toast('保存失败: '+e.message,'error')}}
-}}
+async function saveLicense(){var tid=$('f-tenant').value.trim(),status=$('f-status').value,expires=$('f-expires').value,prod=$('f-product').value;if(!tid){toast('请输入 Tenant ID','error');return}var body={tenant_id:tid,product:prod,status:status};if(expires)body.expires_at=new Date(expires).toISOString();try{var r=await fetch('/api/v1/admin/licenses',{method:'POST',headers:HEADERS,body:JSON.stringify(body)});if(!r.ok)throw new Error((await r.json()).detail||r.statusText);toast('License '+tid+' 已更新为 '+status,'success');loadLicenses();loadStats()}catch(e){toast('保存失败: '+e.message,'error')}}
 
 loadStats();loadLicenses();loadDeployments();loadAlerts();
 </script>
-</body>
-</html>"""
+</body></html>"""
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html, status_code=200)
 
