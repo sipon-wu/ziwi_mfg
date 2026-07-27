@@ -643,147 +643,199 @@ def admin_page(key: Optional[str] = None):
     """License management dashboard (HTML).
 
     Authenticate via ?key=<api_key> query param. If missing or wrong,
-    shows a simple login form. No X-Api-Key header needed.
+    shows a ToC-style login page. No X-Api-Key header needed.
     """
     api_key = settings.api_key
     validated = key == api_key
-    html = f"""<!DOCTYPE html>
+
+    LOGIN_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>知微·License 管理</title>
+<title>知微 · 运营管理平台</title>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f6fa;color:#333;padding:24px}}
-h1{{font-size:22px;margin-bottom:16px;color:#1a3a6b}}
-h2{{font-size:16px;margin:24px 0 12px;color:#333;border-bottom:2px solid #e8ecf1;padding-bottom:6px}}
-.login-box{{max-width:360px;margin:80px auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center}}
-.login-box h2{{border:none;margin-bottom:20px}}
-.login-box input{{width:100%;padding:10px 14px;margin-bottom:16px;border:1px solid #dcdfe6;border-radius:6px;font-size:14px;outline:0}}
-.login-box input:focus{{border-color:#1a3a6b}}
-.login-box .btn{{width:100%;padding:10px;font-size:14px}}
-.login-box .error{{color:#f56c6c;font-size:13px;margin-top:10px}}
-.stats{{display:flex;gap:16px;margin-bottom:20px}}
-.stat{{background:#fff;border-radius:8px;padding:14px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);flex:1}}
-.stat-label{{font-size:12px;color:#888}}
-.stat-value{{font-size:24px;font-weight:700;color:#1a3a6b}}
-.stat-value.warn{{color:#e6a23c}}
-.stat-value.danger{{color:#f56c6c}}
-.stat-value.ok{{color:#67c23a}}
-table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-th,td{{padding:10px 14px;text-align:left;font-size:13px}}
-th{{background:#f0f2f5;font-weight:600;color:#555}}
-tr:not(:last-child) td{{border-bottom:1px solid #f0f2f5}}
-tr:hover td{{background:#f8f9fc}}
-.badge{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}}
-.badge-active{{background:#e1f3d8;color:#67c23a}}
-.badge-trial{{background:#faecd8;color:#e6a23c}}
-.badge-none{{background:#f0f2f5;color:#999}}
-.badge-online{{background:#e1f3d8;color:#67c23a}}
-.badge-offline{{background:#fde2e2;color:#f56c6c}}
-.btn{{display:inline-block;padding:6px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;color:#fff}}
-.btn-primary{{background:#1a3a6b}}
-.btn-primary:hover{{background:#14305a}}
-.btn-sm{{padding:4px 10px;font-size:11px}}
-.btn-warn{{background:#e6a23c}}
-.btn-warn:hover{{background:#cf8e32}}
-input,select{{padding:6px 10px;border:1px solid #dcdfe6;border-radius:6px;font-size:13px;outline:0}}
-input:focus,select:focus{{border-color:#1a3a6b;box-shadow:0 0 0 2px rgba(26,58,107,.15)}}
-.form-row{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px}}
-.form-row label{{font-size:12px;color:#666;display:block;margin-bottom:2px}}
-.form-group{{display:flex;flex-direction:column}}
-.alert-box{{background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);border-left:4px solid #e6a23c}}
-.alert-box.critical{{border-left-color:#f56c6c}}
-.alert-box.info{{border-left-color:#409eff}}
-.alert-title{{font-weight:600;font-size:13px}}
-.alert-detail{{font-size:12px;color:#888;margin-top:4px}}
-.toast{{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-size:13px;z-index:999;opacity:0;transition:opacity .3s}}
-.toast.show{{opacity:1}}
-.toast-success{{background:#67c23a}}
-.toast-error{{background:#f56c6c}}
-.empty{{padding:40px;text-align:center;color:#999;font-size:14px}}
-.tabs{{display:flex;gap:0;margin-bottom:16px}}
-.tab{{padding:8px 20px;cursor:pointer;border-bottom:2px solid transparent;font-size:14px;color:#666;transition:all .2s}}
-.tab.active{{border-bottom-color:#1a3a6b;color:#1a3a6b;font-weight:600}}
-.tab:hover{{color:#1a3a6b}}
-.tab-content{{display:none}}
-.tab-content.active{{display:block}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;min-height:100vh;background:linear-gradient(135deg,#0a1628 0%,#132347 50%,#1a3a6b 100%);display:flex;align-items:center;justify-content:center;padding:24px}
+.login-wrap{width:100%;max-width:420px}
+.brand{text-align:center;margin-bottom:40px}
+.brand .logo{width:48px;height:48px;background:rgba(255,255,255,.12);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:22px;color:#fff;margin-bottom:12px}
+.brand h1{color:#fff;font-size:20px;font-weight:600;letter-spacing:1px}
+.brand p{color:rgba(255,255,255,.5);font-size:13px;margin-top:4px}
+.card{background:#fff;border-radius:16px;padding:36px 32px 32px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.card h2{font-size:16px;color:#1a1a2e;margin-bottom:24px;font-weight:600}
+.input-group{margin-bottom:18px}
+.input-group label{display:block;font-size:12px;color:#888;margin-bottom:6px;font-weight:500}
+.input-group input{width:100%;padding:11px 14px;border:1.5px solid #e8ecf1;border-radius:10px;font-size:14px;color:#333;outline:none;transition:all .2s;background:#f8f9fc}
+.input-group input::placeholder{color:#bbb}
+.input-group input:focus{border-color:#1a3a6b;box-shadow:0 0 0 3px rgba(26,58,107,.1);background:#fff}
+.submit-btn{width:100%;padding:12px;background:linear-gradient(135deg,#1a3a6b,#234a8a);border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:4px}
+.submit-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(26,58,107,.3)}
+.submit-btn:active{transform:translateY(0)}
+.footer{text-align:center;margin-top:24px;color:rgba(255,255,255,.3);font-size:12px}
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="brand">
+    <div class="logo">知</div>
+    <h1>知微运营管理平台</h1>
+    <p>License · 部署 · 告警一站式管理</p>
+  </div>
+  <div class="card">
+    <h2>管理员登录</h2>
+    <form onsubmit="event.preventDefault();var k=this.querySelector('input').value;if(k)location.href='/admin?key='+encodeURIComponent(k)">
+      <div class="input-group">
+        <label>API Key</label>
+        <input type="password" placeholder="请输入 API Key" autofocus>
+      </div>
+      <button class="submit-btn" type="submit">登 录</button>
+    </form>
+  </div>
+  <div class="footer">© 2026 知微 · 内部运营系统</div>
+</div>
+</body>
+</html>"""
+
+    DASHBOARD_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知微 · License 管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f6;color:#1a1a2e}
+.topbar{background:#fff;border-bottom:1px solid #e8ecf1;padding:0 32px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.topbar-logo{width:32px;height:32px;background:#1a3a6b;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.topbar-title{font-size:16px;font-weight:600;color:#1a1a2e}
+.topbar-sub{font-size:12px;color:#999;margin-left:8px}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.logout-link{font-size:13px;color:#888;text-decoration:none;padding:6px 14px;border-radius:6px;border:1px solid #e8ecf1;transition:all .2s}
+.logout-link:hover{background:#f5f6fa;color:#1a3a6b}
+.container{max-width:1280px;margin:0 auto;padding:24px 32px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:28px}
+.stat{background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.04);border:1px solid #f0f2f5}
+.stat-label{font-size:12px;color:#999;font-weight:500;text-transform:uppercase;letter-spacing:.3px}
+.stat-value{font-size:28px;font-weight:700;color:#1a3a6b;margin-top:4px;line-height:1.2}
+.stat-value.ok{color:#2d8a4e}
+.stat-value.warn{color:#d48806}
+.stat-value.danger{color:#cd201f}
+.stat-sub{font-size:12px;color:#bbb;margin-top:2px}
+.tabs{display:flex;gap:0;margin-bottom:0;border-bottom:1px solid #e8ecf1}
+.tab{padding:12px 24px;cursor:pointer;font-size:14px;color:#666;border-bottom:2px solid transparent;transition:all .2s;font-weight:500}
+.tab:hover{color:#1a3a6b}
+.tab.active{border-bottom-color:#1a3a6b;color:#1a3a6b;font-weight:600}
+.panel{background:#fff;border-radius:0 12px 12px 12px;box-shadow:0 1px 3px rgba(0,0,0,.04);border:1px solid #e8ecf1;border-top:none;padding:24px}
+.panel-title{font-size:15px;font-weight:600;color:#1a1a2e;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.panel-title small{font-weight:400;font-size:12px;color:#999}
+.form-row{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:20px;padding:16px;background:#f8f9fc;border-radius:10px;border:1px dashed #e8ecf1}
+.form-group{display:flex;flex-direction:column}
+.form-group label{font-size:11px;color:#888;font-weight:500;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+.form-group input,.form-group select{padding:8px 12px;border:1.5px solid #e8ecf1;border-radius:8px;font-size:13px;outline:none;background:#fff;transition:all .15s;color:#333}
+.form-group input:focus,.form-group select:focus{border-color:#1a3a6b;box-shadow:0 0 0 3px rgba(26,58,107,.08)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;font-weight:600;color:#666;font-size:11px;text-transform:uppercase;letter-spacing:.3px;border-bottom:2px solid #e8ecf1;background:#fafbfc}
+td{padding:10px 12px;border-bottom:1px solid #f0f2f5;color:#333}
+tr:hover td{background:#f8f9fc}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-active{background:#e6f7ed;color:#2d8a4e}
+.badge-trial{background:#fff7e6;color:#d48806}
+.badge-none{background:#f0f2f5;color:#999}
+.badge-online{background:#e6f7ed;color:#2d8a4e}
+.badge-offline{background:#fff0f0;color:#cd201f}
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:7px 18px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;color:#fff}
+.btn-primary{background:#1a3a6b}
+.btn-primary:hover{background:#14305a}
+.btn-sm{padding:4px 12px;font-size:11px;border-radius:6px}
+.btn-outline{background:transparent;border:1.5px solid #dcdfe6;color:#666}
+.btn-outline:hover{border-color:#1a3a6b;color:#1a3a6b}
+.alert-box{background:#fff;border-radius:10px;padding:14px 18px;margin-bottom:10px;border:1px solid #f0f2f5;border-left:4px solid #d48806;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.alert-box.critical{border-left-color:#cd201f}
+.alert-box.info{border-left-color:#1a3a6b}
+.alert-title{font-weight:600;font-size:13px;color:#333}
+.alert-detail{font-size:12px;color:#999;margin-top:4px}
+.toast{position:fixed;top:20px;right:20px;padding:12px 24px;border-radius:10px;color:#fff;font-size:13px;font-weight:500;z-index:9999;opacity:0;transform:translateY(-10px);transition:all .3s;box-shadow:0 8px 24px rgba(0,0,0,.15)}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast-success{background:#2d8a4e}
+.toast-error{background:#cd201f}
+.empty{padding:48px;text-align:center;color:#bbb;font-size:14px}
+.tab-content{display:none}
+.tab-content.active{display:block}
 </style>
 </head>
 <body>
 <div class="toast" id="toast"></div>
-"""
-    if not validated:
-        html += """
-<h1>🔑 知微 · License 管理</h1>
-<div class="login-box">
-  <h2>请输入 API Key</h2>
-  <form onsubmit="event.preventDefault(); var k=this.querySelector('input').value; if(k)location.href='/admin?key='+encodeURIComponent(k)">
-    <input type="password" placeholder="API Key" autofocus>
-    <button class="btn btn-primary" type="submit">登录</button>
-  </form>
-</div>
-</body></html>"""
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=html, status_code=200)
-
-    html += """
-<h1>🔑 知微 · License 管理</h1>
-<div class="stats" id="stats"></div>
-
-<div class="tabs">
-  <div class="tab active" data-tab="licenses" onclick="switchTab('licenses')">License 列表</div>
-  <div class="tab" data-tab="deployments" onclick="switchTab('deployments')">部署状态</div>
-  <div class="tab" data-tab="alerts" onclick="switchTab('alerts')">告警</div>
-</div>
-
-<div id="tab-licenses" class="tab-content active">
-  <h2>新建 / 更新 License</h2>
-  <div class="form-row">
-    <div class="form-group"><label>Tenant ID</label><input id="f-tenant" placeholder="如 sch-0001" style="width:180px"></div>
-    <div class="form-group"><label>Product</label><select id="f-product"><option>school</option><option>mfg</option></select></div>
-    <div class="form-group"><label>状态</label><select id="f-status"><option value="active">active</option><option value="trial">trial</option><option value="none">none</option></select></div>
-    <div class="form-group"><label>到期时间</label><input id="f-expires" type="datetime-local" style="width:200px"></div>
-    <div><button class="btn btn-primary" onclick="saveLicense()">保存</button></div>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">知</div>
+    <span class="topbar-title">运营管理平台</span>
+    <span class="topbar-sub">License · 部署 · 告警</span>
   </div>
-  <table><thead><tr><th>Tenant</th><th>Product</th><th>状态</th><th>到期时间</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="license-tbody"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
+  <div class="topbar-right">
+    <span style="font-size:12px;color:#999">API Key 已认证</span>
+    <a href="/admin" class="logout-link">重新登录</a>
+  </div>
 </div>
+<div class="container">
+  <div class="stats" id="stats"></div>
+  <div class="tabs">
+    <div class="tab active" data-tab="licenses" onclick="switchTab('licenses')">License 管理</div>
+    <div class="tab" data-tab="deployments" onclick="switchTab('deployments')">部署状态</div>
+    <div class="tab" data-tab="alerts" onclick="switchTab('alerts')">告警中心</div>
+  </div>
 
-<div id="tab-deployments" class="tab-content">
-  <table><thead><tr><th>Deployment ID</th><th>Tenant</th><th>Product</th><th>状态</th><th>版本</th><th>最后心跳</th><th>连续失败</th></tr></thead><tbody id="deploy-tbody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody></table>
-</div>
+  <div id="tab-licenses" class="tab-content active">
+    <div class="panel">
+      <div class="panel-title">新建 / 更新 License <small>设置租户授权状态和到期时间</small></div>
+      <div class="form-row">
+        <div class="form-group"><label>Tenant ID</label><input id="f-tenant" placeholder="如 sch-0001" style="width:170px"></div>
+        <div class="form-group"><label>Product</label><select id="f-product" style="width:110px"><option>school</option><option>mfg</option></select></div>
+        <div class="form-group"><label>状态</label><select id="f-status" style="width:110px"><option value="active">active</option><option value="trial">trial</option><option value="none">none</option></select></div>
+        <div class="form-group"><label>到期时间</label><input id="f-expires" type="datetime-local" style="width:190px"></div>
+        <div class="form-group"><button class="btn btn-primary" onclick="saveLicense()" style="margin-top:18px">保存</button></div>
+      </div>
+      <table><thead><tr><th>Tenant ID</th><th>Product</th><th>状态</th><th>到期时间</th><th>更新于</th><th>操作</th></tr></thead><tbody id="license-tbody"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
+    </div>
+  </div>
 
-<div id="tab-alerts" class="tab-content">
-  <div id="alert-list"><div class="empty">加载中...</div></div>
+  <div id="tab-deployments" class="tab-content">
+    <div class="panel">
+      <table><thead><tr><th>Deployment</th><th>Tenant</th><th>Product</th><th>状态</th><th>版本</th><th>最后心跳</th><th>失联次数</th></tr></thead><tbody id="deploy-tbody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <div id="tab-alerts" class="tab-content">
+    <div class="panel">
+      <div id="alert-list"><div class="empty">加载中...</div></div>
+    </div>
+  </div>
 </div>
 
 <script>
 var KEY='""" + api_key + """';
 var HEADERS={'X-Api-Key':KEY,'Content-Type':'application/json'};
 function $(id){return document.getElementById(id)}
-function toast(msg,type){var t=$('toast');t.textContent=msg;t.className='toast toast-'+type+' show';setTimeout(function(){t.className='toast toast-'+type},3000)}
-function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab==name)});document.querySelectorAll('.tab-content').forEach(function(t){t.classList.toggle('active',t.id=='tab-'+name)})}
-function fmtDate(d){if(!d)return'-';return new Date(d).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}
-function badge(status){var m={'active':'badge-active','trial':'badge-trial','none':'badge-none','online':'badge-online','offline':'badge-offline'};return'<span class="badge '+(m[status]||'badge-none')+'">'+status+'</span>'}
+function toast(m,t){var e=$('toast');e.textContent=m;e.className='toast toast-'+t+' show';setTimeout(function(){e.className='toast toast-'+t},3000)}
+function switchTab(n){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab==n)});document.querySelectorAll('.tab-content').forEach(function(t){t.classList.toggle('active',t.id=='tab-'+n)})}
+function fd(d){if(!d)return'-';return new Date(d).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}
+function badge(s){var m={'active':'badge-active','trial':'badge-trial','none':'badge-none','online':'badge-online','offline':'badge-offline'};return'<span class="badge '+(m[s]||'badge-none')+'">'+s+'</span>'}
 
-async function loadStats(){try{var l=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();var d=await(await fetch('/api/v1/status',{headers:HEADERS})).json();var a=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();var active=0,trial=0,online=0,offline=0;l.forEach(function(x){if(x.status=='active')active++;if(x.status=='trial')trial++});d.forEach(function(x){if(x.status=='online')online++;if(x.status=='offline')offline++});$('stats').innerHTML='<div class=\"stat\"><div class=\"stat-label\">活跃 License</div><div class=\"stat-value ok\">'+active+'</div></div><div class=\"stat\"><div class=\"stat-label\">试用 License</div><div class=\"stat-value warn\">'+trial+'</div></div><div class=\"stat\"><div class=\"stat-label\">在线部署</div><div class=\"stat-value ok\">'+online+'</div></div><div class=\"stat\"><div class=\"stat-label\">离线部署</div><div class=\"stat-value danger\">'+offline+'</div></div><div class=\"stat\"><div class=\"stat-label\">告警</div><div class=\"stat-value '+(a.count>0?'warn':'ok')+'\">'+a.count+'</div></div>'}catch(e){}}
-
-async function loadLicenses(){try{var data=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();if(!data.length){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">暂无 License 记录</td></tr>';return}$('license-tbody').innerHTML=data.map(function(x){return'<tr><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+fmtDate(x.expires_at)+'</td><td>'+fmtDate(x.updated_at)+'</td><td><button class=\"btn btn-primary btn-sm\" onclick=\"editLicense(\\''+x.tenant_id+'\\',\\''+x.product+'\\',\\''+x.status+'\\',\\''+(x.expires_at||'')+'\\')\">编辑</button></td></tr>'}).join('')}catch(e){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
-
-async function loadDeployments(){try{var data=await(await fetch('/api/v1/status',{headers:HEADERS})).json();if(!data.length){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">暂无部署记录</td></tr>';return}$('deploy-tbody').innerHTML=data.map(function(x){return'<tr><td>'+x.deployment_id+'</td><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+x.version+'</td><td>'+fmtDate(x.last_heartbeat_at)+'</td><td>'+x.consecutive_misses+'</td></tr>'}).join('')}catch(e){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
-
-async function loadAlerts(){try{var data=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();if(!data.alerts.length){$('alert-list').innerHTML='<div class=\"empty\">🎉 无告警</div>';return}$('alert-list').innerHTML=data.alerts.map(function(a){var cls=a.alert_type=='offline'?'critical':a.alert_type=='license_critical'?'critical':a.alert_type=='license_warn'?'warn':'info';return'<div class=\"alert-box '+cls+'\"><div class=\"alert-title\">'+a.alert_type+' · '+a.message+'</div><div class=\"alert-detail\">'+(a.detail?JSON.stringify(a.detail):'')+'</div></div>'}).join('')}catch(e){$('alert-list').innerHTML='<div class=\"empty\">加载失败: '+e.message+'</div>'}}
-
-function editLicense(tid,prod,status,expires){$('f-tenant').value=tid;$('f-product').value=prod;$('f-status').value=status;if(expires){var d=new Date(expires);$('f-expires').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}else{$('f-expires').value=''}window.scrollTo({top:0,behavior:'smooth'})}
-
-async function saveLicense(){var tid=$('f-tenant').value.trim(),status=$('f-status').value,expires=$('f-expires').value,prod=$('f-product').value;if(!tid){toast('请输入 Tenant ID','error');return}var body={tenant_id:tid,product:prod,status:status};if(expires)body.expires_at=new Date(expires).toISOString();try{var r=await fetch('/api/v1/admin/licenses',{method:'POST',headers:HEADERS,body:JSON.stringify(body)});if(!r.ok)throw new Error((await r.json()).detail||r.statusText);toast('License '+tid+' 已更新为 '+status,'success');loadLicenses();loadStats()}catch(e){toast('保存失败: '+e.message,'error')}}
-
+async function loadStats(){try{var l=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();var d=await(await fetch('/api/v1/status',{headers:HEADERS})).json();var a=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();var ac=0,tr=0,on=0,off=0;l.forEach(function(x){if(x.status=='active')ac++;if(x.status=='trial')tr++});d.forEach(function(x){if(x.status=='online')on++;if(x.status=='offline')off++});$('stats').innerHTML='<div class=\"stat\"><div class=\"stat-label\">活跃 License</div><div class=\"stat-value ok\">'+ac+'</div><div class=\"stat-sub\">正常授权</div></div><div class=\"stat\"><div class=\"stat-label\">试用 License</div><div class=\"stat-value warn\">'+tr+'</div><div class=\"stat-sub\">即将到期</div></div><div class=\"stat\"><div class=\"stat-label\">在线部署</div><div class=\"stat-value ok\">'+on+'</div><div class=\"stat-sub\">运行中</div></div><div class=\"stat\"><div class=\"stat-label\">离线部署</div><div class=\"stat-value danger\">'+off+'</div><div class=\"stat-sub\">需关注</div></div><div class=\"stat\"><div class=\"stat-label\">告警</div><div class=\"stat-value '+(a.count>0?'warn':'ok')+'\">'+a.count+'</div><div class=\"stat-sub\">'+(a.count>0?'待处理':'无')+'</div></div>'}catch(e){}}
+async function loadLicenses(){try{var d=await(await fetch('/api/v1/admin/licenses',{headers:HEADERS})).json();if(!d.length){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">暂无 License 记录</td></tr>';return}$('license-tbody').innerHTML=d.map(function(x){return'<tr><td><code style=\"background:#f5f6fa;padding:2px 6px;border-radius:4px;font-size:12px\">'+x.tenant_id+'</code></td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+fd(x.expires_at)+'</td><td>'+fd(x.updated_at)+'</td><td><button class=\"btn btn-primary btn-sm\" onclick=\"el(\\''+x.tenant_id+'\\',\\''+x.product+'\\',\\''+x.status+'\\',\\''+(x.expires_at||'')+'\\')\">编辑</button></td></tr>'}).join('')}catch(e){$('license-tbody').innerHTML='<tr><td colspan=\"6\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
+async function loadDeployments(){try{var d=await(await fetch('/api/v1/status',{headers:HEADERS})).json();if(!d.length){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">暂无部署记录</td></tr>';return}$('deploy-tbody').innerHTML=d.map(function(x){return'<tr><td><code style=\"background:#f5f6fa;padding:2px 6px;border-radius:4px;font-size:12px\">'+x.deployment_id+'</code></td><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+x.version+'</td><td>'+fd(x.last_heartbeat_at)+'</td><td>'+x.consecutive_misses+'</td></tr>'}).join('')}catch(e){$('deploy-tbody').innerHTML='<tr><td colspan=\"7\" class=\"empty\">加载失败: '+e.message+'</td></tr>'}}
+async function loadAlerts(){try{var d=await(await fetch('/api/v1/alerts',{headers:HEADERS})).json();if(!d.alerts.length){$('alert-list').innerHTML='<div class=\"empty\" style=\"color:#2d8a4e\">🎉 当前无告警</div>';return}$('alert-list').innerHTML=d.alerts.map(function(a){var c=a.alert_type=='offline'||a.alert_type=='license_critical'?'critical':a.alert_type=='license_warn'?'warn':'info';return'<div class=\"alert-box '+c+'\"><div class=\"alert-title\">'+a.alert_type.replace('_',' ') +' · '+a.message+'</div><div class=\"alert-detail\">'+(a.detail?JSON.stringify(a.detail):'')+'</div></div>'}).join('')}catch(e){$('alert-list').innerHTML='<div class=\"empty\">加载失败: '+e.message+'</div>'}}
+function el(tid,prod,status,expires){$('f-tenant').value=tid;$('f-product').value=prod;$('f-status').value=status;if(expires){var d=new Date(expires);$('f-expires').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}else{$('f-expires').value=''}window.scrollTo({top:0,behavior:'smooth'})}
+async function saveLicense(){var tid=$('f-tenant').value.trim(),s=$('f-status').value,ex=$('f-expires').value,p=$('f-product').value;if(!tid){toast('请输入 Tenant ID','error');return}var b={tenant_id:tid,product:p,status:s};if(ex)b.expires_at=new Date(ex).toISOString();try{var r=await fetch('/api/v1/admin/licenses',{method:'POST',headers:HEADERS,body:JSON.stringify(b)});if(!r.ok)throw new Error((await r.json()).detail||r.statusText);toast('License '+tid+' 已更新为 '+s,'success');loadLicenses();loadStats()}catch(e){toast('保存失败: '+e.message,'error')}}
 loadStats();loadLicenses();loadDeployments();loadAlerts();
 </script>
-</body></html>"""
+</body>
+</html>"""
+
     from fastapi.responses import HTMLResponse
-    return HTMLResponse(content=html, status_code=200)
+    return HTMLResponse(content=LOGIN_PAGE if not validated else DASHBOARD_PAGE, status_code=200)
 
 
 # ============================================================
