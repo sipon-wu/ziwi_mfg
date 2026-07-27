@@ -1,23 +1,33 @@
-"""FastAPI dependencies for platform auth."""
+"""FastAPI dependencies for auth & platform."""
 
-from fastapi import Depends, HTTPException, status
+from typing import Optional
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
 
 from app.core.database import get_db
-from app.main import jwt_service
 from app.models.platform import PlatformUser
 
 bearer_scheme = HTTPBearer()
+
+
+async def require_token(authorization: Optional[str] = Header(None)) -> str:
+    """原始 token 验证：从 Header 取 Bearer token。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="缺少 Authorization header")
+    return authorization[7:]
 
 
 async def get_current_platform_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> PlatformUser:
-    """验证平台用户 JWT，返回 PlatformUser 对象"""
+    """验证平台用户 JWT，返回 PlatformUser 对象。"""
+    # 延迟导入避免循环依赖
+    from app.main import jwt_service
+
     token = credentials.credentials
     try:
         payload = jwt_service.verify_token(token)
