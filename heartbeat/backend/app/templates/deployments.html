@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block page_title %}部署状态{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <p class="text-sm text-slate-500">所有注册部署实例的实时在线状态与心跳健康度。</p>
+    <button onclick="load()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition">↻ 刷新</button>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-3 text-left font-medium">部署 ID</th>
+          <th class="px-5 py-3 text-left font-medium">租户</th>
+          <th class="px-5 py-3 text-left font-medium">产品</th>
+          <th class="px-5 py-3 text-left font-medium">版本</th>
+          <th class="px-5 py-3 text-left font-medium">状态</th>
+          <th class="px-5 py-3 text-left font-medium">失联次数</th>
+          <th class="px-5 py-3 text-left font-medium">最近心跳</th>
+        </tr>
+      </thead>
+      <tbody id="tbody" class="divide-y divide-slate-50"></tbody>
+    </table>
+    <div id="empty" class="px-5 py-10 text-center text-sm text-slate-400 hidden">暂无部署记录</div>
+  </div>
+</div>
+
+<script>
+const DEP_STATUS = {
+  online:  {label:'在线', cls:'bg-emerald-50 text-emerald-700 border-emerald-200'},
+  offline: {label:'离线', cls:'bg-red-50 text-red-700 border-red-200'},
+};
+function depBadge(s){
+  const m = DEP_STATUS[s] || {label:s, cls:'bg-slate-100 text-slate-500 border-slate-200'};
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${m.cls}">${m.label}</span>`;
+}
+async function load() {
+  let data;
+  try { data = await apiFetch('/api/v1/status'); } catch(e){ return; }
+  const tbody = document.getElementById('tbody');
+  document.getElementById('empty').classList.toggle('hidden', data.length>0);
+  tbody.innerHTML = data.map(d => `
+    <tr class="hover:bg-slate-50">
+      <td class="px-5 py-3 font-medium text-slate-800">${d.deployment_id}</td>
+      <td class="px-5 py-3 text-slate-600">${d.tenant_id}</td>
+      <td class="px-5 py-3 text-slate-600">${d.product}</td>
+      <td class="px-5 py-3 text-slate-500">${d.version||'—'}</td>
+      <td class="px-5 py-3">${depBadge(d.status)}</td>
+      <td class="px-5 py-3 text-slate-500">${d.consecutive_misses}</td>
+      <td class="px-5 py-3 text-slate-500">${fmtDate(d.last_heartbeat_at)}</td>
+    </tr>`).join('');
+}
+load();
+</script>
+{% endblock %}

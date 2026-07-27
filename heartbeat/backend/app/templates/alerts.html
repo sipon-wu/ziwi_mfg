@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block page_title %}告警中心{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <p class="text-sm text-slate-500">离线部署与临期授权的实时告警。严重级别按剩余天数与失联次数判定。</p>
+    <button onclick="load()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition">↻ 刷新</button>
+  </div>
+  <div id="list" class="space-y-3"></div>
+  <div id="empty" class="bg-white rounded-xl border border-slate-200 px-5 py-12 text-center text-sm text-slate-400 hidden">🎉 当前无告警，所有部署健康、授权有效</div>
+</div>
+
+<script>
+const META = {
+  offline:         {icon:'M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9', cls:'border-red-200 bg-red-50', dot:'bg-red-500', label:'部署离线'},
+  license_critical:{icon:'M12 8v4l3 3', cls:'border-rose-200 bg-rose-50', dot:'bg-rose-500', label:'授权紧急临期'},
+  license_warn:    {icon:'M12 8v4l3 3', cls:'border-amber-200 bg-amber-50', dot:'bg-amber-500', label:'授权临期提醒'},
+};
+async function load() {
+  let data;
+  try { data = await apiFetch('/api/v1/alerts'); } catch(e){ return; }
+  const list = document.getElementById('list');
+  document.getElementById('empty').classList.toggle('hidden', data.count>0);
+  list.innerHTML = data.alerts.map(a => {
+    const m = META[a.alert_type] || {cls:'border-slate-200 bg-white', dot:'bg-slate-400', label:a.alert_type};
+    return `
+    <div class="flex items-start gap-3 rounded-xl border ${m.cls} p-4">
+      <span class="mt-0.5 w-2.5 h-2.5 rounded-full ${m.dot} shrink-0"></span>
+      <div class="flex-1">
+        <div class="font-medium text-slate-800">${a.message}</div>
+        <div class="text-xs text-slate-500 mt-1">
+          ${a.tenant_id?('租户 '+a.tenant_id+' · '):''}${a.product?('产品 '+a.product+' · '):''}${m.label}
+        </div>
+      </div>
+      <span class="text-xs text-slate-400">${a.detail && a.detail.days_left!==undefined ? a.detail.days_left+' 天' : (a.detail&&a.detail.consecutive_misses!==undefined ? a.detail.consecutive_misses+' 次失联':'')}</span>
+    </div>`;
+  }).join('');
+}
+load();
+</script>
+{% endblock %}

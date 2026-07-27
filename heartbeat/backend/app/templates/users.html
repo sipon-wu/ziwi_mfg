@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}用户管理 · 知微心跳监控平台{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-semibold text-slate-100">用户管理</h1>
+      <p class="text-xs text-slate-400 mt-1">账号支持「多角色叠加 + 直接授权」组合分配；有效权限 = 各角色权限并集 + 直接授权。</p>
+    </div>
+    <button id="btnNew" class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium shadow">+ 新建账号</button>
+  </div>
+
+  <div id="toast" class="hidden fixed top-4 right-4 z-50 px-4 py-2 rounded-lg text-sm text-white shadow-lg"></div>
+
+  <div class="bg-slate-800/60 border border-slate-700 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-800 text-slate-400 text-xs uppercase">
+        <tr>
+          <th class="text-left px-4 py-3">用户名</th>
+          <th class="text-left px-4 py-3">姓名</th>
+          <th class="text-left px-4 py-3">角色</th>
+          <th class="text-left px-4 py-3">有效权限</th>
+          <th class="text-left px-4 py-3">状态</th>
+          <th class="text-right px-4 py-3">操作</th>
+        </tr>
+      </thead>
+      <tbody id="userTable" class="divide-y divide-slate-700/60"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="hidden fixed inset-0 z-40 bg-black/60 flex items-start justify-center pt-20 px-4">
+  <div class="w-full max-w-2xl bg-slate-800 border border-slate-700 rounded-xl shadow-2xl max-h-[80vh] overflow-y-auto">
+    <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+      <h3 id="modalTitle" class="text-base font-semibold text-slate-100">新建账号</h3>
+      <button id="modalClose" class="text-slate-400 hover:text-slate-200 text-xl leading-none">&times;</button>
+    </div>
+    <div class="px-6 py-5 space-y-5">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">用户名 *</label>
+          <input id="f_username" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">姓名</label>
+          <input id="f_display_name" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">密码 * <span class="text-slate-500">(至少 8 位)</span></label>
+          <input id="f_password" type="password" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500" />
+        </div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2 text-sm text-slate-300">
+            <input id="f_active" type="checkbox" checked class="rounded border-slate-600 bg-slate-900 text-indigo-600" /> 启用账号
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs text-slate-400 mb-2">角色（可多选 · 叠加）</label>
+        <div id="roleBox" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <div>
+        <label class="block text-xs text-slate-400 mb-2">直接授权（在角色之外额外授予，可叠加）</label>
+        <div id="permBox" class="grid grid-cols-2 sm:grid-cols-3 gap-2"></div>
+      </div>
+
+      <div class="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-2">有效权限预览（角色并集 + 直接授权）</div>
+        <div id="effBox" class="flex flex-wrap gap-1.5"></div>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t border-slate-700 flex justify-end gap-3">
+      <button id="modalCancel" class="px-4 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700">取消</button>
+      <button id="modalSave" class="px-4 py-2 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium">保存</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ROLE_CATALOG = {{ roles_catalog | tojson }};
+const PERM_CATALOG = {{ perms_catalog | tojson }};
+const ROLE_PERM = {{ role_perm_map | tojson }};
+const PERM_LABELS = {{ perm_labels | tojson }};
+let editingId = null;
+
+function toast(msg, ok=true){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'fixed top-4 right-4 z-50 px-4 py-2 rounded-lg text-sm text-white shadow-lg ' + (ok ? 'bg-emerald-600' : 'bg-rose-600');
+  setTimeout(()=> t.classList.add('hidden'), 2600);
+}
+function fmtDate(d){ return d ? new Date(d).toLocaleString('zh-CN') : '—'; }
+
+function effPerms(roles, perms){
+  const set = new Set();
+  roles.forEach(r => (ROLE_PERM[r]||[]).forEach(p => set.add(p)));
+  perms.forEach(p => set.add(p));
+  return [...set].sort();
+}
+function renderEff(){
+  const roles = [...document.querySelectorAll('#roleBox input:checked')].map(i=>i.value);
+  const perms = [...document.querySelectorAll('#permBox input:checked')].map(i=>i.value);
+  const eff = effPerms(roles, perms);
+  document.getElementById('effBox').innerHTML = eff.length
+    ? eff.map(p=>`<span class="text-[11px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30">${PERM_LABELS[p]||p}</span>`).join('')
+    : '<span class="text-xs text-slate-500">无</span>';
+}
+
+function loadUsers(){
+  api('/api/v1/admin/users').then(list=>{
+    const tb = document.getElementById('userTable');
+    if(!list.length){ tb.innerHTML = `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500 text-sm">暂无账号</td></tr>`; return; }
+    tb.innerHTML = list.map(u=>`
+      <tr class="hover:bg-slate-700/30">
+        <td class="px-4 py-3 text-slate-100 font-medium">${u.username}</td>
+        <td class="px-4 py-3 text-slate-300">${u.display_name||'—'}</td>
+        <td class="px-4 py-3">${(u.role_labels||[]).map(r=>`<span class="text-[11px] px-2 py-0.5 rounded bg-slate-700 text-slate-200 mr-1">${r}</span>`).join('')||'—'}</td>
+        <td class="px-4 py-3 text-slate-400">${(u.effective_permissions||[]).map(p=>`<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 mr-1 mb-1 inline-block">${PERM_LABELS[p]||p}</span>`).join('')||'—'}</td>
+        <td class="px-4 py-3">${u.is_active ? '<span class="text-emerald-400 text-xs">启用</span>' : '<span class="text-rose-400 text-xs">停用</span>'}</td>
+        <td class="px-4 py-3 text-right whitespace-nowrap">
+          <button class="text-indigo-400 hover:text-indigo-300 text-xs mr-3" onclick="openEdit(${u.id})">编辑</button>
+          <button class="text-rose-400 hover:text-rose-300 text-xs" onclick="removeUser(${u.id},'${u.username}')">删除</button>
+        </td>
+      </tr>`).join('');
+  }).catch(()=> toast('加载账号失败', false));
+}
+
+function buildCheckboxes(){
+  document.getElementById('roleBox').innerHTML = ROLE_CATALOG.map(r=>
+    `<label class="flex items-center gap-1.5 text-sm text-slate-300 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 cursor-pointer hover:border-indigo-500">
+       <input type="checkbox" value="${r.key}" class="role-chk rounded border-slate-600 bg-slate-900 text-indigo-600" onchange="renderEff()"/> ${r.label}
+     </label>`).join('');
+  document.getElementById('permBox').innerHTML = PERM_CATALOG.map(p=>
+    `<label class="flex items-center gap-1.5 text-xs text-slate-300 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 cursor-pointer hover:border-indigo-500">
+       <input type="checkbox" value="${p.key}" class="perm-chk rounded border-slate-600 bg-slate-900 text-indigo-600" onchange="renderEff()"/> ${p.label}
+     </label>`).join('');
+}
+
+function openNew(){
+  editingId = null;
+  document.getElementById('modalTitle').textContent = '新建账号';
+  document.getElementById('f_username').value=''; document.getElementById('f_username').disabled=false;
+  document.getElementById('f_display_name').value='';
+  document.getElementById('f_password').value=''; document.getElementById('f_password').placeholder='';
+  document.getElementById('f_active').checked=true;
+  document.querySelectorAll('#roleBox input').forEach(i=>i.checked = (i.value==='ops'));
+  document.querySelectorAll('#permBox input').forEach(i=>i.checked=false);
+  renderEff();
+  showModal();
+}
+function openEdit(id){
+  api('/api/v1/admin/users').then(list=>{
+    const u = list.find(x=>x.id===id); if(!u) return;
+    editingId = id;
+    document.getElementById('modalTitle').textContent = '编辑账号 · '+u.username;
+    document.getElementById('f_username').value=u.username; document.getElementById('f_username').disabled=true;
+    document.getElementById('f_display_name').value=u.display_name||'';
+    document.getElementById('f_password').value=''; document.getElementById('f_password').placeholder='留空则不修改密码';
+    document.getElementById('f_active').checked=u.is_active;
+    const roles = new Set(u.roles||[]);
+    const perms = new Set(u.extra_permissions||[]);
+    document.querySelectorAll('#roleBox input').forEach(i=>i.checked = roles.has(i.value));
+    document.querySelectorAll('#permBox input').forEach(i=>i.checked = perms.has(i.value));
+    renderEff(); showModal();
+  });
+}
+function removeUser(id, name){
+  if(!confirm('确认删除账号「'+name+'」？此操作不可恢复。')) return;
+  api('/api/v1/admin/users/'+id, {method:'DELETE'}).then(()=>{ toast('已删除'); loadUsers(); })
+    .catch(e=> toast('删除失败：'+(e.message||''), false));
+}
+function save(){
+  const username = document.getElementById('f_username').value.trim();
+  const password = document.getElementById('f_password').value;
+  const display_name = document.getElementById('f_display_name').value.trim();
+  const is_active = document.getElementById('f_active').checked;
+  const roles = [...document.querySelectorAll('#roleBox input:checked')].map(i=>i.value);
+  const extra_permissions = [...document.querySelectorAll('#permBox input:checked')].map(i=>i.value);
+  if(!username){ toast('用户名必填', false); return; }
+  if(!editingId && (!password || password.length<8)){ toast('密码至少 8 位', false); return; }
+  const body = {username, display_name, roles, extra_permissions, is_active};
+  if(password) body.password = password;
+  const opt = {method: editingId ? 'PUT' : 'POST', body: JSON.stringify(body)};
+  const url = editingId ? ('/api/v1/admin/users/'+editingId) : '/api/v1/admin/users';
+  api(url, opt).then(()=>{ toast(editingId?'已保存':'已创建'); hideModal(); loadUsers(); })
+    .catch(e=> toast('保存失败：'+(e.message||''), false));
+}
+
+function showModal(){ document.getElementById('modal').classList.remove('hidden'); }
+function hideModal(){ document.getElementById('modal').classList.add('hidden'); }
+
+document.getElementById('btnNew').onclick = openNew;
+document.getElementById('modalClose').onclick = hideModal;
+document.getElementById('modalCancel').onclick = hideModal;
+document.getElementById('modalSave').onclick = save;
+
+buildCheckboxes();
+loadUsers();
+</script>
+{% endblock %}

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}知微心跳监控平台{% endblock %}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: {50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a'},
+          gold: {500:'#d97706',600:'#b45309'},
+        }
+      }
+    }
+  }
+</script>
+<style>
+  [x-cloak]{display:none}
+  .sidebar-link{transition:all .15s}
+  .sidebar-link:hover{background-color:rgba(255,255,255,.06)}
+  .sidebar-link.active{background-color:rgba(59,130,246,.18);color:#fff;box-shadow:inset 3px 0 0 #3b82f6}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+{% set ICONS = {
+  'grid': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>',
+  'key': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 11-8 0 4 4 0 018 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M17 13l-2 2 4 4M21 21l-1-1"/></svg>',
+  'users': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>',
+  'server': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><line x1="7" y1="7.5" x2="7" y2="7.5"/><line x1="7" y1="16.5" x2="7" y2="16.5"/></svg>',
+  'bell': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path stroke-linecap="round" stroke-linejoin="round" d="M13.73 21a2 2 0 01-3.46 0"/></svg>',
+  'shield': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  'user-cog': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 21v-2a4 4 0 014-4h2"/><circle cx="17" cy="15" r="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 20l1.5-1.5M19 20l-1.5-1.5"/></svg>',
+  'cog': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
+  'tools': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 00-5.6 5.6L3 18v3h3l6.1-6.1a4 4 0 005.6-5.6l-2.5 2.5-2-2 2.5-2.5z"/></svg>',
+  'default': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>',
+} %}
+{% macro icon(name) %}{{ ICONS.get(name, ICONS['default']) | safe }}{% endmacro %}
+
+<div class="flex h-screen overflow-hidden">
+  <!-- Sidebar -->
+  <aside class="w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+    <div class="px-5 py-4 border-b border-slate-800">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-brand-900/50">Z</div>
+        <div>
+          <div class="text-white font-semibold text-sm leading-tight">知微心跳</div>
+          <div class="text-[11px] text-slate-500 tracking-wide">License 监控平台</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+      {% for item in nav_items %}
+      <a href="{{ item.path }}"
+         class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm {% if request.url.path.rstrip('/') == item.path.rstrip('/') %}active{% endif %} {% if item.placeholder %}opacity-50 cursor-not-allowed{% endif %}">
+        {{ icon(item.icon) }}
+        <span class="font-medium">{{ item.label }}</span>
+        {% if item.placeholder %}<span class="ml-auto text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">即将上线</span>{% endif %}
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="px-5 py-3 border-t border-slate-800 text-[11px] text-slate-600">
+      v2.0 · Ziwi Platform
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <header class="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
+      <h1 class="text-base font-semibold text-slate-800">{% block page_title %}仪表盘{% endblock %}</h1>
+      <div class="flex items-center gap-4">
+        <span class="inline-flex items-center gap-2 text-sm">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="text-slate-700 font-medium">{{ display_name }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 text-xs font-semibold border border-brand-100">{{ role_label }}</span>
+        </span>
+        <a href="/admin/logout" class="text-sm text-slate-400 hover:text-red-600 transition">退出</a>
+      </div>
+    </header>
+    <main class="flex-1 overflow-y-auto p-6">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<script>
+  async function apiFetch(url, opts={}) {
+    const res = await fetch(url, {
+      credentials: 'same-origin',
+      headers: {'Content-Type':'application/json', ...(opts.headers||{})},
+      ...opts
+    });
+    if (res.status === 401) { window.location.href = '/admin/login'; throw new Error('unauthorized'); }
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || res.statusText); }
+    const ct = res.headers.get('content-type')||'';
+    return ct.includes('application/json') ? res.json() : res.text();
+  }
+  function showToast(msg, type='info') {
+    const colors = {success:'bg-emerald-600', error:'bg-red-600', info:'bg-slate-800', warn:'bg-amber-600'};
+    const el = document.createElement('div');
+    el.className = `px-4 py-2.5 rounded-lg text-white text-sm shadow-lg ${colors[type]||colors.info}`;
+    el.textContent = msg;
+    document.getElementById('toast-root').appendChild(el);
+    setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 3200);
+  }
+  function openModal(title, bodyHtml, footerHtml='') {
+    document.getElementById('modal-root').innerHTML = `
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onclick="if(event.target===this)closeModal()">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+            <h3 class="font-semibold text-slate-800 text-base">${title}</h3>
+            <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+          </div>
+          <div class="px-6 py-5 text-sm text-slate-700">${bodyHtml}</div>
+          <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">${footerHtml}</div>
+        </div>
+      </div>`;
+  }
+  function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+  function fmtDate(d){ if(!d) return '—'; const dt=new Date(d); return dt.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+  function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d)-new Date())/86400000); }
+  const STATUS_META = {
+    active:  {label:'已激活', cls:'bg-emerald-50 text-emerald-700 border-emerald-200'},
+    trial:   {label:'试用',   cls:'bg-amber-50 text-amber-700 border-amber-200'},
+    none:    {label:'未授权', cls:'bg-slate-100 text-slate-500 border-slate-200'},
+    expired: {label:'已过期', cls:'bg-red-50 text-red-700 border-red-200'},
+  };
+  function statusBadge(s){
+    const m = STATUS_META[s] || {label:s, cls:'bg-slate-100 text-slate-500 border-slate-200'};
+    return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${m.cls}">${m.label}</span>`;
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

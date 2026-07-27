@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block page_title %}License 管理{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <div class="relative">
+      <input id="search" type="text" placeholder="搜索租户 / 产品…"
+             class="pl-9 pr-3 py-2 w-72 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+      <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4-4"/></svg>
+    </div>
+    <button onclick="openCreate()" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium shadow-sm transition">+ 新建授权</button>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-3 text-left font-medium">租户 ID</th>
+          <th class="px-5 py-3 text-left font-medium">产品</th>
+          <th class="px-5 py-3 text-left font-medium">状态</th>
+          <th class="px-5 py-3 text-left font-medium">授权时间</th>
+          <th class="px-5 py-3 text-left font-medium">到期时间</th>
+          <th class="px-5 py-3 text-right font-medium">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody" class="divide-y divide-slate-50"></tbody>
+    </table>
+    <div id="empty" class="px-5 py-10 text-center text-sm text-slate-400 hidden">未找到授权记录</div>
+  </div>
+</div>
+
+<script>
+const STATUS_OPTIONS = [['active','已激活'],['trial','试用'],['none','未授权'],['expired','已过期']];
+
+async function load() {
+  const q = document.getElementById('search').value.trim();
+  let data;
+  try { data = await apiFetch('/api/v1/admin/licenses'); }
+  catch(e){ return; }
+  const rows = q ? data.filter(d => (d.tenant_id+'').includes(q) || (d.product+'').includes(q)) : data;
+  const tbody = document.getElementById('tbody');
+  document.getElementById('empty').classList.toggle('hidden', rows.length>0);
+  tbody.innerHTML = rows.map(d => `
+    <tr class="hover:bg-slate-50">
+      <td class="px-5 py-3 font-medium text-slate-800">${d.tenant_id}</td>
+      <td class="px-5 py-3 text-slate-600">${d.product}</td>
+      <td class="px-5 py-3">${statusBadge(d.status)}</td>
+      <td class="px-5 py-3 text-slate-500">${fmtDate(d.issued_at)}</td>
+      <td class="px-5 py-3 text-slate-500">${fmtDate(d.expires_at)}</td>
+      <td class="px-5 py-3 text-right">
+        <button onclick="openEdit('${d.tenant_id}')" class="text-brand-600 hover:text-brand-700 font-medium mr-3">编辑</button>
+      </td>
+    </tr>`).join('');
+}
+
+function formHtml(d={}) {
+  return `
+    <div class="space-y-4">
+      <div><label class="block text-xs font-medium text-slate-600 mb-1">租户 ID</label>
+        <input id="f_tenant" value="${d.tenant_id||''}" ${d.tenant_id?'readonly':''} class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></div>
+      <div><label class="block text-xs font-medium text-slate-600 mb-1">产品</label>
+        <input id="f_product" value="${d.product||'school'}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></div>
+      <div><label class="block text-xs font-medium text-slate-600 mb-1">状态</label>
+        <select id="f_status" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+          ${STATUS_OPTIONS.map(o=>`<option value="${o[0]}" ${d.status===o[0]?'selected':''}>${o[1]}</option>`).join('')}
+        </select></div>
+      <div><label class="block text-xs font-medium text-slate-600 mb-1">到期时间</label>
+        <input id="f_expires" type="datetime-local" value="${d.expires_at?d.expires_at.slice(0,16):''}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></div>
+    </div>`;
+}
+
+function openCreate() {
+  openModal('新建授权', formHtml(),
+    `<button onclick="closeModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50">取消</button>
+     <button onclick="submitForm(null)" class="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">创建</button>`);
+}
+async function openEdit(tenant) {
+  let d;
+  try { d = await apiFetch('/api/v1/admin/licenses/'+encodeURIComponent(tenant)); }
+  catch(e){ showToast(e.message,'error'); return; }
+  openModal('编辑授权 · '+tenant, formHtml(d),
+    `<button onclick="closeModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50">取消</button>
+     <button onclick="submitForm('${tenant}')" class="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">保存</button>`);
+}
+async function submitForm(tenant) {
+  const body = {
+    tenant_id: document.getElementById('f_tenant').value.trim(),
+    product: document.getElementById('f_product').value.trim(),
+    status: document.getElementById('f_status').value,
+    expires_at: document.getElementById('f_expires').value ? new Date(document.getElementById('f_expires').value).toISOString() : null,
+  };
+  if (!body.tenant_id) { showToast('租户 ID 必填','error'); return; }
+  try {
+    await apiFetch('/api/v1/admin/licenses', {method:'POST', body: JSON.stringify(body)});
+    closeModal(); showToast(tenant?'已保存':'已创建','success'); load();
+  } catch(e){ showToast(e.message,'error'); }
+}
+document.getElementById('search').addEventListener('input', load);
+load();
+</script>
+{% endblock %}

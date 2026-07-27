@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block page_title %}系统设置{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+  <!-- System parameters -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <div class="px-5 py-4 border-b border-slate-100">
+      <h2 class="font-semibold text-slate-800">运行时参数</h2>
+      <p class="text-xs text-slate-400 mt-0.5">由服务端环境变量加载，修改需调整部署配置后重启生效</p>
+    </div>
+    <div class="p-5 space-y-3 text-sm">
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">心跳超时（分钟）</span><span class="font-medium text-slate-800">{{ heartbeat_timeout_minutes }}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">离线判定失联次数</span><span class="font-medium text-slate-800">{{ offline_threshold_misses }}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">状态检查间隔（分钟）</span><span class="font-medium text-slate-800">{{ check_interval_minutes }}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">临期预警（天）</span><span class="font-medium text-slate-800">{{ license_warn_days }}</span></div>
+      <div class="flex justify-between py-2"><span class="text-slate-500">紧急临期（天）</span><span class="font-medium text-slate-800">{{ license_critical_days }}</span></div>
+    </div>
+  </div>
+
+  <!-- Security -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <div class="px-5 py-4 border-b border-slate-100">
+      <h2 class="font-semibold text-slate-800">安全策略</h2>
+      <p class="text-xs text-slate-400 mt-0.5">账号与访问控制加固状态</p>
+    </div>
+    <div class="p-5 space-y-3 text-sm">
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">登录失败锁定阈值</span><span class="font-medium text-slate-800">{{ login_max_attempts }} 次</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">锁定时长（分钟）</span><span class="font-medium text-slate-800">{{ login_lockout_minutes }}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">会话 Cookie 安全</span><span class="font-medium text-emerald-600">HttpOnly · SameSite=Lax · 8h</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-50"><span class="text-slate-500">密码存储</span><span class="font-medium text-emerald-600">PBKDF2-HMAC-SHA256</span></div>
+      <div class="flex justify-between py-2"><span class="text-slate-500">授权审计</span><span class="font-medium text-emerald-600">全量记录</span></div>
+    </div>
+  </div>
+
+  <!-- Ops actions -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm lg:col-span-2">
+    <div class="px-5 py-4 border-b border-slate-100">
+      <h2 class="font-semibold text-slate-800">运维操作</h2>
+    </div>
+    <div class="p-5">
+      <button onclick="triggerCheck()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50 transition">立即执行离线检测</button>
+      <p class="text-xs text-slate-400 mt-2">手动触发一次部署离线状态扫描（等同于定时任务）。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+async function triggerCheck() {
+  try {
+    await apiFetch('/api/v1/admin/check', {method:'POST'});
+    showToast('离线检测已触发','success');
+  } catch(e){ showToast(e.message,'error'); }
+}
+</script>
+{% endblock %}

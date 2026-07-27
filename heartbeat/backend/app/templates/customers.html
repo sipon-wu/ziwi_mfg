@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block page_title %}客户视图{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <p class="text-sm text-slate-500">以租户为维度的客户全景视图，聚合授权状态与部署健康度。</p>
+    <button onclick="load()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition">↻ 刷新</button>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-3 text-left font-medium">租户 ID</th>
+          <th class="px-5 py-3 text-left font-medium">产品</th>
+          <th class="px-5 py-3 text-left font-medium">授权状态</th>
+          <th class="px-5 py-3 text-left font-medium">剩余天数</th>
+          <th class="px-5 py-3 text-left font-medium">部署数</th>
+          <th class="px-5 py-3 text-left font-medium">版本</th>
+          <th class="px-5 py-3 text-left font-medium">最近心跳</th>
+        </tr>
+      </thead>
+      <tbody id="tbody" class="divide-y divide-slate-50"></tbody>
+    </table>
+    <div id="empty" class="px-5 py-10 text-center text-sm text-slate-400 hidden">暂无客户数据</div>
+  </div>
+</div>
+
+<script>
+async function load() {
+  let licenses=[], deployments=[];
+  try { licenses = await apiFetch('/api/v1/admin/licenses'); } catch(e){ return; }
+  try { deployments = await apiFetch('/api/v1/status'); } catch(e){ deployments=[]; }
+  const depByTenant = {};
+  deployments.forEach(d => { (depByTenant[d.tenant_id] ||= []).push(d); });
+  const rows = licenses.map(l => {
+    const deps = depByTenant[l.tenant_id] || [];
+    const hbs = deps.map(d=>d.last_heartbeat_at).filter(Boolean);
+    const last = hbs.length ? hbs.reduce((a,b)=> a>b?a:b) : null;
+    return {
+      tenant_id: l.tenant_id, product: l.product, status: l.status,
+      days_left: daysLeft(l.expires_at),
+      deployment_count: deps.length,
+      versions: [...new Set(deps.map(d=>d.version).filter(Boolean))].join(', '),
+      last_heartbeat_at: last,
+    };
+  });
+  const tbody = document.getElementById('tbody');
+  document.getElementById('empty').classList.toggle('hidden', rows.length>0);
+  tbody.innerHTML = rows.map(r => `
+    <tr class="hover:bg-slate-50">
+      <td class="px-5 py-3 font-medium text-slate-800">${r.tenant_id}</td>
+      <td class="px-5 py-3 text-slate-600">${r.product}</td>
+      <td class="px-5 py-3">${statusBadge(r.status)}</td>
+      <td class="px-5 py-3">${r.days_left===null?'—':(r.days_left<0?'<span class=text-red-600>已逾期</span>':r.days_left+' 天')}</td>
+      <td class="px-5 py-3 text-slate-600">${r.deployment_count}</td>
+      <td class="px-5 py-3 text-slate-500">${r.versions||'—'}</td>
+      <td class="px-5 py-3 text-slate-500">${fmtDate(r.last_heartbeat_at)}</td>
+    </tr>`).join('');
+}
+load();
+</script>
+{% endblock %}

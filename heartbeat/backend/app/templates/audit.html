@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block page_title %}审计日志{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <p class="text-sm text-slate-500">所有 License 授权变更的不可篡改记录，含操作人、来源 IP 与时间。</p>
+    <button onclick="load()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition">↻ 刷新</button>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-3 text-left font-medium">时间</th>
+          <th class="px-5 py-3 text-left font-medium">租户</th>
+          <th class="px-5 py-3 text-left font-medium">操作</th>
+          <th class="px-5 py-3 text-left font-medium">状态变更</th>
+          <th class="px-5 py-3 text-left font-medium">操作人</th>
+          <th class="px-5 py-3 text-left font-medium">来源 IP</th>
+        </tr>
+      </thead>
+      <tbody id="tbody" class="divide-y divide-slate-50"></tbody>
+    </table>
+    <div id="empty" class="px-5 py-10 text-center text-sm text-slate-400 hidden">暂无审计记录</div>
+  </div>
+</div>
+
+<script>
+async function load() {
+  let data;
+  try { data = await apiFetch('/api/v1/admin/audit?limit=200'); } catch(e){ return; }
+  const tbody = document.getElementById('tbody');
+  document.getElementById('empty').classList.toggle('hidden', data.length>0);
+  tbody.innerHTML = data.map(a => {
+    const change = (a.old_status||a.old_expires_at)
+      ? `${a.old_status||'—'} → ${a.new_status||'—'}`
+      : (a.new_status ? a.new_status : '—');
+    return `
+    <tr class="hover:bg-slate-50">
+      <td class="px-5 py-3 text-slate-500 whitespace-nowrap">${fmtDate(a.created_at)}</td>
+      <td class="px-5 py-3 font-medium text-slate-800">${a.tenant_id}</td>
+      <td class="px-5 py-3"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-xs">${a.action}</span></td>
+      <td class="px-5 py-3 text-slate-600">${change}</td>
+      <td class="px-5 py-3 text-slate-600">${a.changed_by}</td>
+      <td class="px-5 py-3 text-slate-400">${a.ip_address||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+load();
+</script>
+{% endblock %}

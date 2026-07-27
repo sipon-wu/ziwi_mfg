@@ -8,6 +8,9 @@ services:
       - heartbeat_data:/app/data
     environment:
       - HEARTBEAT_API_KEY=${HEARTBEAT_API_KEY:-changeme-dev-key}
+      - HEARTBEAT_ADMIN_PASSWORD=${HEARTBEAT_ADMIN_PASSWORD:-changeme-admin}
+      - HEARTBEAT_SESSION_SECRET=${HEARTBEAT_SESSION_SECRET:-}
+      - HEARTBEAT_ADMIN_SECURE_COOKIE=${HEARTBEAT_ADMIN_SECURE_COOKIE:-false}
     restart: unless-stopped
 
 volumes:
