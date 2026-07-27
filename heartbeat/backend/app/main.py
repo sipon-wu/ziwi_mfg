@@ -30,6 +30,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
+from sqlalchemy.schema import CreateTable
 
 from .config import settings
 from .models import (
@@ -388,6 +389,7 @@ async def lifespan(app: FastAPI):
                 if col not in present:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ctype}"))
                     logger.info("Migrated: added column %s.%s", table, col)
+    _migrate_license_composite_unique(engine)
     # Backfill composable `roles` column for legacy single-role rows
     db = SessionLocal()
     try:
@@ -412,6 +414,55 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ZiWi Heartbeat Platform", lifespan=lifespan)
+
+
+def _migrate_license_composite_unique(engine):
+    """Rebuild `licenses` to enforce composite UNIQUE (tenant_id, product).
+
+    The legacy schema had a single-column UNIQUE on tenant_id, which prevented a
+    tenant from holding more than one product (e.g. mfg + school in parallel) —
+    the second heartbeat raised a uniqueness violation and 500'd. SQLite cannot
+    ALTER DROP CONSTRAINT, so we rebuild via rename + copy. Idempotent: a no-op
+    once the composite unique is already in place (fresh DB or already migrated).
+    """
+    from sqlalchemy import inspect as _sa_inspect
+
+    insp = _sa_inspect(engine)
+    if "licenses" not in insp.get_table_names():
+        return  # fresh DB: create_all already applied the composite unique
+    idxs = insp.get_indexes("licenses")
+    has_old = any(
+        ix.get("unique") and ix["column_names"] == ["tenant_id"] for ix in idxs
+    )
+    has_new = any(
+        ix.get("unique")
+        and set(ix["column_names"]) == {"tenant_id", "product"}
+        for ix in idxs
+    )
+    if not has_old and has_new:
+        return  # already migrated
+
+    cols = [c.name for c in License.__table__.columns]
+    col_list = ", ".join(cols)
+    create_sql = str(CreateTable(License.__table__)).replace(
+        "CREATE TABLE licenses", "CREATE TABLE licenses_new", 1
+    )
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("DROP TABLE IF EXISTS licenses_new"))
+        conn.execute(text(create_sql))
+        conn.execute(
+            text(
+                f"INSERT INTO licenses_new ({col_list}) "
+                f"SELECT {col_list} FROM licenses"
+            )
+        )
+        conn.execute(text("DROP TABLE licenses"))
+        conn.execute(text("ALTER TABLE licenses_new RENAME TO licenses"))
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+    logger.info(
+        "Migrated: licenses rebuilt with composite UNIQUE (tenant_id, product)"
+    )
 
 
 def init_super_admin():

@@ -9,7 +9,15 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -250,13 +258,20 @@ class Deployment(Base):
 
 
 class License(Base):
-    """License authority — authoritative source of license state."""
+    """License authority — authoritative source of license state.
+
+    A tenant may hold multiple products (e.g. mfg + school) in parallel, so
+    uniqueness is enforced on (tenant_id, product), NOT tenant_id alone.
+    """
 
     __tablename__ = "licenses"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product", name="uq_license_tenant_product"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, index=True
+        String(64), nullable=False, index=True
     )
     product: Mapped[str] = mapped_column(String(32), nullable=False, default="school")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")

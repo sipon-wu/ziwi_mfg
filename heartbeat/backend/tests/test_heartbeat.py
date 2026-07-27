@@ -10,6 +10,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.main import (  # noqa: E402
@@ -155,3 +156,56 @@ def test_heartbeat_empty_body_returns_422(client):
         "/api/v1/heartbeat", json={}, headers={"X-Api-Key": VALID_API_KEY}
     )
     assert r.status_code == 422
+
+
+def test_heartbeat_same_tenant_two_products(client):
+    # B 修复验证：同一租户可并行持有多产品（mfg + school）。
+    # 旧单列 tenant_id 唯一约束会让第二产品心跳 commit 时唯一冲突 -> 500。
+    r1 = _hb(client, "t-multi-prod", "mfg", "1.0.0")
+    assert r1.status_code == 200
+    r2 = _hb(client, "t-multi-prod", "school", "2.0.0")
+    assert r2.status_code == 200
+
+    db = SessionLocal()
+    try:
+        assert db.query(License).filter_by(tenant_id="t-multi-prod").count() == 2
+        assert db.query(Deployment).filter_by(tenant_id="t-multi-prod").count() == 2
+    finally:
+        db.close()
+
+
+def test_heartbeat_same_tenant_same_product_idempotent(client):
+    # 复合唯一 (tenant_id, product) 下，同租户同产品重复心跳仍应去重为 1 条授权。
+    _hb(client, "t-dedup", "school", "1.0.0")
+    _hb(client, "t-dedup", "school", "1.0.1")
+    db = SessionLocal()
+    try:
+        assert (
+            db.query(License)
+            .filter_by(tenant_id="t-dedup", product="school")
+            .count()
+            == 1
+        )
+    finally:
+        db.close()
+
+
+def test_license_db_composite_unique_enforced():
+    # DB 级回归：复合唯一 (tenant_id, product) 必须由数据库强制，
+    # 而非仅依赖应用层去重（否则旧单列唯一缺陷会复现）。
+    db = SessionLocal()
+    try:
+        db.add(License(tenant_id="db-dup", product="school", status="trial"))
+        db.commit()
+        # 同 (tenant, product) 第二次插入应触发 IntegrityError
+        db.add(License(tenant_id="db-dup", product="school", status="trial"))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+        # 不同 product 允许并存
+        db.add(License(tenant_id="db-dup", product="mfg", status="trial"))
+        db.commit()
+        assert db.query(License).filter_by(tenant_id="db-dup").count() == 2
+    finally:
+        db.rollback()
+        db.close()
