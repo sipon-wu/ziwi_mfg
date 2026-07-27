@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform import PlatformUser, BusinessLine, LicenseTicket
 from app.core.security import hash_password, verify_password
-from app.main import jwt_service
 
 
 # ============================================================
@@ -91,6 +90,7 @@ async def authenticate_platform_user(
 
 def generate_platform_token(user: PlatformUser) -> str:
     """签发平台用户的 JWT（复用 cloud RS256）"""
+    from app.main import jwt_service  # 延迟导入避免循环依赖
     return jwt_service.create_access_token(
         sub=str(user.id),
         email=user.email,
