@@ -76,19 +76,77 @@ Content-Type: application/json
 }
 ```
 
-响应：
+响应（mfg 格式）：
 
 ```json
-// 首次 → 201 Created
-{"status": "created", "deployment_id": "school-chengdu-01"}
-
-// 后续 → 200 OK
-{"status": "updated", "deployment_id": "school-chengdu-01"}
+{"status": "created", "deployment_id": "mfg-shanghai-01"}
 ```
+
+响应（school 格式，含 `license_update`）：
+
+```json
+{
+  "status": "created",
+  "deployment_id": "school-<tenant_id>",
+  "license_update": {
+    "status": "active",
+    "expires_at": "2027-07-27T00:00:00+00:00"
+  }
+}
+```
+
+> `license_update` 字段：当 License 权威记录存在且状态非 `none` 时返回。
+> school 客户端收到后自动回写本地 `LicenseStatus/LicenseExpiresAt`。
+
+### 2.3 School 心跳（无 deployment_id 格式）
+
+school 客户端发送简化 payload，`deployment_id` 自动由服务端生成（`school-{tenant_id}`）：
+
+```json
+{
+  "tenant_id":     "school_tenant_chengdu",
+  "product":       "school",
+  "license_status":"trial",
+  "license_expires_at": "2026-08-01T00:00:00Z",
+  "school_name":   "成都七中"
+}
+```
+
+首次上报时若该 tenant 无 License 记录，服务端自动从 `license_status` / `license_expires_at` 创建一条权威 License 记录（auto-seed），后续管理员可通过 License 管理 API 覆盖。
 
 ---
 
-## 3. 上报频率建议
+## 3. License 管理 API（管理员专用）
+
+所有端点均需 `X-Api-Key` 认证。
+
+### 3.1 创建/更新 License
+
+**POST** `/api/v1/admin/licenses`
+
+```json
+{
+  "tenant_id":  "school_tenant_chengdu",
+  "product":    "school",
+  "status":     "active",
+  "issued_at":  "2025-06-01T00:00:00Z",
+  "expires_at": "2027-06-01T00:00:00Z"
+}
+```
+
+幂等：同 `tenant_id` 重复调用会更新状态与到期时间。
+
+### 3.2 列出所有 License
+
+**GET** `/api/v1/admin/licenses`
+
+### 3.3 查询单个 License
+
+**GET** `/api/v1/admin/licenses/{tenant_id}`
+
+---
+
+## 4. 上报频率建议
 
 | 参数 | 推荐值 | 说明 |
 |:---|:---|:---|
@@ -136,7 +194,7 @@ HEARTBEAT_API_KEY=your-secure-random-key
 
 ---
 
-## 5. 错误处理
+## 6. 错误处理
 
 | HTTP 状态码 | 含义 | 处理建议 |
 |:---|:---|:---|
@@ -149,7 +207,7 @@ HEARTBEAT_API_KEY=your-secure-random-key
 
 ---
 
-## 6. curl 完整示例
+## 7. curl 完整示例
 
 ### 首次心跳（注册新部署）
 

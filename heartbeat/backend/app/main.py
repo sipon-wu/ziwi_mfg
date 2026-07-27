@@ -1,11 +1,11 @@
 """
 Heartbeat Service — Ziwi License Heartbeat Monitor.
 
-Receives periodic heartbeats from on-premises deployment instances,
-monitors online status, and provides license expiry alerts.
+Receives periodic heartbeats from deployment instances (school / mfg),
+monitors online status, manages License authority, and syncs license
+state back to clients via license_update in heartbeat response.
 
-Single-file FastAPI application incorporating config, models,
-dependencies, routes, and APScheduler background tasks.
+Phase 2 — License authority integrated (2026-07-27).
 """
 
 import logging
@@ -81,12 +81,12 @@ class Base(DeclarativeBase):
 
 
 # ============================================================
-# Model
+# Models
 # ============================================================
 
 
 class Deployment(Base):
-    """Represents a registered on-premises deployment instance."""
+    """Represents a registered deployment instance (mfg / school)."""
 
     __tablename__ = "deployments"
 
@@ -143,23 +143,80 @@ class Deployment(Base):
         }
 
 
+class License(Base):
+    """
+    License authority — authoritative source of license state for each tenant+product.
+
+    Set by admin API (POST /api/v1/admin/licenses). Auto-seeded from school's
+    first heartbeat if no record exists. Heartbeat response includes
+    `license_update` derived from this table.
+    """
+
+    __tablename__ = "licenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    product: Mapped[str] = mapped_column(String(32), nullable=False, default="school")
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="none"
+    )  # active | trial | none
+    issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "tenant_id": self.tenant_id,
+            "product": self.product,
+            "status": self.status,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
 # ============================================================
 # Pydantic Schemas
 # ============================================================
 
 
 class HeartbeatRequest(BaseModel):
-    """Payload sent by a deployment instance on each heartbeat."""
+    """
+    Payload sent by a deployment instance on each heartbeat.
 
-    deployment_id: str = Field(..., max_length=64, description="Unique deployment identifier")
+    Supports both mfg format (with deployment_id) and school format
+    (without deployment_id — auto-generated from tenant_id + product).
+    """
+
+    deployment_id: str = Field(
+        default="", max_length=64, description="Unique deployment ID; auto-generated if empty"
+    )
     tenant_id: str = Field(..., max_length=64, description="Owning tenant ID")
     product: str = Field(..., max_length=32, description="Product: mfg or school")
     version: str = Field(default="", max_length=32, description="Software version")
     license_issued_at: Optional[datetime] = Field(
-        default=None, description="License issue date (required for new deployments)"
+        default=None, description="License issue date (required for new mfg deployments)"
     )
     license_expires_at: Optional[datetime] = Field(
-        default=None, description="License expiry date (required for new deployments)"
+        default=None, description="License expiry date"
+    )
+    # school-specific fields (ignored by mfg client)
+    license_status: Optional[str] = Field(
+        default=None, max_length=16, description="License status reported by client"
+    )
+    school_name: Optional[str] = Field(
+        default=None, max_length=128, description="School display name"
     )
 
 
@@ -168,6 +225,29 @@ class HeartbeatResponse(BaseModel):
 
     status: str
     deployment_id: str
+    license_update: Optional[dict] = None
+
+
+class LicenseCreate(BaseModel):
+    """Admin payload to create or update a License record."""
+
+    tenant_id: str = Field(..., max_length=64, description="Tenant ID")
+    product: str = Field(default="school", max_length=32)
+    status: str = Field(..., max_length=16, description="active / trial / none")
+    issued_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class LicenseResponse(BaseModel):
+    """License record returned to admin."""
+
+    tenant_id: str
+    product: str
+    status: str
+    issued_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 # ============================================================
@@ -192,6 +272,33 @@ def verify_api_key(x_api_key: str = Header(default=None, alias="X-Api-Key")):
             detail="Invalid or missing API Key",
         )
     return x_api_key
+
+
+# ============================================================
+# License helpers
+# ============================================================
+
+
+def _lookup_license(db: Session, tenant_id: str, product: str) -> Optional[License]:
+    """Look up License record by tenant_id + product."""
+    return (
+        db.query(License)
+        .filter(License.tenant_id == tenant_id, License.product == product)
+        .first()
+    )
+
+
+def _build_license_update(lic: License) -> Optional[dict]:
+    """Build license_update dict from License record, or None if status=none."""
+    if lic.status == "none":
+        return None
+    d: dict = {"status": lic.status}
+    if lic.expires_at:
+        if lic.expires_at.tzinfo is None:
+            d["expires_at"] = lic.expires_at.replace(tzinfo=timezone.utc).isoformat()
+        else:
+            d["expires_at"] = lic.expires_at.isoformat()
+    return d
 
 
 # ============================================================
@@ -293,12 +400,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ziwi Heartbeat Service",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
 # ============================================================
-# Routes
+# Routes — Public / Heartbeat
 # ============================================================
 
 
@@ -321,35 +428,43 @@ def heartbeat_post(
     """
     Receive a heartbeat from a deployment instance.
 
-    - If deployment_id is new, auto-creates the Deployment record
-      (requires license_issued_at & license_expires_at in payload).
-    - If deployment_id exists, updates last_heartbeat_at, resets
-      consecutive_misses to 0, and sets status=online.
+    Supports two payload formats:
+    - mfg format: includes deployment_id, license_issued_at, license_expires_at
+    - school format: no deployment_id (auto-generated), includes license_status
+
+    After updating deployment state, looks up the License authority record
+    for this tenant and returns license_update in the response.
     """
     now = datetime.now(timezone.utc)
+
+    # --- resolve / auto-generate deployment_id ---
+    deployment_id = req.deployment_id
+    if not deployment_id:
+        deployment_id = f"{req.product}-{req.tenant_id}"
+
     dep = (
         db.query(Deployment)
-        .filter(Deployment.deployment_id == req.deployment_id)
+        .filter(Deployment.deployment_id == deployment_id)
         .first()
     )
 
     if dep is None:
         # --- create new deployment ---
-        if req.license_issued_at is None or req.license_expires_at is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "New deployment requires license_issued_at "
-                    "and license_expires_at"
-                ),
-            )
+        if req.license_issued_at is None and req.license_expires_at is None:
+            # school format: no license timestamps required; use now as fallback
+            issued = now
+            expires = now + timedelta(days=365)
+        else:
+            issued = req.license_issued_at or now
+            expires = req.license_expires_at or (now + timedelta(days=365))
+
         dep = Deployment(
-            deployment_id=req.deployment_id,
+            deployment_id=deployment_id,
             tenant_id=req.tenant_id,
             product=req.product,
             version=req.version,
-            license_issued_at=req.license_issued_at,
-            license_expires_at=req.license_expires_at,
+            license_issued_at=issued,
+            license_expires_at=expires,
             last_heartbeat_at=now,
             status="online",
             consecutive_misses=0,
@@ -357,19 +472,54 @@ def heartbeat_post(
         db.add(dep)
         db.commit()
         db.refresh(dep)
-        logger.info("New deployment registered: %s", req.deployment_id)
-        return HeartbeatResponse(status="created", deployment_id=dep.deployment_id)
+        logger.info("New deployment registered: %s (product=%s)", deployment_id, req.product)
+        resp_status = "created"
+    else:
+        # --- update existing deployment ---
+        dep.last_heartbeat_at = now
+        dep.consecutive_misses = 0
+        dep.status = "online"
+        dep.version = req.version or dep.version
+        dep.tenant_id = req.tenant_id or dep.tenant_id
+        dep.product = req.product or dep.product
+        dep.updated_at = now
+        db.commit()
+        resp_status = "updated"
 
-    # --- update existing deployment ---
-    dep.last_heartbeat_at = now
-    dep.consecutive_misses = 0
-    dep.status = "online"
-    dep.version = req.version or dep.version
-    dep.tenant_id = req.tenant_id or dep.tenant_id
-    dep.product = req.product or dep.product
-    dep.updated_at = now
-    db.commit()
-    return HeartbeatResponse(status="updated", deployment_id=dep.deployment_id)
+    # --- License authority: auto-seed if school reports state with no existing record ---
+    lic = _lookup_license(db, req.tenant_id, req.product)
+    if lic is None and req.license_status:
+        # Auto-seed from school's reported state
+        lic = License(
+            tenant_id=req.tenant_id,
+            product=req.product,
+            status=req.license_status,
+            expires_at=req.license_expires_at,
+        )
+        db.add(lic)
+        db.commit()
+        db.refresh(lic)
+        logger.info(
+            "License auto-seeded for tenant=%s product=%s status=%s",
+            req.tenant_id, req.product, req.license_status,
+        )
+
+    # --- build response with license_update ---
+    response = HeartbeatResponse(
+        status=resp_status,
+        deployment_id=deployment_id,
+    )
+    if lic:
+        lu = _build_license_update(lic)
+        if lu:
+            response.license_update = lu
+
+    return response
+
+
+# ============================================================
+# Routes — Deployment Status
+# ============================================================
 
 
 @app.get("/api/v1/status")
@@ -406,6 +556,88 @@ def get_status(
     return dep.to_dict()
 
 
+# ============================================================
+# Routes — License Admin API
+# ============================================================
+
+
+@app.post("/api/v1/admin/licenses", status_code=status.HTTP_201_CREATED)
+def create_license(
+    body: LicenseCreate,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """
+    Create or update a License record (authoritative source).
+
+    Idempotent: if tenant_id already exists, updates status/expiry in place.
+    """
+    lic = (
+        db.query(License)
+        .filter(License.tenant_id == body.tenant_id)
+        .first()
+    )
+    now = datetime.now(timezone.utc)
+    if lic is None:
+        lic = License(
+            tenant_id=body.tenant_id,
+            product=body.product,
+            status=body.status,
+            issued_at=body.issued_at or now,
+            expires_at=body.expires_at,
+        )
+        db.add(lic)
+        db.commit()
+        db.refresh(lic)
+        logger.info("License created: tenant=%s status=%s", body.tenant_id, body.status)
+        return {"status": "created", **lic.to_dict()}
+    else:
+        lic.status = body.status
+        lic.product = body.product or lic.product
+        if body.issued_at is not None:
+            lic.issued_at = body.issued_at
+        lic.expires_at = body.expires_at
+        lic.updated_at = now
+        db.commit()
+        logger.info("License updated: tenant=%s status=%s", body.tenant_id, body.status)
+        return {"status": "updated", **lic.to_dict()}
+
+
+@app.get("/api/v1/admin/licenses")
+def list_licenses(
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """List all License records."""
+    licenses = db.query(License).order_by(License.updated_at.desc()).all()
+    return [l.to_dict() for l in licenses]
+
+
+@app.get("/api/v1/admin/licenses/{tenant_id}")
+def get_license(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """Get a single License record by tenant_id."""
+    lic = (
+        db.query(License)
+        .filter(License.tenant_id == tenant_id)
+        .first()
+    )
+    if lic is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="License not found",
+        )
+    return lic.to_dict()
+
+
+# ============================================================
+# Routes — Alerts
+# ============================================================
+
+
 @app.get("/api/v1/alerts")
 def list_alerts(
     db: Session = Depends(get_db),
@@ -416,8 +648,7 @@ def list_alerts(
 
     Returns:
     - Deployments with status="offline"
-    - Deployments whose license expires within the warn/critical window
-      (but are still online, to avoid duplicates)
+    - Licenses expiring within the warn/critical window (from License table)
     """
     now = datetime.now(timezone.utc)
     warn_threshold = now + timedelta(days=settings.license_warn_days)
@@ -447,20 +678,18 @@ def list_alerts(
             },
         })
 
-    # 2) License expiry (online deployments only, to avoid noise)
-    expiring_deps = (
-        db.query(Deployment)
+    # 2) License expiry (from License table, active/trial only)
+    active_licenses = (
+        db.query(License)
         .filter(
-            Deployment.license_expires_at <= warn_threshold,
-            Deployment.license_expires_at > now,
-            Deployment.status == "online",
+            License.expires_at <= warn_threshold,
+            License.expires_at > now,
+            License.status.in_(["active", "trial"]),
         )
         .all()
     )
-
-    for dep in expiring_deps:
-        # SQLite stores naive datetimes; make them comparable with timezone-aware now
-        expires_at = dep.license_expires_at
+    for lic in active_licenses:
+        expires_at = lic.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         days_left = (expires_at - now).days
@@ -470,16 +699,15 @@ def list_alerts(
             alert_type = "license_warn"
 
         alerts.append({
-            "deployment_id": dep.deployment_id,
-            "tenant_id": dep.tenant_id,
-            "product": dep.product,
+            "tenant_id": lic.tenant_id,
+            "product": lic.product,
             "alert_type": alert_type,
             "message": (
-                f"License for {dep.deployment_id} expires "
+                f"License for {lic.tenant_id} ({lic.product}) expires "
                 f"in {days_left} day(s)"
             ),
             "detail": {
-                "license_expires_at": dep.license_expires_at.isoformat(),
+                "expires_at": expires_at.isoformat(),
                 "days_left": days_left,
             },
         })
