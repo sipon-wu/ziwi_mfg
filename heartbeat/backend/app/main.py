@@ -400,7 +400,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ziwi Heartbeat Service",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -631,6 +631,177 @@ def get_license(
             detail="License not found",
         )
     return lic.to_dict()
+
+
+# ============================================================
+# Routes — Admin Web UI
+# ============================================================
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page(_api_key: str = Depends(verify_api_key)):
+    """License management dashboard (HTML). Requires X-Api-Key header for access."""
+    api_key = settings.api_key
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知微·License 管理</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f6fa;color:#333;padding:24px}}
+h1{{font-size:22px;margin-bottom:16px;color:#1a3a6b}}
+h2{{font-size:16px;margin:24px 0 12px;color:#333;border-bottom:2px solid #e8ecf1;padding-bottom:6px}}
+.stats{{display:flex;gap:16px;margin-bottom:20px}}
+.stat{{background:#fff;border-radius:8px;padding:14px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);flex:1}}
+.stat-label{{font-size:12px;color:#888}}
+.stat-value{{font-size:24px;font-weight:700;color:#1a3a6b}}
+.stat-value.warn{{color:#e6a23c}}
+.stat-value.danger{{color:#f56c6c}}
+.stat-value.ok{{color:#67c23a}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
+th,td{{padding:10px 14px;text-align:left;font-size:13px}}
+th{{background:#f0f2f5;font-weight:600;color:#555}}
+tr:not(:last-child) td{{border-bottom:1px solid #f0f2f5}}
+tr:hover td{{background:#f8f9fc}}
+.badge{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}}
+.badge-active{{background:#e1f3d8;color:#67c23a}}
+.badge-trial{{background:#faecd8;color:#e6a23c}}
+.badge-none{{background:#f0f2f5;color:#999}}
+.badge-online{{background:#e1f3d8;color:#67c23a}}
+.badge-offline{{background:#fde2e2;color:#f56c6c}}
+.btn{{display:inline-block;padding:6px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;color:#fff}}
+.btn-primary{{background:#1a3a6b}}
+.btn-primary:hover{{background:#14305a}}
+.btn-sm{{padding:4px 10px;font-size:11px}}
+.btn-warn{{background:#e6a23c}}
+.btn-warn:hover{{background:#cf8e32}}
+input,select{{padding:6px 10px;border:1px solid #dcdfe6;border-radius:6px;font-size:13px;outline:0}}
+input:focus,select:focus{{border-color:#1a3a6b;box-shadow:0 0 0 2px rgba(26,58,107,.15)}}
+.form-row{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px}}
+.form-row label{{font-size:12px;color:#666;display:block;margin-bottom:2px}}
+.form-group{{display:flex;flex-direction:column}}
+.alert-box{{background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);border-left:4px solid #e6a23c}}
+.alert-box.critical{{border-left-color:#f56c6c}}
+.alert-box.info{{border-left-color:#409eff}}
+.alert-title{{font-weight:600;font-size:13px}}
+.alert-detail{{font-size:12px;color:#888;margin-top:4px}}
+.toast{{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-size:13px;z-index:999;opacity:0;transition:opacity .3s}}
+.toast.show{{opacity:1}}
+.toast-success{{background:#67c23a}}
+.toast-error{{background:#f56c6c}}
+.empty{{padding:40px;text-align:center;color:#999;font-size:14px}}
+.tabs{{display:flex;gap:0;margin-bottom:16px}}
+.tab{{padding:8px 20px;cursor:pointer;border-bottom:2px solid transparent;font-size:14px;color:#666;transition:all .2s}}
+.tab.active{{border-bottom-color:#1a3a6b;color:#1a3a6b;font-weight:600}}
+.tab:hover{{color:#1a3a6b}}
+.tab-content{{display:none}}
+.tab-content.active{{display:block}}
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<h1>🔑 知微 · License 管理</h1>
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="licenses" onclick="switchTab('licenses')">License 列表</div>
+  <div class="tab" data-tab="deployments" onclick="switchTab('deployments')">部署状态</div>
+  <div class="tab" data-tab="alerts" onclick="switchTab('alerts')">告警</div>
+</div>
+
+<div id="tab-licenses" class="tab-content active">
+  <h2>新建 / 更新 License</h2>
+  <div class="form-row">
+    <div class="form-group"><label>Tenant ID</label><input id="f-tenant" placeholder="如 sch-0001" style="width:180px"></div>
+    <div class="form-group"><label>Product</label><select id="f-product"><option>school</option><option>mfg</option></select></div>
+    <div class="form-group"><label>状态</label><select id="f-status"><option value="active">active</option><option value="trial">trial</option><option value="none">none</option></select></div>
+    <div class="form-group"><label>到期时间</label><input id="f-expires" type="datetime-local" style="width:200px"></div>
+    <div><button class="btn btn-primary" onclick="saveLicense()">保存</button></div>
+  </div>
+  <table><thead><tr><th>Tenant</th><th>Product</th><th>状态</th><th>到期时间</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="license-tbody"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
+</div>
+
+<div id="tab-deployments" class="tab-content">
+  <table><thead><tr><th>Deployment ID</th><th>Tenant</th><th>Product</th><th>状态</th><th>版本</th><th>最后心跳</th><th>连续失败</th></tr></thead><tbody id="deploy-tbody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody></table>
+</div>
+
+<div id="tab-alerts" class="tab-content">
+  <div id="alert-list"><div class="empty">加载中...</div></div>
+</div>
+
+<script>
+const KEY='{api_key}';
+const HEADERS={{'X-Api-Key':KEY,'Content-Type':'application/json'}};
+function $(id){{return document.getElementById(id)}}
+function toast(msg,type){{var t=$('toast');t.textContent=msg;t.className='toast toast-'+type+' show';setTimeout(function(){{t.className='toast toast-'+type}},3000)}}
+function switchTab(name){{document.querySelectorAll('.tab').forEach(function(t){{t.classList.toggle('active',t.dataset.tab==name)}});document.querySelectorAll('.tab-content').forEach(function(t){{t.classList.toggle('active',t.id=='tab-'+name)}})}}
+function fmtDate(d){{if(!d)return'-';return new Date(d).toLocaleString('zh-CN',{{timeZone:'Asia/Shanghai'}})}}
+function badge(status){{var m={{'active':'badge-active','trial':'badge-trial','none':'badge-none','online':'badge-online','offline':'badge-offline'}};return'<span class="badge '+(m[status]||'badge-none')+'">'+status+'</span>'}}
+
+async function loadStats(){{
+  try{{
+    var l=await(await fetch('/api/v1/admin/licenses',{{headers:HEADERS}})).json();
+    var d=await(await fetch('/api/v1/status',{{headers:HEADERS}})).json();
+    var a=await(await fetch('/api/v1/alerts',{{headers:HEADERS}})).json();
+    var active=0,trial=0,online=0,offline=0;
+    l.forEach(function(x){{if(x.status=='active')active++;if(x.status=='trial')trial++}});
+    d.forEach(function(x){{if(x.status=='online')online++;if(x.status=='offline')offline++}});
+    $('stats').innerHTML='<div class="stat"><div class="stat-label">活跃 License</div><div class="stat-value ok">'+active+'</div></div><div class="stat"><div class="stat-label">试用 License</div><div class="stat-value warn">'+trial+'</div></div><div class="stat"><div class="stat-label">在线部署</div><div class="stat-value ok">'+online+'</div></div><div class="stat"><div class="stat-label">离线部署</div><div class="stat-value danger">'+offline+'</div></div><div class="stat"><div class="stat-label">告警</div><div class="stat-value '+(a.count>0?'warn':'ok')+'">'+a.count+'</div></div>';
+  }}catch(e){{}}
+}}
+
+async function loadLicenses(){{
+  try{{
+    var data=await(await fetch('/api/v1/admin/licenses',{{headers:HEADERS}})).json();
+    if(!data.length){{$('license-tbody').innerHTML='<tr><td colspan="6" class="empty">暂无 License 记录</td></tr>';return}}
+    $('license-tbody').innerHTML=data.map(function(x){{return'<tr><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+fmtDate(x.expires_at)+'</td><td>'+fmtDate(x.updated_at)+'</td><td><button class="btn btn-primary btn-sm" onclick="editLicense(\\''+x.tenant_id+'\\',\\''+x.product+'\\',\\''+x.status+'\\',\\''+(x.expires_at||'')+'\\')">编辑</button></td></tr>'}}).join('');
+  }}catch(e){{$('license-tbody').innerHTML='<tr><td colspan="6" class="empty">加载失败: '+e.message+'</td></tr>'}}
+}}
+
+async function loadDeployments(){{
+  try{{
+    var data=await(await fetch('/api/v1/status',{{headers:HEADERS}})).json();
+    if(!data.length){{$('deploy-tbody').innerHTML='<tr><td colspan="7" class="empty">暂无部署记录</td></tr>';return}}
+    $('deploy-tbody').innerHTML=data.map(function(x){{return'<tr><td>'+x.deployment_id+'</td><td>'+x.tenant_id+'</td><td>'+x.product+'</td><td>'+badge(x.status)+'</td><td>'+x.version+'</td><td>'+fmtDate(x.last_heartbeat_at)+'</td><td>'+x.consecutive_misses+'</td></tr>'}}).join('');
+  }}catch(e){{$('deploy-tbody').innerHTML='<tr><td colspan="7" class="empty">加载失败: '+e.message+'</td></tr>'}}
+}}
+
+async function loadAlerts(){{
+  try{{
+    var data=await(await fetch('/api/v1/alerts',{{headers:HEADERS}})).json();
+    if(!data.alerts.length){{$('alert-list').innerHTML='<div class="empty">🎉 无告警</div>';return}}
+    $('alert-list').innerHTML=data.alerts.map(function(a){{var cls=a.alert_type=='offline'?'critical':a.alert_type=='license_critical'?'critical':a.alert_type=='license_warn'?'warn':'info';return'<div class="alert-box '+cls+'"><div class="alert-title">'+a.alert_type+' · '+a.message+'</div><div class="alert-detail">'+(a.detail?JSON.stringify(a.detail):'')+'</div></div>'}}).join('');
+  }}catch(e){{$('alert-list').innerHTML='<div class="empty">加载失败: '+e.message+'</div>'}}
+}}
+
+function editLicense(tid,prod,status,expires){{
+  $('f-tenant').value=tid;$('f-product').value=prod;$('f-status').value=status;
+  if(expires){{var d=new Date(expires);$('f-expires').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}}else{{$('f-expires').value=''}}
+  window.scrollTo({{top:0,behavior:'smooth'}})
+}}
+
+async function saveLicense(){{
+  var tid=$('f-tenant').value.trim(),status=$('f-status').value,expires=$('f-expires').value,prod=$('f-product').value;
+  if(!tid){{toast('请输入 Tenant ID','error');return}}
+  var body={{tenant_id:tid,product:prod,status:status}};
+  if(expires)body.expires_at=new Date(expires).toISOString();
+  try{{
+    var r=await fetch('/api/v1/admin/licenses',{{method:'POST',headers:HEADERS,body:JSON.stringify(body)}});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('License '+tid+' 已更新为 '+status,'success');
+    loadLicenses();loadStats()
+  }}catch(e){{toast('保存失败: '+e.message,'error')}}
+}}
+
+loadStats();loadLicenses();loadDeployments();loadAlerts();
+</script>
+</body>
+</html>"""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html, status_code=200)
 
 
 # ============================================================
