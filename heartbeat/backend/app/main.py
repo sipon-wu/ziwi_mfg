@@ -653,47 +653,37 @@ def admin_page(key: Optional[str] = None):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>知微 · 运营管理平台</title>
+<title>知微云 · 管理平台</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;min-height:100vh;background:linear-gradient(135deg,#0a1628 0%,#132347 50%,#1a3a6b 100%);display:flex;align-items:center;justify-content:center;padding:24px}
-.login-wrap{width:100%;max-width:420px}
-.brand{text-align:center;margin-bottom:40px}
-.brand .logo{width:48px;height:48px;background:rgba(255,255,255,.12);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:22px;color:#fff;margin-bottom:12px}
-.brand h1{color:#fff;font-size:20px;font-weight:600;letter-spacing:1px}
-.brand p{color:rgba(255,255,255,.5);font-size:13px;margin-top:4px}
-.card{background:#fff;border-radius:16px;padding:36px 32px 32px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
-.card h2{font-size:16px;color:#1a1a2e;margin-bottom:24px;font-weight:600}
-.input-group{margin-bottom:18px}
-.input-group label{display:block;font-size:12px;color:#888;margin-bottom:6px;font-weight:500}
-.input-group input{width:100%;padding:11px 14px;border:1.5px solid #e8ecf1;border-radius:10px;font-size:14px;color:#333;outline:none;transition:all .2s;background:#f8f9fc}
+body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;min-height:100vh;background:linear-gradient(135deg,#eff6ff,#e0e7ff);display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:100%;max-width:400px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.06);padding:40px 36px 36px}
+.brand{text-align:center;margin-bottom:32px}
+.brand h1{font-size:22px;font-weight:700;color:#1a1a2e;letter-spacing:.5px}
+.brand p{font-size:13px;color:#999;margin-top:4px}
+.input-group{margin-bottom:20px}
+.input-group label{display:block;font-size:13px;font-weight:500;color:#555;margin-bottom:6px}
+.input-group input{width:100%;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;font-size:14px;color:#333;outline:none;transition:all .2s;background:#fff}
 .input-group input::placeholder{color:#bbb}
-.input-group input:focus{border-color:#1a3a6b;box-shadow:0 0 0 3px rgba(26,58,107,.1);background:#fff}
-.submit-btn{width:100%;padding:12px;background:linear-gradient(135deg,#1a3a6b,#234a8a);border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:4px}
-.submit-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(26,58,107,.3)}
-.submit-btn:active{transform:translateY(0)}
-.footer{text-align:center;margin-top:24px;color:rgba(255,255,255,.3);font-size:12px}
+.input-group input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.submit-btn{width:100%;padding:11px;background:#2563eb;border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:500;cursor:pointer;transition:all .15s}
+.submit-btn:hover{background:#1d4ed8}
+.submit-btn:active{transform:scale(.98)}
 </style>
 </head>
 <body>
-<div class="login-wrap">
+<div class="card">
   <div class="brand">
-    <div class="logo">知</div>
-    <h1>知微运营管理平台</h1>
-    <p>License · 部署 · 告警一站式管理</p>
+    <h1>知微云</h1>
+    <p>管理平台</p>
   </div>
-  <div class="card">
-    <h2>管理员登录</h2>
-    <form onsubmit="event.preventDefault();var k=this.querySelector('input').value;if(k)location.href='/admin?key='+encodeURIComponent(k)">
-      <div class="input-group">
-        <label>API Key</label>
-        <input type="password" placeholder="请输入 API Key" autofocus>
-      </div>
-      <button class="submit-btn" type="submit">登 录</button>
-    </form>
-  </div>
-  <div class="footer">© 2026 知微 · 内部运营系统</div>
+  <form onsubmit="event.preventDefault();var k=this.querySelector('input').value;if(k)location.href='/admin?key='+encodeURIComponent(k)">
+    <div class="input-group">
+      <label>管理密码</label>
+      <input type="password" placeholder="请输入密码" autofocus>
+    </div>
+    <button class="submit-btn" type="submit">登录</button>
+  </form>
 </div>
 </body>
 </html>"""
@@ -771,11 +761,11 @@ tr:hover td{background:#f8f9fc}
 <div class="topbar">
   <div class="topbar-left">
     <div class="topbar-logo">知</div>
-    <span class="topbar-title">运营管理平台</span>
-    <span class="topbar-sub">License · 部署 · 告警</span>
+    <span class="topbar-title">知微云</span>
+    <span class="topbar-sub">管理平台</span>
   </div>
   <div class="topbar-right">
-    <span style="font-size:12px;color:#999">API Key 已认证</span>
+    <span style="font-size:12px;color:#999">管理会话已认证</span>
     <a href="/admin" class="logout-link">重新登录</a>
   </div>
 </div>
