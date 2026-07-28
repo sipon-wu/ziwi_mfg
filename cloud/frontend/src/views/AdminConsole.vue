@@ -152,12 +152,13 @@ import Settings from "./Settings.vue";
 const router = useRouter();
 const auth = useAuthStore();
 
-const tabs = [
+type TabKey = "dashboard" | "users" | "settings";
+const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: "dashboard", label: "总览", icon: "📊" },
   { key: "users", label: "账号", icon: "👥" },
   { key: "settings", label: "设置", icon: "⚙️" },
 ];
-const tab = ref<"dashboard" | "users" | "settings">("dashboard");
+const tab = ref<TabKey>("dashboard");
 
 const users = ref<any[]>([]);
 const form = ref({ email: "", display_name: "", password: "", role: "operator" });
