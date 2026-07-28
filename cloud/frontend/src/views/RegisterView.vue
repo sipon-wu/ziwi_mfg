@@ -85,7 +85,7 @@ async function handleRegister() {
     success.value = "注册成功！即将跳转到登录页...";
     setTimeout(() => router.push("/login"), 1500);
   } catch (e: any) {
-    error.value = e?.response?.data?.detail?.message || "注册失败，请重试";
+    error.value = e.userMessage || "注册失败，请重试";
   } finally {
     loading.value = false;
   }

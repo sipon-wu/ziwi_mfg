@@ -79,17 +79,18 @@ async def create_user(
     return PlatformUserResponse(**user.to_dict())
 
 
-@router.get("/users", response_model=list[PlatformUserResponse])
+@router.get("/users")
 async def list_users(
     role: Optional[str] = None,
+    active_only: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_platform_user),
 ):
-    """列出平台账号（仅超级管理员和运营可查看）"""
+    """列出平台账号（仅超级管理员和运营可查看），统一包裹 {data:[...]}；默认含停用账号以便恢复"""
     if current_user.role not in [PlatformRole.SUPER_ADMIN.value, PlatformRole.OPERATOR.value]:
         raise HTTPException(status_code=403, detail="无权查看")
-    users = await list_platform_users(db, role=role)
-    return [PlatformUserResponse(**u.to_dict()) for u in users]
+    users = await list_platform_users(db, role=role, active_only=active_only)
+    return {"data": [PlatformUserResponse(**u.to_dict()) for u in users]}
 
 
 @router.get("/users/{user_id}", response_model=PlatformUserResponse)

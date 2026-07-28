@@ -65,6 +65,7 @@
               <th class="py-2">显示名</th>
               <th class="py-2">角色</th>
               <th class="py-2">状态</th>
+              <th class="py-2">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -72,10 +73,20 @@
               <td class="py-2">{{ u.email }}</td>
               <td class="py-2">{{ u.display_name }}</td>
               <td class="py-2">
-                <span class="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{{ u.role }}</span>
+                <span class="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{{ ROLE_LABELS[u.role] || u.role }}</span>
               </td>
               <td class="py-2">
                 <span :class="u.is_active ? 'text-green-600' : 'text-gray-400'">{{ u.is_active ? '启用' : '停用' }}</span>
+              </td>
+              <td class="py-2">
+                <button
+                  v-if="auth.isSuperAdmin()"
+                  @click="toggleActive(u)"
+                  :disabled="togglingId === u.id"
+                  class="text-sm text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  {{ u.is_active ? '停用' : '启用' }}
+                </button>
               </td>
             </tr>
             <tr v-if="!users.length">
@@ -92,7 +103,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
-import { cloudApi } from "../api/cloud-auth";
+import { cloudApi, extractError } from "../api/cloud-auth";
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -102,13 +113,23 @@ const form = ref({ email: "", display_name: "", password: "", role: "operator" }
 const formError = ref("");
 const formOk = ref("");
 const creating = ref(false);
+const togglingId = ref("");
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "超级管理员",
+  operator: "运营",
+  sales: "销售",
+  finance: "财务",
+  devops: "运维",
+  implementation: "实施",
+};
 
 async function loadUsers() {
   try {
     const res = await cloudApi.listPlatformUsers();
-    users.value = res.data.data || [];
+    users.value = (res.data?.data ?? res.data) || [];
   } catch (e: any) {
-    formError.value = e?.response?.data?.detail?.message || "加载账号列表失败";
+    formError.value = extractError(e);
   }
 }
 
@@ -122,9 +143,21 @@ async function createUser() {
     form.value = { email: "", display_name: "", password: "", role: "operator" };
     await loadUsers();
   } catch (e: any) {
-    formError.value = e?.response?.data?.detail?.message || "创建失败";
+    formError.value = extractError(e);
   } finally {
     creating.value = false;
+  }
+}
+
+async function toggleActive(u: any) {
+  togglingId.value = u.id;
+  try {
+    await cloudApi.updatePlatformUser(u.id, { is_active: !u.is_active });
+    await loadUsers();
+  } catch (e: any) {
+    formError.value = extractError(e);
+  } finally {
+    togglingId.value = "";
   }
 }
 

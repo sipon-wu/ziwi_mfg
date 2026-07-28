@@ -71,7 +71,7 @@ async function handleLogin() {
       router.push("/tenant");
     }
   } catch (e: any) {
-    error.value = e?.response?.data?.detail?.message || "登录失败，请检查邮箱和密码";
+    error.value = e.userMessage || "登录失败，请检查邮箱和密码";
   } finally {
     loading.value = false;
   }

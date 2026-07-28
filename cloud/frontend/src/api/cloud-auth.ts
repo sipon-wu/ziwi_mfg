@@ -15,6 +15,33 @@ http.interceptors.request.use((config) => {
   return config;
 });
 
+// 统一错误解析：覆盖 FastAPI 全部 4xx 形态（字符串 / {message} / 422 数组）
+export function extractError(e: any): string {
+  const detail = e?.response?.data?.detail;
+  if (!detail) return e?.message || "操作失败";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d: any) => {
+        const field = Array.isArray(d?.loc) ? d.loc.slice(1).join(".") : "";
+        return field ? `${field}: ${d.msg}` : d.msg;
+      })
+      .filter(Boolean);
+    return msgs.length ? msgs.join("；") : "请求参数错误";
+  }
+  if (detail && typeof detail === "object" && detail.message) return detail.message;
+  return "操作失败";
+}
+
+// 响应拦截：把后端 4xx 规范化为 e.userMessage，所有页面统一消费
+http.interceptors.response.use(
+  (r) => r,
+  (error) => {
+    error.userMessage = extractError(error);
+    return Promise.reject(error);
+  }
+);
+
 export const cloudApi = {
   // 统一登录：自动识别平台 / 租户账号
   unifiedLogin(email: string, password: string) {
@@ -56,5 +83,9 @@ export const cloudApi = {
     phone?: string;
   }) {
     return http.post("/platform/users", payload);
+  },
+
+  updatePlatformUser(id: string, payload: { is_active?: boolean; display_name?: string; role?: string }) {
+    return http.patch(`/platform/users/${id}`, payload);
   },
 };
