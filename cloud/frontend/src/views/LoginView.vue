@@ -64,7 +64,12 @@ async function handleLogin() {
   error.value = "";
   try {
     await store.login(email.value, password.value);
-    router.push("/");
+    // 自动识别账号类型分流：平台管理 → 控制台；租户管理 → 租户自助
+    if (store.accountType === "platform") {
+      router.push("/console");
+    } else {
+      router.push("/tenant");
+    }
   } catch (e: any) {
     error.value = e?.response?.data?.detail?.message || "登录失败，请检查邮箱和密码";
   } finally {

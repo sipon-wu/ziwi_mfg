@@ -14,7 +14,13 @@ class JWTService:
         self.refresh_expire = settings.jwt_refresh_expire_days
 
     def create_access_token(
-        self, sub: str, email: str, tenant_id: str | None = None, products: list | None = None
+        self,
+        sub: str,
+        email: str,
+        tenant_id: str | None = None,
+        products: list | None = None,
+        account_type: str = "tenant",
+        roles: list | None = None,
     ) -> str:
         current_key = self.key_manager.get_current_key()
         now = datetime.now(timezone.utc)
@@ -23,6 +29,8 @@ class JWTService:
             "email": email,
             "tenant_id": tenant_id,
             "products": products or [],
+            "account_type": account_type,
+            "roles": roles or [],
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(minutes=self.access_expire)).timestamp()),
         }

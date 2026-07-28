@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.jwt_service import JWTService
 from app.services.auth_service import AuthService
+from app.services.platform_service import authenticate_platform_user
 from app.schemas.user import UserRegisterRequest, UserResponse
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
 from app.config import settings
@@ -47,8 +48,10 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail={"code": "AUTH_FAILED", "message": str(e)})
 
     jwt_svc = _get_jwt_service()
+    tenant_roles = ["tenant_admin"] if user.is_superuser else []
     access_token = jwt_svc.create_access_token(
-        sub=str(user.id), email=user.email, tenant_id=user.tenant_id, products=user.products
+        sub=str(user.id), email=user.email, tenant_id=user.tenant_id, products=user.products,
+        account_type="tenant", roles=tenant_roles,
     )
 
     # ── refresh token rotation: create tracking record ──
@@ -175,11 +178,14 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
         })
 
     # ── 6. issue new token pair ──
+    tenant_roles = ["tenant_admin"] if user.is_superuser else []
     new_access_token = jwt_svc.create_access_token(
         sub=str(user.id),
         email=user.email,
         tenant_id=user.tenant_id,
         products=user.products,
+        account_type="tenant",
+        roles=tenant_roles,
     )
     new_refresh_token = jwt_svc.create_refresh_token(
         sub=str(user.id), jti=new_jti, family_id=family_id,
@@ -191,6 +197,58 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
             refresh_token=new_refresh_token,
             expires_in=settings.jwt_access_expire_minutes * 60,
         ).model_dump()
+    }
+
+
+@router.post("/unified-login")
+async def unified_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """统一登录：自动识别平台 / 租户账号，返回对应 JWT（含 account_type / roles）。"""
+    jwt_svc = _get_jwt_service()
+
+    # 1) 先试平台账号（运营 / 销售 / 运维 / 财务 / 实施）
+    platform_user = await authenticate_platform_user(db, req.email, req.password)
+    if platform_user:
+        access_token = jwt_svc.create_access_token(
+            sub=str(platform_user.id),
+            email=platform_user.email,
+            tenant_id=None,
+            products=[f"platform:{platform_user.role}"],
+            account_type="platform",
+            roles=[platform_user.role],
+        )
+        return {
+            "data": TokenResponse(
+                access_token=access_token,
+                refresh_token="",
+                expires_in=settings.jwt_access_expire_minutes * 60,
+            ).model_dump(),
+            "account_type": "platform",
+        }
+
+    # 2) 再试租户账号（tenant owner / 财务等管理角色）
+    try:
+        user = await AuthService(db).authenticate(req.email, req.password)
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "AUTH_FAILED", "message": "邮箱或密码错误"},
+        )
+    tenant_roles = ["tenant_admin"] if user.is_superuser else []
+    access_token = jwt_svc.create_access_token(
+        sub=str(user.id),
+        email=user.email,
+        tenant_id=user.tenant_id,
+        products=user.products,
+        account_type="tenant",
+        roles=tenant_roles,
+    )
+    return {
+        "data": TokenResponse(
+            access_token=access_token,
+            refresh_token="",
+            expires_in=settings.jwt_access_expire_minutes * 60,
+        ).model_dump(),
+        "account_type": "tenant",
     }
 
 
