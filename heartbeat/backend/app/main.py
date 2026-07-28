@@ -36,6 +36,7 @@ from .config import settings
 from .models import (
     AdminAudit,
     AdminUser,
+    Customer,
     ALL_PERMISSIONS,
     Base,
     Deployment,
@@ -334,6 +335,31 @@ def _get_customers_view(db: Session) -> list:
         if dep.last_heartbeat_at and (datetime.now(timezone.utc) - _aware(dep.last_heartbeat_at)).total_seconds() < settings.heartbeat_timeout_minutes * 60:
             c["online"] += 1
     return list(by_tenant.values())
+
+
+def _enrich_customer(db: Session, c: Customer) -> dict:
+    """Attach runtime-derived stats (licenses/deployments) to a Customer master row."""
+    d = c.to_dict()
+    lic = db.query(License).filter_by(tenant_id=c.tenant_id).all()
+    deps = db.query(Deployment).filter_by(tenant_id=c.tenant_id).all()
+    order = {"active": 3, "trial": 2, "none": 1, "expired": 0}
+    agg = "none"
+    for l in lic:
+        if order.get(l.status, 0) > order.get(agg, 0):
+            agg = l.status
+    expires = [l.expires_at for l in lic if l.expires_at]
+    min_exp = min(expires) if expires else None
+    hbs = [dp.last_heartbeat_at for dp in deps if dp.last_heartbeat_at]
+    last = max(hbs) if hbs else None
+    days_left = (min_exp - datetime.now(timezone.utc)).days if min_exp else None
+    d["derived"] = {
+        "products": [l.product for l in lic],
+        "license_status": agg,
+        "deployment_count": len(deps),
+        "last_heartbeat_at": last.isoformat() if last else None,
+        "days_left": days_left,
+    }
+    return d
 
 
 def check_deployments():
@@ -677,6 +703,132 @@ def admin_customers_page(request: Request):
     finally:
         db.close()
     return _render_admin_page(request, "customers.html", require=PERM_CUSTOMERS, customers=customers)
+
+
+class CustomerCreate(BaseModel):
+    tenant_id: str
+    name: str
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    contract_no: Optional[str] = None
+    contract_start: Optional[datetime] = None
+    contract_end: Optional[datetime] = None
+    region: Optional[str] = None
+    is_active: bool = True
+    notes: Optional[str] = None
+
+
+class CustomerUpdate(BaseModel):
+    """Update customer — all fields optional."""
+
+    name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    contract_no: Optional[str] = None
+    contract_start: Optional[datetime] = None
+    contract_end: Optional[datetime] = None
+    region: Optional[str] = None
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@app.get("/api/v1/admin/customers")
+def list_customers(
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_CUSTOMERS)),
+):
+    """List customer master records enriched with runtime-derived stats, plus
+    tenants seen via heartbeats/licenses but not yet filed as a customer."""
+    rows = db.query(Customer).order_by(Customer.name).all()
+    mapped = {r.tenant_id for r in rows}
+    result = [_enrich_customer(db, r) for r in rows]
+    tenant_set = {l.tenant_id for l in db.query(License.tenant_id).all()}
+    tenant_set |= {d.tenant_id for d in db.query(Deployment.tenant_id).all()}
+    unmapped = sorted(tenant_set - mapped)
+    return {"customers": result, "unmapped": unmapped}
+
+
+@app.post("/api/v1/admin/customers")
+def create_customer(
+    body: CustomerCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_CUSTOMERS)),
+):
+    if db.query(Customer).filter_by(tenant_id=body.tenant_id).first():
+        raise HTTPException(409, "该租户已建档")
+    c = Customer(
+        tenant_id=body.tenant_id,
+        name=body.name,
+        contact_name=body.contact_name,
+        contact_phone=body.contact_phone,
+        contact_email=body.contact_email,
+        contract_no=body.contract_no,
+        contract_start=body.contract_start,
+        contract_end=body.contract_end,
+        region=body.region,
+        is_active=body.is_active,
+        notes=body.notes,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    _record_audit(
+        db, _auth["username"], body.tenant_id, None, "customer.create",
+        None, c.name, ip=_client_ip(request),
+    )
+    return c.to_dict()
+
+
+@app.put("/api/v1/admin/customers/{cid}")
+def update_customer(
+    cid: int,
+    body: CustomerUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_CUSTOMERS)),
+):
+    c = db.get(Customer, cid)
+    if not c:
+        raise HTTPException(404, "Customer not found")
+    old_name = c.name
+    for f in (
+        "name", "contact_name", "contact_phone", "contact_email",
+        "contract_no", "contract_start", "contract_end", "region",
+        "is_active", "notes",
+    ):
+        val = getattr(body, f, None)
+        if val is not None:
+            setattr(c, f, val)
+    db.commit()
+    db.refresh(c)
+    _record_audit(
+        db, _auth["username"], c.tenant_id, None, "customer.update",
+        old_name, c.name, ip=_client_ip(request),
+    )
+    return c.to_dict()
+
+
+@app.delete("/api/v1/admin/customers/{cid}")
+def delete_customer(
+    cid: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_CUSTOMERS)),
+):
+    c = db.get(Customer, cid)
+    if not c:
+        raise HTTPException(404, "Customer not found")
+    name = c.name
+    db.delete(c)
+    db.commit()
+    _record_audit(
+        db, _auth["username"], c.tenant_id, None, "customer.delete",
+        name, None, ip=_client_ip(request),
+    )
+    return {"status": "ok"}
 
 
 @app.get("/admin/deployments", response_class=HTMLResponse)

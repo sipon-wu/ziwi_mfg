@@ -27,6 +27,11 @@ from sqlalchemy.orm import (
 )
 
 
+def _iso(dt):
+    """Serialize a datetime to ISO string, or None."""
+    return dt.isoformat() if dt else None
+
+
 # ============================================================
 # RBAC — Roles & Permissions
 # ============================================================
@@ -83,7 +88,7 @@ PERM_LABELS = {
     PERM_LICENSE_MANAGE: "管理授权",
     PERM_DEPLOYMENTS: "部署状态",
     PERM_ALERTS: "告警中心",
-    PERM_CUSTOMERS: "客户视图",
+    PERM_CUSTOMERS: "客户管理",
     PERM_AUDIT: "审计日志",
     PERM_USERS: "用户管理",
     PERM_SETTINGS: "系统设置",
@@ -123,7 +128,7 @@ def get_effective_permissions(user) -> list:
 NAV_ITEMS = [
     {"key": "dashboard", "label": "仪表盘", "icon": "grid", "perm": PERM_DASHBOARD, "path": "/admin"},
     {"key": "licenses", "label": "License 管理", "icon": "key", "perm": PERM_LICENSE_VIEW, "path": "/admin/licenses"},
-    {"key": "customers", "label": "客户视图", "icon": "users", "perm": PERM_CUSTOMERS, "path": "/admin/customers"},
+    {"key": "customers", "label": "客户管理", "icon": "users", "perm": PERM_CUSTOMERS, "path": "/admin/customers"},
     {"key": "deployments", "label": "部署状态", "icon": "server", "perm": PERM_DEPLOYMENTS, "path": "/admin/deployments"},
     {"key": "alerts", "label": "告警中心", "icon": "bell", "perm": PERM_ALERTS, "path": "/admin/alerts"},
     {"key": "audit", "label": "审计日志", "icon": "shield", "perm": PERM_AUDIT, "path": "/admin/audit"},
@@ -307,6 +312,57 @@ class License(Base):
             "heartbeats": self.heartbeats,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+        }
+
+
+class Customer(Base):
+    """Customer master data — independent of the license/deployment derived view.
+
+    Keyed by tenant_id (the join key to License/Deployment). Holds account and
+    contract info that is edited independently of runtime license status, so the
+    customer record survives even when no heartbeat/license exists yet.
+    """
+
+    __tablename__ = "customers"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_customer_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    contract_no: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    contract_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    contract_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "name": self.name,
+            "contact_name": self.contact_name,
+            "contact_phone": self.contact_phone,
+            "contact_email": self.contact_email,
+            "contract_no": self.contract_no,
+            "contract_start": _iso(self.contract_start),
+            "contract_end": _iso(self.contract_end),
+            "region": self.region,
+            "is_active": self.is_active,
+            "notes": self.notes,
+            "created_at": _iso(self.created_at),
+            "updated_at": _iso(self.updated_at),
         }
 
 

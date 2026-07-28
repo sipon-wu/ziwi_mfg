@@ -1,62 +1,176 @@
 {% extends "base.html" %}
-{% block page_title %}客户视图{% endblock %}
+{% block title %}客户管理{% endblock %}
+{% block page_title %}客户管理{% endblock %}
 {% block content %}
-<div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <p class="text-sm text-slate-500">以租户为维度的客户全景视图，聚合授权状态与部署健康度。</p>
-    <button onclick="load()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition">↻ 刷新</button>
+<div class="max-w-6xl mx-auto">
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h2 class="text-lg font-semibold text-slate-800">客户主数据</h2>
+      <p class="text-slate-500 text-sm mt-0.5">独立建档，关联授权与部署心跳；未建档租户可一键建档。</p>
+    </div>
+    <button class="px-3.5 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium shadow-sm" onclick="openNew()">＋ 新建客户</button>
   </div>
-  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+
+  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
     <table class="w-full text-sm">
-      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+      <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
         <tr>
-          <th class="px-5 py-3 text-left font-medium">租户 ID</th>
-          <th class="px-5 py-3 text-left font-medium">产品</th>
-          <th class="px-5 py-3 text-left font-medium">授权状态</th>
-          <th class="px-5 py-3 text-left font-medium">剩余天数</th>
-          <th class="px-5 py-3 text-left font-medium">部署数</th>
-          <th class="px-5 py-3 text-left font-medium">版本</th>
-          <th class="px-5 py-3 text-left font-medium">最近心跳</th>
+          <th class="px-3 py-2.5 text-left font-medium">租户ID</th>
+          <th class="px-3 py-2.5 text-left font-medium">客户名称</th>
+          <th class="px-3 py-2.5 text-left font-medium">联系人</th>
+          <th class="px-3 py-2.5 text-left font-medium">合同号</th>
+          <th class="px-3 py-2.5 text-left font-medium">区域</th>
+          <th class="px-3 py-2.5 text-left font-medium">授权状态</th>
+          <th class="px-3 py-2.5 text-left font-medium">部署数</th>
+          <th class="px-3 py-2.5 text-left font-medium">最近心跳</th>
+          <th class="px-3 py-2.5 text-left font-medium">启用</th>
+          <th class="px-3 py-2.5 text-right font-medium">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody" class="divide-y divide-slate-50"></tbody>
+      <tbody id="custTable" class="divide-y divide-slate-100"></tbody>
     </table>
-    <div id="empty" class="px-5 py-10 text-center text-sm text-slate-400 hidden">暂无客户数据</div>
+    <div id="emptyHint" class="p-10 text-center text-slate-400 text-sm hidden">暂无客户档案，点击右上角「新建客户」开始建档。</div>
+  </div>
+
+  <div id="unmappedBox" class="mt-8 hidden">
+    <h3 class="text-sm font-medium text-slate-600 mb-2">未建档租户 <span class="text-slate-400 font-normal">（检测到心跳/授权，但无客户档案）</span></h3>
+    <div id="unmappedList" class="flex flex-wrap gap-2"></div>
   </div>
 </div>
 
+<div id="modal-root"></div>
+{% endblock %}
+
+{% block scripts %}
 <script>
+let editingId = null;
+
 async function load() {
-  let licenses=[], deployments=[];
-  try { licenses = await apiFetch('/api/v1/admin/licenses'); } catch(e){ return; }
-  try { deployments = await apiFetch('/api/v1/status'); } catch(e){ deployments=[]; }
-  const depByTenant = {};
-  deployments.forEach(d => { (depByTenant[d.tenant_id] ||= []).push(d); });
-  const rows = licenses.map(l => {
-    const deps = depByTenant[l.tenant_id] || [];
-    const hbs = deps.map(d=>d.last_heartbeat_at).filter(Boolean);
-    const last = hbs.length ? hbs.reduce((a,b)=> a>b?a:b) : null;
-    return {
-      tenant_id: l.tenant_id, product: l.product, status: l.status,
-      days_left: daysLeft(l.expires_at),
-      deployment_count: deps.length,
-      versions: [...new Set(deps.map(d=>d.version).filter(Boolean))].join(', '),
-      last_heartbeat_at: last,
-    };
+  const r = await apiFetch("/api/v1/admin/customers");
+  const data = await r.json();
+  const tbody = document.getElementById("custTable");
+  tbody.innerHTML = "";
+  (data.customers || []).forEach(c => {
+    const d = c.derived || {};
+    const tr = document.createElement("tr");
+    tr.className = "hover:bg-slate-50";
+    tr.innerHTML = `
+      <td class="px-3 py-2.5 font-mono text-xs text-slate-500">${esc(c.tenant_id)}</td>
+      <td class="px-3 py-2.5 font-medium text-slate-800">${esc(c.name)}</td>
+      <td class="px-3 py-2.5 text-slate-600">${esc(c.contact_name || "—")}</td>
+      <td class="px-3 py-2.5 font-mono text-xs text-slate-500">${esc(c.contract_no || "—")}</td>
+      <td class="px-3 py-2.5 text-slate-600">${esc(c.region || "—")}</td>
+      <td class="px-3 py-2.5">${d.license_status ? statusBadge(d.license_status) : "—"}</td>
+      <td class="px-3 py-2.5 text-slate-600">${d.deployment_count ?? 0}</td>
+      <td class="px-3 py-2.5 text-xs text-slate-500">${d.last_heartbeat_at ? fmtDate(d.last_heartbeat_at) : "—"}${d.days_left != null ? ` <span class="text-slate-400">(${d.days_left}天)</span>` : ""}</td>
+      <td class="px-3 py-2.5">${c.is_active ? '<span class="text-emerald-600">是</span>' : '<span class="text-slate-400">否</span>'}</td>
+      <td class="px-3 py-2.5 text-right whitespace-nowrap">
+        <button class="text-brand-600 hover:underline mr-3" onclick="openEdit(${c.id})">编辑</button>
+        <button class="text-red-500 hover:underline" onclick="removeCust(${c.id}, '${esc(c.name)}')">删除</button>
+      </td>`;
+    tbody.appendChild(tr);
   });
-  const tbody = document.getElementById('tbody');
-  document.getElementById('empty').classList.toggle('hidden', rows.length>0);
-  tbody.innerHTML = rows.map(r => `
-    <tr class="hover:bg-slate-50">
-      <td class="px-5 py-3 font-medium text-slate-800">${r.tenant_id}</td>
-      <td class="px-5 py-3 text-slate-600">${r.product}</td>
-      <td class="px-5 py-3">${statusBadge(r.status)}</td>
-      <td class="px-5 py-3">${r.days_left===null?'—':(r.days_left<0?'<span class=text-red-600>已逾期</span>':r.days_left+' 天')}</td>
-      <td class="px-5 py-3 text-slate-600">${r.deployment_count}</td>
-      <td class="px-5 py-3 text-slate-500">${r.versions||'—'}</td>
-      <td class="px-5 py-3 text-slate-500">${fmtDate(r.last_heartbeat_at)}</td>
-    </tr>`).join('');
+  document.getElementById("emptyHint").classList.toggle("hidden", (data.customers || []).length > 0);
+
+  const um = data.unmapped || [];
+  const box = document.getElementById("unmappedBox");
+  const list = document.getElementById("unmappedList");
+  list.innerHTML = "";
+  box.classList.toggle("hidden", um.length === 0);
+  um.forEach(t => {
+    const b = document.createElement("button");
+    b.className = "px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-mono text-slate-600";
+    b.textContent = t;
+    b.onclick = () => openNew(t);
+    list.appendChild(b);
+  });
 }
+
+function formHtml(c, lockedTenant) {
+  c = c || {};
+  const ro = lockedTenant ? "readonly" : "";
+  return `
+    <div class="grid grid-cols-2 gap-3">
+      <label class="text-xs text-slate-500 block">租户ID *<input id="f_tenant" ${ro} value="${esc(c.tenant_id || lockedTenant || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">客户名称 *<input id="f_name" value="${esc(c.name || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">联系人<input id="f_contact_name" value="${esc(c.contact_name || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">联系电话<input id="f_contact_phone" value="${esc(c.contact_phone || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">联系邮箱<input id="f_contact_email" value="${esc(c.contact_email || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">合同号<input id="f_contract_no" value="${esc(c.contract_no || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">合同开始<input id="f_contract_start" type="date" value="${esc((c.contract_start || "").slice(0, 10))}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">合同结束<input id="f_contract_end" type="date" value="${esc((c.contract_end || "").slice(0, 10))}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 block">区域<input id="f_region" value="${esc(c.region || "")}" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800"></label>
+      <label class="text-xs text-slate-500 flex items-center gap-2 mt-2"><input id="f_is_active" type="checkbox" ${c.is_active === false ? "" : "checked"}> 启用</label>
+    </div>
+    <label class="text-xs text-slate-500 block mt-3">备注<textarea id="f_notes" class="mt-1 w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800" rows="2">${esc(c.notes || "")}</textarea></label>`;
+}
+
+function modalFooter() {
+  return '<button class="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm" onclick="closeModal()">取消</button>'
+       + '<button class="px-3.5 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onclick="save()">保存</button>';
+}
+
+function openNew(presetTenant) {
+  editingId = null;
+  openModal("新建客户", formHtml(null, presetTenant), modalFooter());
+}
+
+async function openEdit(id) {
+  editingId = id;
+  const r = await apiFetch("/api/v1/admin/customers");
+  const data = await r.json();
+  const c = (data.customers || []).find(x => x.id === id);
+  if (!c) return showToast("未找到客户", "error");
+  openModal("编辑客户", formHtml(c, true), modalFooter());
+}
+
+function val(id) { const v = document.getElementById(id).value.trim(); return v === "" ? null : v; }
+function dateVal(id) { const v = document.getElementById(id).value; return v ? v + "T00:00:00" : null; }
+
+async function save() {
+  const payload = {
+    tenant_id: document.getElementById("f_tenant").value.trim(),
+    name: document.getElementById("f_name").value.trim(),
+    contact_name: val("f_contact_name"),
+    contact_phone: val("f_contact_phone"),
+    contact_email: val("f_contact_email"),
+    contract_no: val("f_contract_no"),
+    contract_start: dateVal("f_contract_start"),
+    contract_end: dateVal("f_contract_end"),
+    region: val("f_region"),
+    is_active: document.getElementById("f_is_active").checked,
+    notes: val("f_notes"),
+  };
+  if (!payload.tenant_id || !payload.name) return showToast("租户ID 与客户名称为必填", "error");
+  const url = editingId ? `/api/v1/admin/customers/${editingId}` : "/api/v1/admin/customers";
+  const method = editingId ? "PUT" : "POST";
+  try {
+    const r = await apiFetch(url, { method, body: JSON.stringify(payload) });
+    await r.json();
+  } catch (e) {
+    return showToast(e.message || "保存失败", "error");
+  }
+  closeModal();
+  showToast("已保存", "success");
+  load();
+}
+
+async function removeCust(id, name) {
+  if (!confirm(`确认删除客户「${name}」？此操作不可恢复。`)) return;
+  try {
+    const r = await apiFetch(`/api/v1/admin/customers/${id}`, { method: "DELETE" });
+    await r.json();
+  } catch (e) {
+    return showToast(e.message || "删除失败", "error");
+  }
+  showToast("已删除", "success");
+  load();
+}
+
+function esc(s) {
+  return (s == null ? "" : String(s)).replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
 load();
 </script>
 {% endblock %}

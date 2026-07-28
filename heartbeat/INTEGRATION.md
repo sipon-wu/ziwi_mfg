@@ -102,7 +102,7 @@
 
 ### RBAC 模型（权威）
 - **角色**：`super_admin`(超级管理员) / `ops`(运营) / `sales`(销售) / `finance`(财务) / `support`(实施, 占位)
-- **权限点**：`dashboard, license_view, license_manage, deployments, alerts, customers, audit, users, settings`
+- **权限点**：`dashboard, license_view, license_manage, deployments, alerts, customers(客户管理：含主数据 CRUD), audit, users, settings`
 - **有效权限** = 角色权限并集 + 直接额外授权
 - **安全**：末位超管锁（409）/ 越权防护（403）/ 暴力破解锁定 / 签名无状态会话 / 双审计链（`license_audit` + `admin_audit`）
 
@@ -133,7 +133,6 @@
 - 机器端 License 激活/评估/刷新：`/api/v1/license/activate`、`/evaluate`、`/info`、`/refresh`
 - 机器端系统设置：`GET/POST /api/v1/settings`
 - 管理员端 角色/设置 配置 API：`/api/v1/admin/roles`、`/api/v1/admin/settings`
-- 客户独立数据模型与 CRUD：`/api/v1/admin/customers`
 - 指标 / 导出（CSV）：`/api/v1/admin/metrics`、`/api/v1/admin/exports/licenses`
 
 ---

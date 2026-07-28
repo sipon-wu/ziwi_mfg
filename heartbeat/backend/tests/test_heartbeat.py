@@ -190,6 +190,56 @@ def test_heartbeat_same_tenant_same_product_idempotent(client):
         db.close()
 
 
+def test_customer_master_crud(client):
+    # C 验证：客户从派生视图升级为独立主数据，支持 CRUD。
+    client.post(
+        "/admin/login",
+        data={
+            "username": settings.admin_username,
+            "password": settings.admin_password,
+        },
+    )
+    # 清理可能残留的同名租户，保证幂等
+    lst = client.get("/api/v1/admin/customers").json()
+    for c in lst.get("customers", []):
+        if c["tenant_id"] == "cust-A":
+            client.delete(f"/api/v1/admin/customers/{c['id']}")
+
+    # 创建
+    r = client.post(
+        "/api/v1/admin/customers",
+        json={"tenant_id": "cust-A", "name": "客户A", "region": "华东", "is_active": True},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tenant_id"] == "cust-A" and body["name"] == "客户A"
+    cid = body["id"]
+
+    # 同租户重复建档 -> 409
+    r2 = client.post("/api/v1/admin/customers", json={"tenant_id": "cust-A", "name": "重复"})
+    assert r2.status_code == 409
+
+    # 列表含该客户，且 derived 字段存在（即便无 license/deployment）
+    lst = client.get("/api/v1/admin/customers").json()
+    assert any(c["tenant_id"] == "cust-A" for c in lst["customers"])
+    mine = next(c for c in lst["customers"] if c["tenant_id"] == "cust-A")
+    assert "derived" in mine and mine["derived"]["deployment_count"] == 0
+
+    # 更新
+    r3 = client.put(
+        f"/api/v1/admin/customers/{cid}",
+        json={"name": "客户A改", "contact_name": "张三"},
+    )
+    assert r3.status_code == 200
+    assert r3.json()["name"] == "客户A改" and r3.json()["contact_name"] == "张三"
+
+    # 删除
+    r4 = client.delete(f"/api/v1/admin/customers/{cid}")
+    assert r4.status_code == 200
+    lst2 = client.get("/api/v1/admin/customers").json()
+    assert not any(c["tenant_id"] == "cust-A" for c in lst2["customers"])
+
+
 def test_license_db_composite_unique_enforced():
     # DB 级回归：复合唯一 (tenant_id, product) 必须由数据库强制，
     # 而非仅依赖应用层去重（否则旧单列唯一缺陷会复现）。
