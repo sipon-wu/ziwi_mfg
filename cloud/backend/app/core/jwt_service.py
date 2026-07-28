@@ -22,9 +22,12 @@ class JWTService:
         account_type: str = "tenant",
         roles: list | None = None,
         env: str = "prod",
+        expires_minutes: int | None = None,
+        extra_claims: dict | None = None,
     ) -> str:
         current_key = self.key_manager.get_current_key()
         now = datetime.now(timezone.utc)
+        expire = expires_minutes if expires_minutes is not None else self.access_expire
         payload = {
             "sub": sub,
             "email": email,
@@ -34,8 +37,10 @@ class JWTService:
             "roles": roles or [],
             "env": env,
             "iat": int(now.timestamp()),
-            "exp": int((now + timedelta(minutes=self.access_expire)).timestamp()),
+            "exp": int((now + timedelta(minutes=expire)).timestamp()),
         }
+        if extra_claims:
+            payload.update(extra_claims)
         headers = {"kid": current_key.kid}
         return jwt.encode(payload, current_key.private_key, algorithm="RS256", headers=headers)
 

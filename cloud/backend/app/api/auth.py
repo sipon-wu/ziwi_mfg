@@ -255,6 +255,42 @@ async def unified_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.post("/dev-token")
+async def dev_token():
+    """长效测试 token —— 仅供预发布/测试环境一次性取用并写死到配置，跑通真实 cloud 验签链路。
+
+    安全约束：
+      - 仅当 CLOUD_DEV_TOKEN_ENABLED=true 时返回，生产默认 403（不暴露）；
+      - 返回固定低权限测试身份(tester)，非真实账号、无管理权限；
+      - token 标注 test=true / env=staging，供业务后端明确识别为测试授权。
+    """
+    if not settings.dev_token_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "DEV_TOKEN_DISABLED", "message": "dev-token endpoint disabled in production"},
+        )
+    jwt_svc = _get_jwt_service()
+    expire_min = 60 * 24 * 365  # 365 天长效
+    token = jwt_svc.create_access_token(
+        sub="dev-test",
+        email="dev@ziwi.cn",
+        tenant_id=None,
+        products=["platform:tester"],
+        account_type="platform",
+        roles=["tester"],
+        env="staging",
+        expires_minutes=expire_min,
+        extra_claims={"test": True},
+    )
+    return {
+        "data": {
+            "access_token": token,
+            "expires_in": expire_min * 60,
+            "note": "长效测试 token，仅用于预发布环境写死授权；env=staging, test=true，非真实账号权限，请勿用于生产。",
+        }
+    }
+
+
 @router.get("/me")
 async def me(db: AsyncSession = Depends(get_db), token: str = Depends(require_token)):
     jwt_svc = _get_jwt_service()
