@@ -21,6 +21,7 @@ class JWTService:
         products: list | None = None,
         account_type: str = "tenant",
         roles: list | None = None,
+        env: str = "prod",
     ) -> str:
         current_key = self.key_manager.get_current_key()
         now = datetime.now(timezone.utc)
@@ -31,6 +32,7 @@ class JWTService:
             "products": products or [],
             "account_type": account_type,
             "roles": roles or [],
+            "env": env,
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(minutes=self.access_expire)).timestamp()),
         }

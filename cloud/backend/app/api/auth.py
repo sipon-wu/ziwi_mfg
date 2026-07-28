@@ -51,7 +51,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     tenant_roles = ["tenant_admin"] if user.is_superuser else []
     access_token = jwt_svc.create_access_token(
         sub=str(user.id), email=user.email, tenant_id=user.tenant_id, products=user.products,
-        account_type="tenant", roles=tenant_roles,
+        account_type="tenant", roles=tenant_roles, env=settings.env,
     )
 
     # ── refresh token rotation: create tracking record ──
@@ -186,6 +186,7 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
         products=user.products,
         account_type="tenant",
         roles=tenant_roles,
+        env=settings.env,
     )
     new_refresh_token = jwt_svc.create_refresh_token(
         sub=str(user.id), jti=new_jti, family_id=family_id,
@@ -215,6 +216,7 @@ async def unified_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             products=[f"platform:{platform_user.role}"],
             account_type="platform",
             roles=[platform_user.role],
+            env=settings.env,
         )
         return {
             "data": TokenResponse(
@@ -241,6 +243,7 @@ async def unified_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         products=user.products,
         account_type="tenant",
         roles=tenant_roles,
+        env=settings.env,
     )
     return {
         "data": TokenResponse(

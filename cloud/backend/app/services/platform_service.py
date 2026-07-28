@@ -89,8 +89,9 @@ async def authenticate_platform_user(
 
 
 def generate_platform_token(user: PlatformUser) -> str:
-    """签发平台用户的 JWT（复用 cloud RS256，含 account_type / roles 供前端路由）"""
+    """签发平台用户的 JWT（复用 cloud RS256，含 account_type / roles / env 供前端路由与多环境鉴权）"""
     from app.main import jwt_service  # 延迟导入避免循环依赖
+    from app.config import settings
     return jwt_service.create_access_token(
         sub=str(user.id),
         email=user.email,
@@ -98,6 +99,7 @@ def generate_platform_token(user: PlatformUser) -> str:
         products=[f"platform:{user.role}"],
         account_type="platform",
         roles=[user.role],
+        env=settings.env,
     )
 
 
