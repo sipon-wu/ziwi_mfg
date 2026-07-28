@@ -1,8 +1,10 @@
 # Heartbeat 技术对接文档（INTEGRATION）
 
 > **以当前运行代码为准**（部署于 `heartbeat.ziwi.cn`，预发布容器 2026-07-28 实测）。
-> 早期设计稿中描述的机器端事件流 / 状态轮询 / 机器清单 / License 激活等 API **当前未实现**，
-> 完整缺口见文末「§7 未实现清单」。本文档即为权威对接参考。
+> 机器端双向 API 的范围与红线已拍板定稿，见《产品规格》§7-A：已实现「部署事件流上报」+
+> 「心跳响应带 `expires_at`/revoked 供机器端本地判停/续期」；明确**不做** `GET /status` 主动
+> 索取、中心→机器指令下发、机器端自助激活、机器清单、系统设置。管理端增强「聚合指标 / CSV 导出」
+> 已独立实现。完整未实现项见文末「§7 未实现清单」。本文档即为权威对接参考。
 
 ---
 
@@ -59,10 +61,26 @@
 
 **响应** `200`
 ```json
-{ "status": "ok", "license_status": "<none|trial|active|expired|revoked|...>" }
+{ "status": "ok", "license_status": "<none|trial|active|expired|revoked|...>", "expires_at": "<ISO8601|null>", "revoked": false }
 ```
+> 响应新增 `expires_at`（授权到期时间）与 `revoked`（吊销标记），供机器端**本地判停 / 续期**
+> （纯本地逻辑，不实时依赖中心）。详见《产品规格》§7-A。服务端不采信客户端自报 `license_status`
+> 的原则不变。
 
 > ⚠️ **已知约束**：当前 `License.tenant_id` 为单列唯一，同一租户仅支持**单一 product**。多 product 租户第二次上报会触发唯一约束冲突（500）。修复中（见产品规格 §6）。
+
+### 部署事件流上报（A-1，纯单向增强）
+鉴权：`X-Api-Key`（必填）。机器端在部署关键动作（started / finished / rollback …）时上报，
+服务端只存不采信、不反向指令，用于排障可观测性。
+
+**`POST /api/v1/events`** — 单条
+```json
+{ "deployment_id": "string", "tenant_id": "string", "product": "string",
+  "event_type": "string", "detail": "string|null" }
+```
+**`POST /api/v1/events/batch`** — 批量 `{ "events": [ ...同上... ] }`
+**响应** `200`：`{ "status": "ok", "id": 1 }` / `{ "status": "ok", "count": N }`
+**查询（管理端）**：`GET /api/v1/admin/events?limit=100`（权限 `license_view`）→ 事件数组（倒序）。
 
 ---
 
@@ -83,6 +101,9 @@
 | POST | `/api/v1/admin/users` | 创建用户（含角色/额外权限校验、越权防护） | `users` |
 | PUT | `/api/v1/admin/users/{id}` | 更新用户（末位超管锁、自操作限制） | `users` |
 | DELETE | `/api/v1/admin/users/{id}` | 删除用户（末位超管锁、自操作限制） | `users` |
+| GET | `/api/v1/admin/metrics` | 授权/部署聚合指标 | `license_view` |
+| GET | `/api/v1/admin/exports/licenses` | 授权数据 CSV 导出（UTF-8 BOM，Excel 兼容） | `license_view` |
+| GET | `/api/v1/admin/events` | 部署事件流查询（倒序） | `license_view` |
 
 > 注：`/api/v1/admin/roles`、`/api/v1/admin/settings` 配置端点**当前未实现**；角色目录为服务常量（见 §5）。
 
@@ -127,11 +148,16 @@
 
 以下能力在早期设计稿中出现，**当前代码未实现**，仅供产品规划参考：
 
-- 部署事件流上报：`POST /api/v1/events`、`POST /api/v1/events/batch`
-- 部署状态轮询：`GET /api/v1/status`
-- 机器实例清单：`GET /api/v1/machines`、`POST /api/v1/machines/heartbeat`
-- 机器端 License 激活/评估/刷新：`/api/v1/license/activate`、`/evaluate`、`/info`、`/refresh`
-- 机器端系统设置：`GET/POST /api/v1/settings`
+已实现（2026-07-28，详见《产品规格》§7-A）：
+- ✅ 部署事件流上报：`POST /api/v1/events`、`POST /api/v1/events/batch`（机器端 X-Api-Key 上报）
+- ✅ 心跳响应增强：带回 `expires_at` / `revoked`，供机器端本地判停 / 续期
+- ✅ 管理端增强（独立于 A）：`GET /api/v1/admin/metrics` 聚合指标、`GET /api/v1/admin/exports/licenses` CSV 导出
+
+明确不做（按 §7-A 红线，避免可用性耦合反转 / 信任模型反转）：
+- ❌ 部署状态轮询 `GET /api/v1/status`（由心跳响应增强替代，不新开主动索取端点）
+- ❌ 机器实例清单 `GET /api/v1/machines`、`POST /api/v1/machines/heartbeat`（与 `deployments` 重叠）
+- ❌ 机器端 License 激活/评估/刷新：`/api/v1/license/activate`、`/evaluate`、`/info`、`/refresh`（待商业模式+防滥用定）
+- ❌ 机器端系统设置：`GET/POST /api/v1/settings`
 - 管理员端 角色/设置 配置 API：`/api/v1/admin/roles`、`/api/v1/admin/settings`
 - 指标 / 导出（CSV）：`/api/v1/admin/metrics`、`/api/v1/admin/exports/licenses`
 

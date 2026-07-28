@@ -1,6 +1,7 @@
 """Authentication endpoints – login, register, refresh, me."""
 
 import uuid
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,10 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.jwt_service import JWTService
+from app.core.security import verify_password, hash_password
 from app.services.auth_service import AuthService
-from app.services.platform_service import authenticate_platform_user
+from app.services.platform_service import (
+    authenticate_platform_user, get_platform_user,
+)
 from app.schemas.user import UserRegisterRequest, UserResponse
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
+from app.schemas import ChangePasswordRequest
 from app.config import settings
 from app.services.user_service import UserService
 from app.models.token import RefreshTokenRecord
@@ -106,9 +111,9 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN", "message": "Not a refresh token"})
 
-    jti: str | None = payload.get("jti")
-    family_id: str | None = payload.get("family_id")
-    sub: str | None = payload.get("sub")
+    jti: Optional[str] = payload.get("jti")
+    family_id: Optional[str] = payload.get("family_id")
+    sub: Optional[str] = payload.get("sub")
 
     if not jti or not family_id or not sub:
         raise HTTPException(status_code=401, detail={
@@ -129,7 +134,7 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
         record_result = await db.execute(
             select(RefreshTokenRecord).where(RefreshTokenRecord.jti == jti)
         )
-        record: RefreshTokenRecord | None = record_result.scalar_one_or_none()
+        record: Optional[RefreshTokenRecord] = record_result.scalar_one_or_none()
 
         if record is None or record.status == "revoked":
             raise HTTPException(status_code=401, detail={
@@ -304,3 +309,53 @@ async def me(db: AsyncSession = Depends(get_db), token: str = Depends(require_to
     if not user:
         raise HTTPException(status_code=404, detail={"code": "USER_NOT_FOUND", "message": "User not found"})
     return {"data": UserResponse.model_validate(user).model_dump(mode="json")}
+
+
+@router.post("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    token: str = Depends(require_token),
+):
+    """自助改密（平台 / 租户通用）：校验旧密 → 重设 → 使该用户所有 refresh token 失效。"""
+    jwt_svc = _get_jwt_service()
+    try:
+        payload = jwt_svc.verify_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN", "message": str(e)})
+
+    sub = payload.get("sub")
+    account_type = payload.get("account_type")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN", "message": "Token missing sub"})
+
+    # 1) 按身份取用户
+    if account_type == "platform":
+        user = await get_platform_user(db, sub)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail={"code": "USER_NOT_FOUND", "message": "账号不存在或已被禁用"})
+    else:
+        user = await UserService(db).get_by_id(uuid.UUID(sub))
+        if not user:
+            raise HTTPException(status_code=404, detail={"code": "USER_NOT_FOUND", "message": "User not found"})
+
+    # 2) 校验旧密
+    if not verify_password(req.old_password, user.password_hash):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "OLD_PASSWORD_WRONG", "message": "原密码错误"},
+        )
+
+    # 3) 重设新密
+    user.password_hash = hash_password(req.new_password)
+    await db.commit()
+
+    # 4) 使该用户所有 refresh token 失效（强制重新登录）
+    await db.execute(
+        update(RefreshTokenRecord)
+        .where(RefreshTokenRecord.user_id == uuid.UUID(sub))
+        .values(status="revoked")
+    )
+    await db.commit()
+
+    return {"data": {"ok": True, "message": "密码已修改，请重新登录"}}

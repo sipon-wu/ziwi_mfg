@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +11,8 @@ from app.core.database import engine
 from app.models import Base
 from app.api import api_router
 
-key_manager: RSAKeyManager | None = None
-jwt_service: JWTService | None = None
+key_manager: Optional[RSAKeyManager] = None
+jwt_service: Optional[JWTService] = None
 
 
 def get_key_manager() -> RSAKeyManager:

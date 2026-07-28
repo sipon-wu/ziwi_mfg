@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +39,6 @@ class AuthService:
             raise ValueError("Account is disabled")
         return user
 
-    async def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
+    async def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:
         result = await self.db.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()

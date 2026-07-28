@@ -88,4 +88,14 @@ export const cloudApi = {
   updatePlatformUser(id: string, payload: { is_active?: boolean; display_name?: string; role?: string }) {
     return http.patch(`/platform/users/${id}`, payload);
   },
+
+  // ── 超管看板运营统计 ──
+  stats() {
+    return http.get("/platform/stats");
+  },
+
+  // ── 自助改密（平台 / 租户通用）──
+  changePassword(old_password: string, new_password: string) {
+    return http.post("/auth/change-password", { old_password, new_password });
+  },
 };

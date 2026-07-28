@@ -76,8 +76,11 @@ echo -n "  /health        : "
 curl -fsS "https://${DOMAIN}/health" 2>/dev/null || echo "  ⚠️ 检查 backend"
 SOURCE_API_KEY=$(grep HEARTBEAT_API_KEY .env 2>/dev/null | cut -d= -f2 || echo "")
 if [ -n "$SOURCE_API_KEY" ]; then
-  echo -n "  /api/v1/status : "
-  curl -fsS -H "X-Api-Key: ${SOURCE_API_KEY}" "https://${DOMAIN}/api/v1/status" 2>/dev/null | head -c 200 || echo "  ⚠️ 检查 API"
+  echo -n "  /api/v1/events : "
+  # 事件流端点需 X-Api-Key：200 即验证通过（设计稿的 /api/v1/status 明确不做，见 §7-A）
+  curl -fsS -H "X-Api-Key: ${SOURCE_API_KEY}" "https://${DOMAIN}/api/v1/events" \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"deployment_id":"probe","tenant_id":"probe","product":"probe","event_type":"finished"}' 2>/dev/null | head -c 200 || echo "  ⚠️ 检查 API"
 fi
 echo
 
@@ -85,6 +88,6 @@ log "[7/8] 监控建议"
 echo "    请在 uptime-kuma 添加 https://${DOMAIN}/health 探测 (5min 间隔)"
 
 log "[8/8] 完成 🎉"
-echo "    验证：curl -H 'X-Api-Key: <your-key>' https://${DOMAIN}/api/v1/status"
+echo "    验证：curl -H 'X-Api-Key: <your-key>' -X POST https://${DOMAIN}/api/v1/events -d '{...}'"
 echo "    ⚠️  安全待办：确认 HEARTBEAT_API_KEY 已从默认值修改"
 echo "    ⚠️  对接文档：${PROJECT_DIR}/INTEGRATION.md"

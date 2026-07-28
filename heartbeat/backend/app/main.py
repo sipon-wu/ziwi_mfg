@@ -10,7 +10,7 @@ Multi-role RBAC platform:
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 
 import logging
@@ -25,7 +25,7 @@ import time
 import uuid
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect, text
@@ -40,6 +40,7 @@ from .models import (
     ALL_PERMISSIONS,
     Base,
     Deployment,
+    DeploymentEvent,
     License,
     LicenseAudit,
     LoginAttempt,
@@ -470,6 +471,11 @@ def _migrate_license_composite_unique(engine):
 
     cols = [c.name for c in License.__table__.columns]
     col_list = ", ".join(cols)
+    # 旧数据 heartbeats 可能为 NULL（历史 schema 允许），而新表该列 NOT NULL；
+    # 复制时用 COALESCE 兜底为 0，避免迁移失败。其余 NOT NULL 列旧数据必有值。
+    select_expr = ", ".join(
+        f"COALESCE({c}, 0)" if c == "heartbeats" else c for c in cols
+    )
     create_sql = str(CreateTable(License.__table__)).replace(
         "CREATE TABLE licenses", "CREATE TABLE licenses_new", 1
     )
@@ -480,7 +486,7 @@ def _migrate_license_composite_unique(engine):
         conn.execute(
             text(
                 f"INSERT INTO licenses_new ({col_list}) "
-                f"SELECT {col_list} FROM licenses"
+                f"SELECT {select_expr} FROM licenses"
             )
         )
         conn.execute(text("DROP TABLE licenses"))
@@ -536,6 +542,8 @@ class HeartbeatRequest(BaseModel):
 class HeartbeatResponse(BaseModel):
     status: str
     license_status: Optional[str] = None
+    expires_at: Optional[str] = None   # 授权到期时间(ISO8601)，供机器端本地判停/续期（§7-A）
+    revoked: bool = False              # 授权是否被吊销标记（§7-A）
 
 
 def verify_api_key(x_api_key: Annotated[Optional[str], Header(alias="X-Api-Key")] = None) -> str:
@@ -594,9 +602,181 @@ def heartbeat_post(req: HeartbeatRequest, _key: str = Depends(verify_api_key)):
             if req.version:
                 dep.version = req.version
         db.commit()
-        return HeartbeatResponse(status="ok", license_status=lic.status)
+        resp = HeartbeatResponse(status="ok", license_status=lic.status)
+        # 下发授权到期时间 + 吊销标记，供机器端本地判停 / 续期（§7-A）。
+        # 不采信客户端自报 license_status 的原则不变；这里只是把服务端权威态
+        # 随心跳响应带回去，机器端据此做纯本地逻辑判停，不实时依赖中心。
+        if lic.expires_at:
+            resp.expires_at = lic.expires_at.isoformat()
+        resp.revoked = lic.status == "revoked"
+        return resp
     finally:
         db.close()
+
+
+# ===========================================================================
+# 部署事件流上报（A-1，纯单向增强，机器端用 X-Api-Key 上报）
+# ===========================================================================
+
+class DeploymentEventIn(BaseModel):
+    deployment_id: str
+    tenant_id: str
+    product: str
+    event_type: str
+    detail: Optional[str] = None
+
+
+class DeploymentEventsBatchIn(BaseModel):
+    events: list[DeploymentEventIn]
+
+
+@app.post("/api/v1/events")
+def post_event(payload: DeploymentEventIn, _key: str = Depends(verify_api_key)):
+    db = SessionLocal()
+    try:
+        ev = DeploymentEvent(
+            deployment_id=payload.deployment_id,
+            tenant_id=payload.tenant_id,
+            product=payload.product,
+            event_type=payload.event_type,
+            detail=payload.detail,
+        )
+        db.add(ev)
+        db.commit()
+        db.refresh(ev)
+        return {"status": "ok", "id": ev.id}
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/events/batch")
+def post_events_batch(payload: DeploymentEventsBatchIn, _key: str = Depends(verify_api_key)):
+    db = SessionLocal()
+    try:
+        rows = [
+            DeploymentEvent(
+                deployment_id=e.deployment_id,
+                tenant_id=e.tenant_id,
+                product=e.product,
+                event_type=e.event_type,
+                detail=e.detail,
+            )
+            for e in payload.events
+        ]
+        db.add_all(rows)
+        db.commit()
+        return {"status": "ok", "count": len(rows)}
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/admin/events")
+def list_events(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_LICENSE_VIEW)),
+):
+    rows = (
+        db.query(DeploymentEvent)
+        .order_by(DeploymentEvent.created_at.desc())
+        .limit(max(1, min(limit, 1000)))
+        .all()
+    )
+    return [r.to_dict() for r in rows]
+
+
+# ===========================================================================
+# 管理端增强：聚合指标 / 授权 CSV 导出（独立于 A，已拍板）
+# ===========================================================================
+
+@app.get("/api/v1/admin/metrics")
+def admin_metrics(
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_LICENSE_VIEW)),
+):
+    # SQLite 不保留时区信息，读回的 datetime 为 naive；统一转 naive UTC 比较，
+    # 避免 offset-naive / offset-aware 比较报错（同时兼容其他后端返回 aware）。
+    def _utc_naive(dt):
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    now = datetime.utcnow()
+    threshold = now + timedelta(days=30)
+    licenses = db.query(License).all()
+    deployments = db.query(Deployment).all()
+
+    by_product: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    expiring_soon = 0
+    expired_by_date = 0
+    for lic in licenses:
+        by_product[lic.product] = by_product.get(lic.product, 0) + 1
+        by_status[lic.status] = by_status.get(lic.status, 0) + 1
+        ea = _utc_naive(lic.expires_at)
+        if ea:
+            if ea > now:
+                if ea <= threshold:
+                    expiring_soon += 1
+            else:
+                expired_by_date += 1
+
+    online = sum(1 for d in deployments if d.status == "online")
+    tenant_ids_with_dep = {d.tenant_id for d in deployments}
+    tenants_with_lic = {l.tenant_id for l in licenses}
+    tenants_without_deployment = len(tenants_with_lic - tenant_ids_with_dep)
+
+    return {
+        "total_licenses": len(licenses),
+        "by_product": by_product,
+        "by_status": by_status,
+        "expiring_soon_30d": expiring_soon,
+        "expired_by_date": expired_by_date,
+        "deployments_total": len(deployments),
+        "deployments_online": online,
+        "deployments_offline": len(deployments) - online,
+        "tenants_without_deployment": tenants_without_deployment,
+    }
+
+
+@app.get("/api/v1/admin/exports/licenses")
+def export_licenses_csv(
+    db: Session = Depends(get_db),
+    _auth: dict = Depends(require_perm(PERM_LICENSE_VIEW)),
+):
+    import csv
+    import io
+
+    licenses = db.query(License).order_by(License.tenant_id, License.product).all()
+    deps = {(d.tenant_id, d.product): d for d in db.query(Deployment).all()}
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "tenant_id", "product", "status", "licensee", "issued_at",
+        "expires_at", "seats", "last_heartbeat_at", "version",
+    ])
+    for lic in licenses:
+        dep = deps.get((lic.tenant_id, lic.product))
+        writer.writerow([
+            lic.tenant_id,
+            lic.product,
+            lic.status,
+            lic.licensee or "",
+            lic.issued_at.isoformat() if lic.issued_at else "",
+            lic.expires_at.isoformat() if lic.expires_at else "",
+            lic.seats if lic.seats is not None else "",
+            dep.last_heartbeat_at.isoformat() if dep and dep.last_heartbeat_at else "",
+            dep.version if dep else "",
+        ])
+    content = buf.getvalue()
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=licenses_export.csv"},
+    )
 
 
 # ===========================================================================

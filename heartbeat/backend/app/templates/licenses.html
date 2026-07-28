@@ -8,7 +8,10 @@
              class="pl-9 pr-3 py-2 w-72 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
       <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4-4"/></svg>
     </div>
-    <button onclick="openCreate()" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium shadow-sm transition">+ 新建授权</button>
+    <div class="flex items-center gap-2">
+      <button onclick="exportCsv()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm font-medium hover:bg-slate-50 transition">导出 CSV</button>
+      <button onclick="openCreate()" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium shadow-sm transition">+ 新建授权</button>
+    </div>
   </div>
 
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -51,6 +54,24 @@ async function load() {
         <button onclick="openEdit('${d.tenant_id}')" class="text-brand-600 hover:text-brand-700 font-medium mr-3">编辑</button>
       </td>
     </tr>`).join('');
+}
+
+async function exportCsv() {
+  try {
+    const res = await fetch('/api/v1/admin/exports/licenses', {credentials: 'same-origin'});
+    if (!res.ok) { showToast('导出失败（' + res.status + '）', 'error'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'licenses_export.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    showToast('导出失败：' + e.message, 'error');
+  }
 }
 
 function formHtml(d={}) {

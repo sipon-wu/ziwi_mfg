@@ -3,14 +3,219 @@
 import uuid
 import secrets
 import string
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform import PlatformUser, BusinessLine, LicenseTicket
+from app.models.user import User
+from app.models.token import RefreshTokenRecord
 from app.core.security import hash_password, verify_password
+
+# 北京时间偏移（中国全年 UTC+8，无夏令时），用于运营看板按本地时分桶
+CN_OFFSET = timedelta(hours=8)
+
+
+def _cn_date(dt: Optional[datetime]):
+    if not dt:
+        return None
+    return (dt + CN_OFFSET).date()
+
+
+def _cn_hour(dt: Optional[datetime]):
+    if not dt:
+        return None
+    return (dt + CN_OFFSET).hour
+
+
+async def get_platform_stats(db: AsyncSession) -> dict:
+    """聚合超管看板全部运营数据（单次多查询，前端一次取用，避免 N+1）。"""
+    now = datetime.now(timezone.utc)
+    today = (now + CN_OFFSET).date()
+    d30_ago = today - timedelta(days=29)
+
+    # ---- 基础计数 ----
+    tenant_total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    tenant_active = (
+        await db.execute(select(func.count()).select_from(User).where(User.is_active == True))
+    ).scalar() or 0
+    platform_total = (await db.execute(select(func.count()).select_from(PlatformUser))).scalar() or 0
+    bl_total = (
+        await db.execute(select(func.count()).select_from(BusinessLine).where(BusinessLine.is_active == True))
+    ).scalar() or 0
+    active_sessions = (
+        await db.execute(select(func.count()).select_from(RefreshTokenRecord).where(RefreshTokenRecord.status == "active"))
+    ).scalar() or 0
+    open_tickets = (
+        await db.execute(
+            select(func.count()).select_from(LicenseTicket).where(LicenseTicket.status.in_(["pending", "paid"]))
+        )
+    ).scalar() or 0
+
+    # ---- 行级数据（用于趋势分桶）----
+    user_rows = (
+        await db.execute(select(User.created_at, User.is_active, User.products))
+    ).all()
+    pu_rows = (
+        await db.execute(select(PlatformUser.role, PlatformUser.is_active))
+    ).all()
+    tk_rows = (
+        await db.execute(
+            select(
+                LicenseTicket.id,
+                LicenseTicket.tenant_name,
+                LicenseTicket.product,
+                LicenseTicket.ticket_type,
+                LicenseTicket.status,
+                LicenseTicket.created_at,
+                LicenseTicket.approved_at,
+                LicenseTicket.requested_expires_at,
+            )
+        )
+    ).all()
+
+    # ---- 用户增长（近 30 天按日）----
+    user_growth = defaultdict(int)
+    for r in user_rows:
+        d = _cn_date(r.created_at)
+        if d and d30_ago <= d <= today:
+            user_growth[d] += 1
+
+    # ---- 平台账号按角色 ----
+    platform_by_role = defaultdict(int)
+    platform_active = 0
+    for r in pu_rows:
+        platform_by_role[r.role] += 1
+        if r.is_active:
+            platform_active += 1
+
+    # ---- 业务线用户分布（products 为 JSON 数组）----
+    by_product = defaultdict(int)
+    for r in user_rows:
+        prods = r.products or []
+        for p in prods:
+            by_product[p] += 1
+
+    # ---- 全量工单统计 ----
+    ticket_total = len(tk_rows)
+    ticket_by_status = defaultdict(int)
+    ticket_by_type = defaultdict(int)
+    ticket_by_product = defaultdict(int)
+    ticket_trend = defaultdict(int)
+    for r in tk_rows:
+        ticket_by_status[r.status] += 1
+        ticket_by_type[r.ticket_type] += 1
+        ticket_by_product[r.product] += 1
+        d = _cn_date(r.created_at)
+        if d and d30_ago <= d <= today:
+            ticket_trend[d] += 1
+
+    # ---- Token 购销：实时 + 分时 ----
+    buy_today = 0
+    sell_today = 0
+    pending = 0
+    active_licenses = 0
+    trade_by_hour = {h: {"buy": 0, "sell": 0} for h in range(24)}
+    trade_by_day = defaultdict(lambda: {"buy": 0, "sell": 0})
+    expiring = []
+    for r in tk_rows:
+        # 购 = created_at
+        cd = _cn_date(r.created_at)
+        ch = _cn_hour(r.created_at)
+        if cd == today:
+            buy_today += 1
+            if ch is not None:
+                trade_by_hour[ch]["buy"] += 1
+        if cd and d30_ago <= cd <= today:
+            trade_by_day[cd]["buy"] += 1
+        # 销 = approved_at
+        if r.approved_at:
+            ad = _cn_date(r.approved_at)
+            ah = _cn_hour(r.approved_at)
+            if ad == today:
+                sell_today += 1
+                if ah is not None:
+                    trade_by_hour[ah]["sell"] += 1
+            if ad and d30_ago <= ad <= today:
+                trade_by_day[ad]["sell"] += 1
+        # 待处理
+        if r.status in ("pending", "paid"):
+            pending += 1
+        # 有效授权（已通过/已完成 且未过期）
+        if r.status in ("approved", "completed") and r.requested_expires_at and r.requested_expires_at > now:
+            active_licenses += 1
+        # 临期提醒（未来 90 天内）
+        if r.requested_expires_at and now < r.requested_expires_at <= now + timedelta(days=90):
+            days_left = (r.requested_expires_at - now).days
+            expiring.append({
+                "id": str(r.id),
+                "tenant_name": r.tenant_name,
+                "product": r.product,
+                "expires_at": r.requested_expires_at.isoformat(),
+                "days_left": days_left,
+            })
+    expiring.sort(key=lambda x: x["days_left"])
+
+    # ---- 组装 ----
+    def fill_range(bucket: dict):
+        out = []
+        for i in range(30):
+            d = d30_ago + timedelta(days=i)
+            out.append({"date": d.isoformat(), "count": bucket.get(d, 0)})
+        return out
+
+    return {
+        "kpi": {
+            "tenant_users": tenant_total,
+            "tenant_active": tenant_active,
+            "platform_users": platform_total,
+            "platform_active": platform_active,
+            "business_lines": bl_total,
+            "active_sessions": active_sessions,
+            "open_tickets": open_tickets,
+        },
+        "user_growth": {
+            "7d": fill_range(user_growth)[23:],
+            "30d": fill_range(user_growth),
+        },
+        "by_product": [{"product": k, "count": v} for k, v in sorted(by_product.items(), key=lambda x: -x[1])],
+        "activity": {
+            "active": tenant_active,
+            "inactive": tenant_total - tenant_active,
+        },
+        "platform_by_role": dict(platform_by_role),
+        "tickets": {
+            "total": ticket_total,
+            "by_status": dict(ticket_by_status),
+            "by_type": dict(ticket_by_type),
+            "by_product": [{"product": k, "count": v} for k, v in sorted(ticket_by_product.items(), key=lambda x: -x[1])],
+            "trend": {
+                "7d": fill_range(ticket_trend)[23:],
+                "30d": fill_range(ticket_trend),
+            },
+        },
+        "token_trade": {
+            "realtime": {
+                "buy_today": buy_today,
+                "sell_today": sell_today,
+                "pending": pending,
+                "active_licenses": active_licenses,
+            },
+            "by_hour": [{"hour": f"{h:02d}", **trade_by_hour[h]} for h in range(24)],
+            "by_day": [
+                {"date": (d30_ago + timedelta(days=i)).isoformat(),
+                 **trade_by_day.get(d30_ago + timedelta(days=i), {"buy": 0, "sell": 0})}
+                for i in range(30)
+            ],
+        },
+        "expiring": expiring[:20],
+        "login_trend": {"7d": [], "30d": []},  # P2：需 auth_events 表，本期占位
+        "security": {"replay_7d": 0, "revoked_7d": 0},  # P2：精确审计，本期占位
+        "generated_at": now.isoformat(),
+    }
 
 
 # ============================================================

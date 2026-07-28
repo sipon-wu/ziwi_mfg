@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -17,13 +18,13 @@ class JWTService:
         self,
         sub: str,
         email: str,
-        tenant_id: str | None = None,
-        products: list | None = None,
+        tenant_id: Optional[str] = None,
+        products: Optional[list] = None,
         account_type: str = "tenant",
-        roles: list | None = None,
+        roles: Optional[list] = None,
         env: str = "prod",
-        expires_minutes: int | None = None,
-        extra_claims: dict | None = None,
+        expires_minutes: Optional[int] = None,
+        extra_claims: Optional[dict] = None,
     ) -> str:
         current_key = self.key_manager.get_current_key()
         now = datetime.now(timezone.utc)

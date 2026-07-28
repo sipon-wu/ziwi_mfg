@@ -19,6 +19,7 @@ from app.services.platform_service import (
     generate_platform_token,
     create_business_line, list_business_lines,
     create_license_ticket, list_license_tickets, approve_license_ticket,
+    get_platform_stats,
 )
 from app.api.deps import get_current_platform_user
 
@@ -54,6 +55,18 @@ async def platform_me(
 ):
     """获取当前登录的平台用户信息"""
     return PlatformUserResponse(**current_user.to_dict())
+
+
+@router.get("/stats")
+async def platform_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """超管看板运营数据统计（全量工单 + Token 购销实时/分时）。"""
+    if current_user.role not in [PlatformRole.SUPER_ADMIN.value, PlatformRole.OPERATOR.value]:
+        raise HTTPException(status_code=403, detail="无权查看")
+    data = await get_platform_stats(db)
+    return {"data": data}
 
 
 # ============================================================

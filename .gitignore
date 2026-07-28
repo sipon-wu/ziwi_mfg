@@ -39,3 +39,7 @@ Thumbs.db
 
 # ===== Junk =====
 nul
+
+# ===== Cloud IdP 本地密钥(生产密钥在 docker 卷 cloud_keys, 绝不入仓) =====
+cloud/backend/keys/
+cloud/backend/test_keys/

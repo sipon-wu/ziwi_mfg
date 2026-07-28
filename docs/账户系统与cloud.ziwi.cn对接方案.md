@@ -1,5 +1,9 @@
 # 知微教学（school.ziwi.cn）账户系统对接 cloud.ziwi.cn 方案
 
+> ⚠️ **本文件已过时（v0.2 草案，2026-07-09），仅作历史存档，请勿作为对接依据。**
+> 权威版本：ziwi_school 仓 `产品规划/账户系统与cloud.ziwi.cn对接方案.md`（v0.6，2026-07-27）。
+> 契约基线：`ziwi-integration-contracts/contracts/mfg接入cloud接口契约.md` v0.3——已闭环决策：**`license_exp` 不进 cloud JWT、`products[]` 为字符串数组、roles 走各产品本地体系；License 权威源 = cloud License 服务/DB（Phase 2）**。本草案中与此冲突的内容（对象数组 products、license_exp 进 JWT 等）一律以上述基线为准。
+
 > 版本：v0.2（草案）｜日期：2026-07-09
 > 依据：
 > - `cloud运营与运维/multi-product-platform-integration.md` v0.1（cloud 统一 IdP 总体说明）

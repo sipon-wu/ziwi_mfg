@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Integer, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import UUID, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
@@ -33,7 +33,7 @@ class PlatformUser(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # 业务线多选: JSON ["education", "manufacturing", ...]
-    business_lines = mapped_column(JSONB, default=list, nullable=False)
+    business_lines = mapped_column(JSON, default=list, nullable=False)
 
     # 销售专属：区域层级
     region: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)       # 大区

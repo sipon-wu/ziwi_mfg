@@ -262,6 +262,38 @@ class Deployment(Base):
         }
 
 
+class DeploymentEvent(Base):
+    """部署事件流（A-1，纯单向增强）。
+
+    记录各部署实例的关键动作（started / finished / rollback …），用于排障
+    可观测性。由机器端通过 POST /api/v1/events 上报，服务端只存不采信、不
+    反向指令。详见《产品规格》§7-A。
+    """
+
+    __tablename__ = "deployment_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    deployment_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    product: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "deployment_id": self.deployment_id,
+            "tenant_id": self.tenant_id,
+            "product": self.product,
+            "event_type": self.event_type,
+            "detail": self.detail,
+            "created_at": self.created_at,
+        }
+
+
 class License(Base):
     """License authority — authoritative source of license state.
 

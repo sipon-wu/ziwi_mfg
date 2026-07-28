@@ -11,8 +11,8 @@ heartbeats.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Optional
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -23,6 +23,7 @@ from client.config import HeartbeatClientConfig
 logger = logging.getLogger("heartbeat_client")
 
 HEARTBEAT_ENDPOINT = "/api/v1/heartbeat"
+EVENTS_ENDPOINT = "/api/v1/events"
 JOB_ID = "heartbeat_send_once"
 
 
@@ -60,6 +61,7 @@ class HeartbeatClient:
         max_retries: int = 3,
         retry_backoff: int = 10,
         timeout: float = 10.0,
+        on_license_warning: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Initialize the heartbeat client.
 
@@ -93,6 +95,11 @@ class HeartbeatClient:
         self._registered: bool = False
         self._scheduler: Optional[BackgroundScheduler] = None
         self._running: bool = False
+        self._server_expires_at: Optional[datetime] = None
+        self._server_revoked: bool = False
+        self._refresh_pending: bool = False
+        self._warning_fired: bool = False
+        self._on_license_warning = on_license_warning
 
     @classmethod
     def from_config(cls, config: HeartbeatClientConfig) -> "HeartbeatClient":
@@ -137,7 +144,9 @@ class HeartbeatClient:
         while attempts <= self._max_retries:
             try:
                 result = await self._post(include_license)
+                self._cache_server_response(result)
                 self._registered = True
+                self._refresh_pending = False
                 return result
 
             except _NeedLicense as exc:
@@ -189,6 +198,119 @@ class HeartbeatClient:
             "status": "error",
             "detail": str(last_exc) if last_exc else "max retries exceeded",
         }
+
+    # ------------------------------------------------------------------
+    # 授权本地判停 / 续期（§7-A）
+    # ------------------------------------------------------------------
+
+    def _cache_server_response(self, resp: Dict[str, Any]) -> None:
+        """缓存心跳响应带回的授权态，供本地判停 / 续期决策。"""
+        if not isinstance(resp, dict):
+            return
+        ea = resp.get("expires_at")
+        if ea:
+            try:
+                self._server_expires_at = datetime.fromisoformat(ea)
+            except (ValueError, TypeError):
+                self._server_expires_at = None
+        self._server_revoked = bool(resp.get("revoked", False))
+        self._fire_warning_if_needed()
+
+    def _fire_warning_if_needed(self) -> None:
+        if not self._on_license_warning:
+            return
+        if not self.is_license_valid():
+            reason = "revoked" if self._server_revoked else "expired"
+            if not self._warning_fired:
+                self._on_license_warning(reason)
+                self._warning_fired = True
+        elif self.license_expiring_soon():
+            if not self._warning_fired:
+                self._on_license_warning("expiring_soon")
+                self._warning_fired = True
+        else:
+            self._warning_fired = False
+
+    def is_license_valid(self) -> bool:
+        """纯本地判停：吊销或已到期 → 无效。中心故障/断网不影响判定。"""
+        if self._server_revoked:
+            return False
+        if self._server_expires_at and self._server_expires_at <= datetime.now(timezone.utc):
+            return False
+        return True
+
+    def license_expiring_soon(self, threshold_days: int = 7) -> bool:
+        """距到期 ≤ threshold_days 视为临期，触发续期推送与告警。"""
+        if not self._server_expires_at:
+            return False
+        return (self._server_expires_at - datetime.now(timezone.utc)).days <= threshold_days
+
+    def renew_license(self, issued_at: datetime, expires_at: datetime) -> None:
+        """宿主在取得续期授权后调用：更新本地授权态并触发下次心跳携带。"""
+        self._license_issued_at = issued_at
+        self._license_expires_at = expires_at
+        self._refresh_pending = True
+
+    # ------------------------------------------------------------------
+    # 部署事件流上报（A-1，纯单向增强）
+    # ------------------------------------------------------------------
+
+    async def report_event(
+        self,
+        event_type: str,
+        detail: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+        product: Optional[str] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """上报单条部署事件（started / finished / rollback …）。"""
+        payload = {
+            "deployment_id": deployment_id or self._deployment_id,
+            "tenant_id": tenant_id or self._tenant_id,
+            "product": product or self._product,
+            "event_type": event_type,
+            "detail": detail,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._server_url}{EVENTS_ENDPOINT}",
+                    json=payload,
+                    headers={"X-Api-Key": self._api_key, "Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            logger.warning("Event report failed: %s", exc)
+            return {"status": "error", "detail": str(exc)}
+
+    async def report_events(self, events: list) -> Dict[str, Any]:
+        """批量上报部署事件。events 元素需含 'event_type'，可选 deployment_id/tenant_id/product/detail。"""
+        payload = {
+            "events": [
+                {
+                    "deployment_id": e.get("deployment_id", self._deployment_id),
+                    "tenant_id": e.get("tenant_id", self._tenant_id),
+                    "product": e.get("product", self._product),
+                    "event_type": e["event_type"],
+                    "detail": e.get("detail"),
+                }
+                for e in events
+            ]
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._server_url}{EVENTS_ENDPOINT}/batch",
+                    json=payload,
+                    headers={"X-Api-Key": self._api_key, "Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            logger.warning("Batch event report failed: %s", exc)
+            return {"status": "error", "detail": str(exc)}
 
     async def start(self) -> None:
         """Start the background scheduler and send an immediate heartbeat.
