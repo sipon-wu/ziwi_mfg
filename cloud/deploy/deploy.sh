@@ -89,10 +89,16 @@ echo
 
 log "[8/11] 密钥备份 (cloud_keys 卷)"
 mkdir -p "$BACKUP_DIR"
-docker run --rm -v cloud_keys:/keys -v "$BACKUP_DIR":/backup alpine sh -c \
-  'apk add --no-cache tar >/dev/null 2>&1; tar czf /backup/cloud_keys.tar.gz -C /keys .' \
-  && echo "    已备份至 ${BACKUP_DIR}/cloud_keys.tar.gz" \
-  || echo "  ⚠️  cloud_keys 备份失败，请手动 docker volume inspect cloud_keys"
+# 动态解析卷名：compose project 名会加前缀 (如 cloud-idp_cloud_keys)，裸名 cloud_keys 找不到
+KEYS_VOLUME=$(docker volume ls -q --filter "name=cloud_keys" | head -n1)
+if [ -z "$KEYS_VOLUME" ]; then
+  echo "  ⚠️  未找到 cloud_keys 卷，跳过备份（请确认 backend 已启动且曾生成密钥）"
+else
+  docker run --rm -v "$KEYS_VOLUME":/keys -v "$BACKUP_DIR":/backup alpine sh -c \
+    'apk add --no-cache tar >/dev/null 2>&1; tar czf /backup/cloud_keys.tar.gz -C /keys .' \
+    && echo "    已备份至 ${BACKUP_DIR}/cloud_keys.tar.gz (卷: ${KEYS_VOLUME})" \
+    || echo "  ⚠️  cloud_keys 备份失败，请手动 docker volume inspect ${KEYS_VOLUME}"
+fi
 
 log "[9/11] 监控建议"
 echo "    请在 uptime-kuma 添加 https://${DOMAIN}/health 探测"
