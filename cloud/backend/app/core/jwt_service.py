@@ -45,6 +45,31 @@ class JWTService:
         headers = {"kid": current_key.kid}
         return jwt.encode(payload, current_key.private_key, algorithm="RS256", headers=headers)
 
+    def create_license_key(self, claims: dict, expires_at: datetime) -> str:
+        """签发离线验签 license key（技术方案 v1.2 §0.5.2 私有化续期）。
+
+        RS256 签名，typ=license；私有化实例内置 cloud 公钥（/public-key JWKS）
+        本地验签 + 查有效期，离线可用。exp = license 到期时间（非 access token 短时效）。
+        """
+        current_key = self.key_manager.get_current_key()
+        now = datetime.now(timezone.utc)
+        payload = {
+            **claims,
+            "typ": "license",
+            "iss": "cloud.ziwi.cn",
+            "iat": int(now.timestamp()),
+            "exp": int(expires_at.timestamp()),
+        }
+        headers = {"kid": current_key.kid}
+        return jwt.encode(payload, current_key.private_key, algorithm="RS256", headers=headers)
+
+    def verify_license_key(self, license_key: str) -> dict:
+        """验签 license key（含 exp 校验），非 license 类型一律拒绝。"""
+        payload = self.verify_token(license_key)
+        if payload.get("typ") != "license":
+            raise ValueError("not a license key")
+        return payload
+
     def create_refresh_token(self, sub: str, jti: str, family_id: str) -> str:
         """Create a refresh token with JWT ID and family ID for rotation tracking.
 

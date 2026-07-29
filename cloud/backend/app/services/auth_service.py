@@ -37,6 +37,24 @@ class AuthService:
             raise ValueError("Invalid email or password")
         if not user.is_active:
             raise ValueError("Account is disabled")
+
+        # ── 租户 license 门禁：cloud 签发的有效 license 才能登录 ──
+        # 仅作用于带 tenant_id 的租户账号；平台/测试账号(tenant_id=None)不受影响。
+        if user.tenant_id:
+            from app.services.platform_service import list_license_tickets
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+            tks = await list_license_tickets(self.db, tenant_id=user.tenant_id)
+            valid = [
+                t for t in tks
+                if t.status in ("approved", "completed")
+                and t.requested_expires_at
+                and t.requested_expires_at > now
+            ]
+            if not valid:
+                raise ValueError("租户许可证无效或已过期，请联系运营签发")
+
         return user
 
     async def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:

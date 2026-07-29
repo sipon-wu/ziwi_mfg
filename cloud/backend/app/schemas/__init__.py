@@ -96,11 +96,42 @@ class LicenseTicketCreate(BaseModel):
     requested_issued_at: Optional[datetime] = None
     requested_expires_at: datetime
     requested_status: str = Field(default="active", max_length=16)
+    tier: Optional[str] = Field(default=None, max_length=32)       # basic / pro / flagship
+    seats: Optional[int] = Field(default=None, ge=1)               # 席位/学校数上限
+    deploy_mode: str = Field(default="saas", pattern="^(saas|private)$")
     remarks: Optional[str] = None
 
 
 class LicenseTicketApprove(BaseModel):
     remarks: Optional[str] = None
+
+
+class LicenseRenewRequest(BaseModel):
+    """License 续期（技术方案 v1.2 §0.5.2：私有化/SaaS 客户订阅续期制）"""
+    tenant_id: str = Field(..., max_length=64)
+    product: str = Field(default="school", max_length=32)
+    new_expires_at: datetime
+    remarks: Optional[str] = None
+
+
+class LicenseKeyResponse(BaseModel):
+    """离线验签 license key 签发结果"""
+    ticket_id: str
+    ticket_no: str
+    tenant_id: str
+    license_key: str
+    expires_at: Optional[str] = None
+    issued_at: Optional[str] = None
+
+
+class LicenseKeyVerifyRequest(BaseModel):
+    license_key: str
+
+
+class LicenseKeyVerifyResponse(BaseModel):
+    valid: bool
+    claims: Optional[dict] = None
+    error: Optional[str] = None
 
 
 class LicenseTicketResponse(BaseModel):
@@ -114,6 +145,11 @@ class LicenseTicketResponse(BaseModel):
     requested_issued_at: Optional[str] = None
     requested_expires_at: Optional[str] = None
     requested_status: str
+    tier: Optional[str] = None
+    seats: Optional[int] = None
+    deploy_mode: str = "saas"
+    has_license_key: bool = False
+    license_key_issued_at: Optional[str] = None
     status: str
     applicant_id: Optional[str] = None
     assignee_id: Optional[str] = None

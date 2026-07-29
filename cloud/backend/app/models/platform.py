@@ -120,6 +120,17 @@ class LicenseTicket(Base):
     )
     requested_status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
 
+    # SaaS 客户维度（技术方案 v1.2 §0.5.2：tier + seats + deploy_mode）
+    tier: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)   # basic / pro / flagship
+    seats: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)     # 席位/学校数上限
+    deploy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="saas")  # saas / private
+
+    # 私有化离线验签 license key（最近一次签发的 RS256 签名串，实例本地用 cloud 公钥验签）
+    license_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    license_key_issued_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # 工单状态: pending / paid / approved / rejected / completed
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
 
@@ -162,6 +173,11 @@ class LicenseTicket(Base):
             "requested_issued_at": self.requested_issued_at.isoformat() if self.requested_issued_at else None,
             "requested_expires_at": self.requested_expires_at.isoformat() if self.requested_expires_at else None,
             "requested_status": self.requested_status,
+            "tier": self.tier,
+            "seats": self.seats,
+            "deploy_mode": self.deploy_mode,
+            "has_license_key": bool(self.license_key),
+            "license_key_issued_at": self.license_key_issued_at.isoformat() if self.license_key_issued_at else None,
             "status": self.status,
             "applicant_id": str(self.applicant_id) if self.applicant_id else None,
             "assignee_id": str(self.assignee_id) if self.assignee_id else None,

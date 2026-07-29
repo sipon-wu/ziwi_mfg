@@ -34,6 +34,17 @@ async def lifespan(app: FastAPI):
     # Phase 1 fallback: create tables on startup (alembic/versions is empty).
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 轻量列迁移：create_all 不会给已存在表加新列（v1.2 license 字段：tier/seats/deploy_mode/license_key）
+        if engine.dialect.name == "postgresql":
+            from sqlalchemy import text
+            for ddl in (
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS tier VARCHAR(32)",
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS seats INTEGER",
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS deploy_mode VARCHAR(16) NOT NULL DEFAULT 'saas'",
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS license_key TEXT",
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS license_key_issued_at TIMESTAMPTZ",
+            ):
+                await conn.execute(text(ddl))
     yield
 
 

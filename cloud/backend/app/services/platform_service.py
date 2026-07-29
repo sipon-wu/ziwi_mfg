@@ -344,6 +344,15 @@ def _generate_ticket_no() -> str:
     return f"LIC-{now.strftime('%Y%m')}-{suffix}"
 
 
+def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """SQLite 存回的 datetime 为 naive，统一补 UTC tz 以便安全比较。"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def create_license_ticket(db: AsyncSession, data: dict) -> LicenseTicket:
     ticket = LicenseTicket(
         ticket_no=_generate_ticket_no(),
@@ -355,6 +364,9 @@ async def create_license_ticket(db: AsyncSession, data: dict) -> LicenseTicket:
         requested_issued_at=data.get("requested_issued_at"),
         requested_expires_at=data["requested_expires_at"],
         requested_status=data.get("requested_status", "active"),
+        tier=data.get("tier"),
+        seats=data.get("seats"),
+        deploy_mode=data.get("deploy_mode", "saas"),
         remarks=data.get("remarks"),
         applicant_id=(
             uuid.UUID(data["applicant_id"]) if data.get("applicant_id") else None
@@ -402,6 +414,108 @@ async def approve_license_ticket(
     ticket.approved_at = now
     if remarks:
         ticket.remarks = (ticket.remarks or "") + f"\n[审批] {remarks}"
+    await db.commit()
+    await db.refresh(ticket)
+    return ticket
+
+
+async def get_license_ticket(db: AsyncSession, ticket_id: str) -> Optional[LicenseTicket]:
+    result = await db.execute(
+        select(LicenseTicket).where(LicenseTicket.id == uuid.UUID(ticket_id))
+    )
+    return result.scalar_one_or_none()
+
+
+async def renew_license(
+    db: AsyncSession,
+    tenant_id: str,
+    product: str,
+    new_expires_at: datetime,
+    operator_id: str,
+    remarks: Optional[str] = None,
+) -> Optional[LicenseTicket]:
+    """License 续期（技术方案 v1.2 §0.5.2：订阅续期制，私有化/SaaS 客户通用）。
+
+    以该租户+产品最近一张 approved/completed license 为基线，
+    新建一张 ticket_type=renewal、status=approved 的工单并延长 expires_at。
+    返回 None = 无可续期基线；ValueError = 参数不合法。
+    """
+    now = datetime.now(timezone.utc)
+    new_exp = _ensure_aware(new_expires_at)
+    if new_exp <= now:
+        raise ValueError("续期到期时间必须晚于当前时间")
+
+    result = await db.execute(
+        select(LicenseTicket)
+        .where(
+            LicenseTicket.tenant_id == tenant_id,
+            LicenseTicket.product == product,
+            LicenseTicket.status.in_(["approved", "completed"]),
+        )
+        .order_by(LicenseTicket.requested_expires_at.desc())
+    )
+    base = result.scalars().first()
+    if not base:
+        return None
+
+    base_exp = _ensure_aware(base.requested_expires_at)
+    if base_exp > now and new_exp <= base_exp:
+        raise ValueError("续期到期时间必须晚于现有 license 到期时间")
+
+    op_uuid = uuid.UUID(operator_id)
+    ticket = LicenseTicket(
+        ticket_no=_generate_ticket_no(),
+        tenant_id=base.tenant_id,
+        tenant_name=base.tenant_name,
+        product=base.product,
+        ticket_type="renewal",
+        current_expires_at=base.requested_expires_at,
+        requested_issued_at=now,
+        requested_expires_at=new_expires_at,
+        requested_status="active",
+        tier=base.tier,
+        seats=base.seats,
+        deploy_mode=base.deploy_mode,
+        status="approved",
+        applicant_id=op_uuid,
+        approver_id=op_uuid,
+        approved_at=now,
+        remarks=(f"[续期] 基线工单 {base.ticket_no}" + (f"；{remarks}" if remarks else "")),
+    )
+    db.add(ticket)
+    await db.commit()
+    await db.refresh(ticket)
+    return ticket
+
+
+async def issue_license_key(db: AsyncSession, ticket_id: str) -> Optional[LicenseTicket]:
+    """为已审批工单签发离线验签 license key（私有化实例本地用 cloud 公钥验签）。
+
+    返回 None = 工单不存在；ValueError = 状态/有效期不满足签发条件。
+    """
+    ticket = await get_license_ticket(db, ticket_id)
+    if not ticket:
+        return None
+    if ticket.status not in ("approved", "completed"):
+        raise ValueError("仅已审批/已完成的工单可签发 license key")
+    now = datetime.now(timezone.utc)
+    exp = _ensure_aware(ticket.requested_expires_at)
+    if exp <= now:
+        raise ValueError("license 已过期，请先续期再签发")
+
+    from app.main import jwt_service  # 延迟导入避免循环依赖
+    claims = {
+        "license_id": str(ticket.id),
+        "ticket_no": ticket.ticket_no,
+        "tenant_id": ticket.tenant_id,
+        "tenant_name": ticket.tenant_name,
+        "products": [ticket.product],
+        "tier": ticket.tier,
+        "seats": ticket.seats,
+        "deploy_mode": ticket.deploy_mode,
+    }
+    ticket.license_key = jwt_service.create_license_key(claims, expires_at=exp)
+    ticket.license_key_issued_at = now
     await db.commit()
     await db.refresh(ticket)
     return ticket

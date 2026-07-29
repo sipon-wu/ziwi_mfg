@@ -12,6 +12,8 @@ from app.schemas import (
     PlatformLoginRequest, PlatformLoginResponse,
     BusinessLineCreate, BusinessLineResponse,
     LicenseTicketCreate, LicenseTicketApprove, LicenseTicketResponse,
+    LicenseRenewRequest, LicenseKeyResponse,
+    LicenseKeyVerifyRequest, LicenseKeyVerifyResponse,
 )
 from app.services.platform_service import (
     create_platform_user, get_platform_user, get_platform_user_by_email,
@@ -19,6 +21,7 @@ from app.services.platform_service import (
     generate_platform_token,
     create_business_line, list_business_lines,
     create_license_ticket, list_license_tickets, approve_license_ticket,
+    renew_license, issue_license_key,
     get_platform_stats,
 )
 from app.api.deps import get_current_platform_user
@@ -224,3 +227,68 @@ async def approve_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="工单不存在")
     return LicenseTicketResponse(**ticket.to_dict())
+
+
+# ============================================================
+# License 续期 & 离线验签 license key（技术方案 v1.2 §0.5.2 / §0.5.4 待建项落地）
+# ============================================================
+
+@router.post("/licenses/renew", response_model=LicenseTicketResponse)
+async def renew_license_route(
+    body: LicenseRenewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """License 续期（运营/超管）：以最近一张有效 license 为基线，新建 renewal 工单并延长 expires_at。"""
+    if current_user.role not in [PlatformRole.OPERATOR.value, PlatformRole.SUPER_ADMIN.value]:
+        raise HTTPException(status_code=403, detail="仅运营可续期")
+    try:
+        ticket = await renew_license(
+            db,
+            tenant_id=body.tenant_id,
+            product=body.product,
+            new_expires_at=body.new_expires_at,
+            operator_id=str(current_user.id),
+            remarks=body.remarks,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="该租户/产品无可续期的有效 license")
+    return LicenseTicketResponse(**ticket.to_dict())
+
+
+@router.post("/tickets/{ticket_id}/license-key", response_model=LicenseKeyResponse)
+async def issue_license_key_route(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """签发离线验签 license key（运营/超管）：私有化实例内置 cloud 公钥本地验签+查有效期，离线可用。"""
+    if current_user.role not in [PlatformRole.OPERATOR.value, PlatformRole.SUPER_ADMIN.value]:
+        raise HTTPException(status_code=403, detail="仅运营可签发 license key")
+    try:
+        ticket = await issue_license_key(db, ticket_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    return LicenseKeyResponse(
+        ticket_id=str(ticket.id),
+        ticket_no=ticket.ticket_no,
+        tenant_id=ticket.tenant_id,
+        license_key=ticket.license_key,
+        expires_at=ticket.requested_expires_at.isoformat() if ticket.requested_expires_at else None,
+        issued_at=ticket.license_key_issued_at.isoformat() if ticket.license_key_issued_at else None,
+    )
+
+
+@router.post("/licenses/verify", response_model=LicenseKeyVerifyResponse)
+async def verify_license_key_route(body: LicenseKeyVerifyRequest):
+    """验签 license key 自检（无需登录：验签只依赖公钥，供私有化实例调试/对接自测）。"""
+    from app.main import jwt_service
+    try:
+        claims = jwt_service.verify_license_key(body.license_key)
+        return LicenseKeyVerifyResponse(valid=True, claims=claims)
+    except ValueError as e:
+        return LicenseKeyVerifyResponse(valid=False, error=str(e))
