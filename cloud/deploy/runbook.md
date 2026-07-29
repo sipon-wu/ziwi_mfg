@@ -47,7 +47,7 @@ cp .env.example .env
 # 编辑 .env，关键项：
 #   CLOUD_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/cloud_idp
 #     ↑ 必须写 compose 网络服务名 db:5432，绝不能写 localhost（§11「生产 DATABASE_URL」风险）。
-#   CLOUD_CORS_ORIGINS=https://cloud.ziwi.cn        # 建议由 * 收紧
+#   CLOUD_CORS_ORIGINS=*        # 保持 *：预发布授权方案要求 school/mfg staging 经统一登录跨域，不可收紧为单域名
 #   CLOUD_DEBUG=false
 #   CLOUD_KEY_DIR=/app/keys                         # 对应 compose 挂载的 cloud_keys 卷
 ```
@@ -195,7 +195,7 @@ cd /opt/cloud && docker compose down
 | `docker-compose.yml` | backend→`127.0.0.1:8000:8000`；frontend→`127.0.0.1:3000:80`；db→`127.0.0.1:5433:5432`（服务名网络不变） | **阻断项** |
 | `backend/app/main.py` | lifespan 内加 `Base.metadata.create_all` 建表兜底（导入 `app.core.database.engine` 与 `app.models.Base`） | **阻断项** |
 | `.env.example` | `CLOUD_DATABASE_URL` 改 `db:5432` 并注释「compose 网络内用服务名 db，勿写 localhost」 | 非阻断 |
-| `backend/app/main.py`(可选) | `CLOUD_CORS_ORIGINS` 由 `*` 收紧为 `https://cloud.ziwi.cn` | 非阻断，建议 |
+| `backend/app/main.py`(可选) | `CLOUD_CORS_ORIGINS` 保持 `*`：预发布授权方案下 school/mfg staging 依赖统一登录跨域，**不要**收紧为单域名 | 非阻断（按设计保留） |
 
 > 仓库侧任务全部合入并测试通过后，方可执行本 runbook。
 

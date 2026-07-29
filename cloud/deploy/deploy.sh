@@ -89,10 +89,15 @@ echo
 
 log "[8/11] 密钥备份 (cloud_keys 卷)"
 mkdir -p "$BACKUP_DIR"
-# 动态解析卷名：compose project 名会加前缀 (如 cloud-idp_cloud_keys)，裸名 cloud_keys 找不到
-KEYS_VOLUME=$(docker volume ls -q --filter "name=cloud_keys" | head -n1)
+# 动态解析卷名：compose project 名会加前缀 (如 cloud-idp_cloud_keys)，逻辑名 cloud_keys 也可能
+# 残留为空卷。遍历所有匹配卷，选取真正含密钥文件的那个，避免备份空残留卷。
+KEYS_VOLUME=""
+for v in $(docker volume ls -q --filter "name=cloud_keys"); do
+  cnt=$(docker run --rm -v "$v":/keys alpine sh -c "ls -1 /keys 2>/dev/null | wc -l" 2>/dev/null || echo 0)
+  if [ "${cnt:-0}" -gt 0 ]; then KEYS_VOLUME="$v"; break; fi
+done
 if [ -z "$KEYS_VOLUME" ]; then
-  echo "  ⚠️  未找到 cloud_keys 卷，跳过备份（请确认 backend 已启动且曾生成密钥）"
+  echo "  ⚠️  未找到含密钥文件的 cloud_keys 卷，跳过备份（请确认 backend 已启动且曾生成密钥）"
 else
   docker run --rm -v "$KEYS_VOLUME":/keys -v "$BACKUP_DIR":/backup alpine sh -c \
     'apk add --no-cache tar >/dev/null 2>&1; tar czf /backup/cloud_keys.tar.gz -C /keys .' \
@@ -109,4 +114,4 @@ echo "    nginx 回滚: cp ${NGINX_CONF_DST}.bak ${NGINX_CONF_DST} && systemctl 
 
 log "[11/11] 完成 🎉"
 echo "    访问 https://${DOMAIN}/ 验证登录 / 注册"
-echo "    ⚠️ 安全待办：① 轮换腾讯云密钥（§11 风险项）② compose 中 CLOUD_CORS_ORIGINS=* 建议收紧为 https://${DOMAIN}"
+echo "    ⚠️ 安全待办：① 轮换腾讯云密钥（§11 风险项）② CORS 保持 *（预发布授权方案要求 school/mfg staging 统一登录跨域，勿收紧）"

@@ -10,6 +10,8 @@ services:
       - CLOUD_JWT_REFRESH_EXPIRE_DAYS=7
       - CLOUD_KEY_DIR=/app/keys
       - CLOUD_CORS_ORIGINS=*
+      - PLATFORM_ADMIN_EMAIL=admin@ziwi.cn
+      - PLATFORM_ADMIN_PASSWORD=WxMtDAcAuDR6gtirXrjdFytl
     volumes:
       - cloud_keys:/app/keys
     depends_on:
