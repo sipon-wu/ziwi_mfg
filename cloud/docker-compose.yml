@@ -4,14 +4,15 @@ services:
     container_name: cloud-backend
     ports:
       - "127.0.0.1:8090:8000"
+    # 密钥统一放在 rsync 树之外的 /opt/cloud-secrets/.env，避免整目录 rsync --delete 误删生产密钥
+    env_file:
+      - /opt/cloud-secrets/.env
     environment:
-      - CLOUD_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/cloud_idp
       - CLOUD_JWT_ACCESS_EXPIRE_MINUTES=30
       - CLOUD_JWT_REFRESH_EXPIRE_DAYS=7
       - CLOUD_KEY_DIR=/app/keys
       - CLOUD_CORS_ORIGINS=*
       - PLATFORM_ADMIN_EMAIL=admin@ziwi.cn
-      - PLATFORM_ADMIN_PASSWORD=WxMtDAcAuDR6gtirXrjdFytl
     volumes:
       - cloud_keys:/app/keys
     depends_on:
@@ -31,9 +32,10 @@ services:
   db:
     image: postgres:16-alpine
     container_name: cloud-db
+    env_file:
+      - /opt/cloud-secrets/.env
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=cloud_idp
     ports:
       - "127.0.0.1:5433:5432"

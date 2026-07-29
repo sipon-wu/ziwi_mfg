@@ -257,3 +257,59 @@ class TestLicenseKey:
             f"/api/v1/platform/tickets/{t['id']}/license-key", headers=_auth(sales_token)
         )
         assert resp.status_code == 403
+
+
+class TestLicenseKeyExpiry:
+    async def test_verify_expired_legal_signature_key_returns_false(self, client, admin_token):
+        """私有化实例每日验签场景：license 到期后,签名合法但 exp 已过 → 必须拒绝。"""
+        import app.main as _m
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        past = now - timedelta(hours=1)
+        claims = {
+            "license_id": "x", "ticket_no": "x", "tenant_id": "t-exp",
+            "tenant_name": "E", "products": ["school"], "tier": "pro",
+            "seats": 5, "deploy_mode": "private",
+        }
+        expired_key = _m.jwt_service.create_license_key(claims, expires_at=past)
+        resp = await client.post(
+            "/api/v1/platform/licenses/verify", json={"license_key": expired_key}
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["valid"] is False
+        assert body["claims"] is None
+
+    async def test_renew_then_reissue_key_has_new_expiry(self, client, admin_token):
+        """续期后重新签发 license key,其 exp 应等于新到期日(私有化实例拉新周期)。"""
+        import app.main as _m
+        from datetime import datetime, timezone, timedelta
+
+        t = await _create_ticket(
+            client, admin_token, tenant_id="t-renewexp",
+            tier="pro", seats=20, deploy_mode="private",
+        )
+        await _approve(client, admin_token, t["id"])
+
+        new_exp = datetime.now(timezone.utc) + timedelta(days=365 * 3)
+        resp = await client.post(
+            "/api/v1/platform/licenses/renew",
+            json={
+                "tenant_id": "t-renewexp", "product": "school",
+                "new_expires_at": new_exp.isoformat().replace("+00:00", "Z"),
+            },
+            headers=_auth(admin_token),
+        )
+        assert resp.status_code == 200, resp.text
+        renew_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/platform/tickets/{renew_id}/license-key", headers=_auth(admin_token)
+        )
+        assert resp.status_code == 200, resp.text
+        key = resp.json()["license_key"]
+
+        claims = _m.jwt_service.verify_license_key(key)
+        assert claims["exp"] == int(new_exp.timestamp())
+        assert claims["tenant_id"] == "t-renewexp"
