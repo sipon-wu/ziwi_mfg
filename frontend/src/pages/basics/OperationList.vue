@@ -49,7 +49,7 @@ const showDialog_ = ref(false)
 const editing = ref<Partial<Operation>>({})
 const isEdit = ref(false)
 
-// 高级检索 + 行展开
+// 高级检索 + 行展开（并集方式多列并排）
 const cfg = getSearchConfig('operations')
 const { conditions, applyFilter, removeCondition } = useAdvancedSearch<Operation>(cfg)
 const list = computed<Operation[]>(() =>
@@ -207,35 +207,55 @@ onMounted(() => {
     <!-- 列表 -->
     <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
     <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <van-cell-group v-else>
-      <van-cell
-        v-for="item in list"
-        :key="item.id"
-        @click="toggleExpand(item.id)"
-      >
-        <template #title>
-          <div class="flex items-center gap-2">
-            <span class="font-medium">{{ item.code }}</span>
-            <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
-            <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
-          </div>
-          <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
-        </template>
-        <template #label>
-          <div class="text-xs text-gray-400 mt-1">
-            准备: {{ item.setup_time }}min | 单件: {{ item.unit_time }}min/件
-          </div>
-          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
-        </template>
-        <template #right-icon>
-          <div class="flex gap-1">
-            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="small" plain @click.stop="toggleExpand(item.id)" />
-            <van-button icon="edit" size="small" type="primary" plain @click.stop="openEdit(item)" />
-            <van-button icon="delete" size="small" type="danger" plain @click.stop="handleDelete(item)" />
-          </div>
-        </template>
-      </van-cell>
-    </van-cell-group>
+    <div v-else class="op-table-wrap">
+      <table class="op-table">
+        <thead>
+          <tr>
+            <th>工序编码</th>
+            <th>工序名称</th>
+            <th>工序类型</th>
+            <th class="num">准备时间(min)</th>
+            <th class="num">单件时间(min/件)</th>
+            <th>状态</th>
+            <th class="op">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="item in list" :key="item.id">
+            <tr @click="toggleExpand(item.id)">
+              <td>{{ item.code }}</td>
+              <td>{{ item.name }}</td>
+              <td>
+                <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
+              </td>
+              <td class="num">{{ item.setup_time }}</td>
+              <td class="num">{{ item.unit_time }}</td>
+              <td>
+                <van-tag v-if="item.is_active" type="success" size="small">启用</van-tag>
+                <van-tag v-else type="default" size="small">禁用</van-tag>
+              </td>
+              <td class="op">
+                <div class="op-btns">
+                  <van-button
+                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                    size="mini"
+                    plain
+                    @click.stop="toggleExpand(item.id)"
+                  />
+                  <van-button icon="edit" size="mini" plain type="primary" @click.stop="openEdit(item)" />
+                  <van-button icon="delete" size="mini" plain type="danger" @click.stop="handleDelete(item)" />
+                </div>
+              </td>
+            </tr>
+            <tr v-if="expandedId === item.id" class="row-detail-row">
+              <td :colspan="7">
+                <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog
@@ -267,3 +287,76 @@ onMounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.op-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.op-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: var(--ziwi-text-primary, #1e293b);
+  background: var(--ziwi-bg, #fff);
+}
+
+.op-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ziwi-bg-elevated, #f5f7fa);
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.op-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  text-align: left;
+  vertical-align: middle;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.op-table tbody td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.op-table tbody td.op {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.op-btns {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
+.op-table tbody tr.row-detail-row td {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
+  padding: 0;
+}
+
+.op-table tbody tr:hover:not(.row-detail-row) {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.04));
+}
+
+@media (max-width: 768px) {
+  .op-table {
+    font-size: 13px;
+  }
+  .op-table thead th,
+  .op-table tbody td {
+    padding: 8px 10px;
+  }
+}
+</style>
