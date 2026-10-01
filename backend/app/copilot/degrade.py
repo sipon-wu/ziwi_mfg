@@ -67,6 +67,16 @@ _DIM_PATTERNS: List[tuple] = [
 _LINE_RE = re.compile(r"([0-9]+|[一二两三四五六七八九十]+)\s*号\s*线")
 _PRODUCT_RE = re.compile(r"([A-Za-z0-9\-]+)\s*产品")
 
+# 显式给出、但**无法映射到受支持预设**的时间表达 → 澄清而非静默回退默认窗口（BEH-1）。
+# 例：2099年 / 2020年 / 明年 / 明天 / 未来三天 / 9月15日 …
+_TIME_UNSUPPORTED_RE = re.compile(
+    r"\d{4}\s*年"                                          # 2099年 / 2020年
+    r"|[今明后前]\s*年"                                    # 今年 / 明年 / 后年 / 前年
+    r"|[明后前]\s*天"                                      # 明天 / 后天 / 前天（今天/昨天走预设）
+    r"|(?:未来|接下来|过去|往前|往后|近|最近)\s*[0-9一二两三四五六七八九十]+\s*(?:天|日|周|个?月)"
+    r"|\d{1,2}\s*月\s*\d{1,2}\s*[日]"                     # 9月15日
+)
+
 
 class DegradeMatcher:
     """规则降级匹配器。"""
@@ -132,9 +142,20 @@ class DegradeMatcher:
             )
 
         # 4) 时间预设
-        preset = self._extract_preset(q) or metric.default_time_window
+        explicit = self._extract_preset(q)
         inherited = slot_state.get("time_range") or {}
-        if not self._extract_preset(q) and inherited.get("preset"):
+        # BEH-1：显式给出时间表达但未命中受支持预设时，**不静默回退**默认窗口
+        # （否则「2099年」「未来三天」会拿 yesterday 的数冒充）。改为澄清反问。
+        if explicit is None and self._has_unsupported_time(q):
+            return IntentSlot(
+                metric_code=metric_code,
+                time_range={"preset": ""},
+                confidence=0.3,  # 低于 COPILOT_MIN_CONFIDENCE → 触发 R7 澄清
+                source="degrade",
+                clarify="我没看懂这个「时间范围」。请试试：今天 / 昨天 / 本周 / 上周 / 本月 / 上个月。",
+            )
+        preset = explicit or metric.default_time_window
+        if explicit is None and inherited.get("preset"):
             preset = inherited["preset"]
 
         # 5) 维度
@@ -165,6 +186,11 @@ class DegradeMatcher:
             if any(kw in q for kw in kws):
                 return preset
         return None
+
+    @staticmethod
+    def _has_unsupported_time(q: str) -> bool:
+        """问句是否含「显式但未受支持」的时间表达（BEH-1）。"""
+        return bool(_TIME_UNSUPPORTED_RE.search(q))
 
     @staticmethod
     def _has_dim_intent(q: str) -> bool:

@@ -334,6 +334,19 @@ class TestCopilotGuardrailRegression:
         slot3 = dm.match("昨天三号线良率")
         assert {f.field: f.value for f in slot3.filters}.get("line_code") == "L3"
 
+    async def test_unsupported_explicit_time_clarifies(self, env):
+        """BEH-1：显式但未受支持的时间表达 → 澄清，不得静默回退默认窗口。"""
+        for q in ("2099年产量是多少", "2020年产量是多少", "明天产量是多少", "未来三天产量"):
+            events = await _ask(env, q)
+            assert _find(events, "clarify") is not None, f"{q} 未澄清: {events}"
+            answer = _find(events, "answer")
+            assert answer is not None and answer["payload"]["answered"] is False, (q, events)
+            # 关键：不得拿默认窗口的真实值（100）冒充
+            assert answer["payload"]["data"].get("value") is None, (q, answer["payload"]["data"])
+        # 对照：无时间表达 → 正常走默认窗口作答
+        ok = await _ask(env, "产量是多少")
+        assert _find(ok, "answer")["payload"]["data"]["value"] == 100
+
 
 class TestCopilotBriefing:
     """角色简报 / 反馈 / 会话。"""

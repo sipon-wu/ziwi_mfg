@@ -7,7 +7,11 @@
 import { del, get, post } from '@/api/client'
 import type { BriefingResult, CopilotSseEvent, SessionItem } from '@/types/copilot'
 
-const BASE = '/api/v1/copilot'
+// axios 系调用经 client（baseURL 已为 '/api/v1'），故 path 需相对 /api/v1；
+// ask 用原生 fetch 拼接绝对路径，单独使用 FETCH_BASE。
+// 若两者混用同一 '/api/v1/copilot' 会导致 axios 前缀叠加成 /api/v1/api/v1/... → 405。
+const BASE = '/copilot'
+const FETCH_BASE = '/api/v1/copilot'
 
 export interface StreamHandlers {
   onEvent?: (ev: CopilotSseEvent) => void
@@ -36,7 +40,7 @@ export async function askCopilotStream(
   sessionId: number | null,
   handlers: StreamHandlers = {},
 ): Promise<void> {
-  const resp = await fetch(`${BASE}/ask`, {
+  const resp = await fetch(`${FETCH_BASE}/ask`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ question, session_id: sessionId }),

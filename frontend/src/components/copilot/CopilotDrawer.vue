@@ -19,7 +19,7 @@
           <span
             class="cd-tab"
             :class="{ active: store.view === 'briefing' }"
-            @click="onShowBriefing"
+            @click="() => onShowBriefing()"
           >
             简报
           </span>

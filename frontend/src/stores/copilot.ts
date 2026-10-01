@@ -2,7 +2,7 @@
  * AI Copilot Pinia Store（会话 / 消息 / 上下文 / 反馈）。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { askCopilotStream, getBriefing, sendFeedback } from '@/api/copilot'
 import type { BriefingResult, ChatMessage, CopilotSseEvent } from '@/types/copilot'
 
@@ -35,7 +35,10 @@ export const useCopilotStore = defineStore('copilot', () => {
     if (!q || loading.value) return
 
     messages.value.push({ id: uid('u'), role: 'user', question: q })
-    const assistant: ChatMessage = { id: uid('a'), role: 'assistant', loading: true }
+    // 关键：助手对象必须用 reactive 包装后再入队。
+    // 否则 messages.value.push(rawObj) 存的是 raw 对象、模板读的是代理，直接改 raw
+    // 对象的属性不触发 set trap → 助手气泡永久停在「正在分析…」（one-question lag）。
+    const assistant = reactive<ChatMessage>({ id: uid('a'), role: 'assistant', loading: true })
     messages.value.push(assistant)
     loading.value = true
 
