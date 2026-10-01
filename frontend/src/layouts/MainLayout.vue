@@ -70,6 +70,17 @@
             <span class="top-title">知微制造管理系统</span>
           </div>
           <div class="top-right">
+            <span class="top-icon ai-copilot" title="AI 数据助手" @click="copilot.toggleDrawer(true)">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path d="M12 3l1.8 4.6L18.4 9l-4.6 1.8L12 15.4 10.2 10.8 5.6 9l4.6-1.4L12 3z"
+                  fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z"
+                  fill="none" stroke="currentColor" stroke-width="1.4"
+                  stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="ai-copilot-text">AI 助手</span>
+            </span>
             <span class="top-user">{{ currentUser }}</span>
             <span class="top-icon logout" title="退出登录" @click="doLogout">
               <svg viewBox="0 0 24 24" width="17" height="17">
@@ -109,6 +120,9 @@
         <router-view />
       </main>
     </div>
+
+    <!-- AI 数据助手抽屉（E1 只读 MVP） -->
+    <CopilotDrawer />
   </div>
 </template>
 
@@ -116,6 +130,8 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useCopilotStore } from '@/stores/copilot'
+import CopilotDrawer from '@/components/copilot/CopilotDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -123,6 +139,7 @@ import { menuPermissions } from '@/config/menu-permissions'
 import type { MenuPermission } from '@/config/menu-permissions'
 
 const auth = useAuthStore()
+const copilot = useCopilotStore()
 
 /* ── 用户信息 ── */
 const currentUser = ref('管理员')
@@ -564,6 +581,17 @@ const breadcrumbs = computed(() => {
 }
 .top-icon:hover { background: #f5f5f5; color: #555; }
 .top-user { font-size: 13px; color: #666; }
+
+/* AI 助手入口 */
+.ai-copilot {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--ziwi-primary);
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.ai-copilot:hover { background: var(--ziwi-primary-bg); color: var(--ziwi-primary-dark); }
+.ai-copilot-text { white-space: nowrap; }
 
 /* 页面标签 */
 .page-tabs { display: flex; align-items: center; gap: 2px; flex: 1; overflow-x: auto; }

@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
 
+    # ── AI Copilot（E1 只读 MVP）────────────────────────────────────────
+    COPILOT_ENABLED: bool = True                       # Copilot 总开关
+    COPILOT_TZ_OFFSET_HOURS: int = 8                   # 租户本地时区偏移（"今天/昨天/本月" 语义）
+    COPILOT_MIN_CONFIDENCE: float = 0.6                # 低于该阈值触发澄清反问（R7）
+    AI_GATEWAY_URL: str = "http://localhost:8100"      # ai-gateway 服务地址（OpenAI 兼容）
+    AI_CHAT_MODEL: str = "qwen-plus"                   # 话术组织模型
+    AI_INTENT_MODEL: str = "qwen-turbo"                # 意图解析模型（structured output）
+    AI_EMBED_MODEL: str = "text-embedding-v3"          # 向量模型
+    AI_GATEWAY_ENABLED: bool = True                    # False 时直接走降级链路
+    AI_GATEWAY_TIMEOUT: float = 15.0                   # 调用 ai-gateway 超时（秒）
+
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

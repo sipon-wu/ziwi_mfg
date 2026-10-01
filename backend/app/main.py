@@ -10,6 +10,7 @@ from app.core.database import init_db, ensure_engine
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
 from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system
+from app.copilot import router as copilot_router
 
 settings = get_settings()
 
@@ -107,6 +108,8 @@ app.include_router(wms.router)
 app.include_router(trial.router)
 app.include_router(lab.router)
 app.include_router(system.router)
+# AI Copilot（E1 只读 MVP）
+app.include_router(copilot_router.router)
 
 # 健康检查
 @app.get("/health")
