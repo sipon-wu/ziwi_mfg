@@ -34,21 +34,21 @@ time_presets:
   next30d:    {label: 未来30天, mode: lte, days: 30}
 
 vocabularies:
-  wo_status_canceled: canceled
+  wo_status_canceled: cancelled
   wo_status_completed_closed: [completed, closed]
-  wo_status_open_excl: [completed, closed, canceled]
+  wo_status_open_excl: [completed, closed, cancelled]
   wo_status_released_in_progress: [released, in_progress]
   qc_result_acc: ACC
   qc_result_rej: REJ
   qc_result_uai: UAI
   qc_result_acc_rej: [ACC, REJ]
   qc_result_judged: [ACC, REJ, UAI]
-  qc_result_pass: PASS
-  qc_result_fail: FAIL
+  qc_result_pass: pass
+  qc_result_fail: fail
   maint_plan_active: active
   maint_task_completed: completed
   repair_task_type: repair
-  andon_open_statuses: [pending, acknowledged, in_progress, escalated]
+  andon_open_statuses: [pending, acknowledged, in_progress, escalated, open, responding]
   andon_closed_statuses: [resolved, cancelled]
 
 parameters:
