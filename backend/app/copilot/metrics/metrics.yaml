@@ -43,8 +43,8 @@ vocabularies:
   qc_result_uai: UAI
   qc_result_acc_rej: [ACC, REJ]
   qc_result_judged: [ACC, REJ, UAI]
-  qc_result_pass: pass
-  qc_result_fail: fail
+  qc_result_pass: PASS
+  qc_result_fail: FAIL
   maint_plan_active: active
   maint_task_completed: completed
   repair_task_type: repair
@@ -570,7 +570,7 @@ metrics:
       - {key: result, column: inspection_result.result}
     sql_template: >
       SELECT {select_dims}
-        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN inspection_result.result = {vocab:qc_result_fail} THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
+        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN LOWER(inspection_result.result) = LOWER({vocab:qc_result_fail}) THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM inspection_result
       WHERE inspection_result.tenant_id = :tenant_id
@@ -1220,7 +1220,7 @@ metrics:
     sql_template: >
       SELECT {select_dims}
         CASE WHEN COUNT(*) > 0
-             THEN SUM(CASE WHEN inspection_result.result = {vocab:qc_result_pass} THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+             THEN SUM(CASE WHEN LOWER(inspection_result.result) = LOWER({vocab:qc_result_pass}) THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
              ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM inspection_result
