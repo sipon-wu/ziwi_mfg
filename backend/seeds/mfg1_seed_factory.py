@@ -517,7 +517,7 @@ async def phase_7(session, refs):
         })
         await ins(session, "inspection_result", {
             "tenant_id": TENANT, "order_id": oid,
-            "item_name": "外观/尺寸", "result": "pass",
+            "item_name": "外观/尺寸", "result": "PASS",
         })
     print(f"  ✅ 检验记录: {len(insp_data)}")
 
