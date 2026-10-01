@@ -107,6 +107,8 @@ class MetricRegistry:
         self._metrics: Dict[str, MetricDefinition] = {}
         self._composites: List[CompositeDefinition] = []
         self._presets: Dict[str, Dict[str, Any]] = {}
+        self._vocabularies: Dict[str, Any] = {}
+        self._parameters: Dict[str, Any] = {}
         self.version: str = ""
         self._loaded = False
 
@@ -129,6 +131,8 @@ class MetricRegistry:
 
         self.version = str(raw.get("version", ""))
         self._presets = raw.get("time_presets", {}) or {}
+        self._vocabularies = raw.get("vocabularies", {}) or {}
+        self._parameters = raw.get("parameters", {}) or {}
         self._metrics = {}
         for item in raw.get("metrics", []) or []:
             md = self._parse_metric(item)
@@ -206,6 +210,16 @@ class MetricRegistry:
     def preset(self, name: str) -> Dict[str, Any]:
         """取时间预设定义。"""
         return self._presets.get(name, {})
+
+    @property
+    def vocabularies(self) -> Dict[str, Any]:
+        """领域枚举词汇表（{vocab:NAME} 解析来源）。"""
+        return self._vocabularies
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        """业务阈值参数表（{param:NAME} 解析来源）。"""
+        return self._parameters
 
     def resolve_aliases(self, text: str) -> List[str]:
         """把问句解析为候选指标码列表（按别名命中长度降序，长别名优先）。"""

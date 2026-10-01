@@ -207,7 +207,42 @@ class MetricQueryService:
         sql = sql.replace("{time_clause}", time_clause)
         sql = sql.replace("{scope_clause}", scope_clause)
         sql = sql.replace("{filter_clause}", filter_clause)
+        sql = self._substitute_vocab_params(sql, metric, params)
         return sql, params
+
+    def _substitute_vocab_params(
+        self, sql: str, metric: "MetricDefinition", params: Dict[str, Any]
+    ) -> str:
+        """把 SQL 模板中的 ``{vocab:NAME}`` / ``{param:NAME}`` 替换为受控绑定占位符。
+
+        词汇/参数值全部来自注册表顶层配置（领域枚举 / 业务阈值），并经 ``:param`` 绑定——
+        绝不把字面量拼进 SQL。列表值展开为 ``IN (:a, :b)`` 多绑定；标量绑定单值。
+        """
+        vocab = self._registry.vocabularies if self._registry else {}
+        params_cfg = self._registry.parameters if self._registry else {}
+
+        def _resolve(token: str, source: Dict[str, Any], prefix: str) -> str:
+            if token not in source:
+                raise MetricQueryError(
+                    f"指标 {metric.metric_code} 引用了未定义的词汇/参数: {token}"
+                )
+            val = source[token]
+            if isinstance(val, (list, tuple)):
+                phs = []
+                for i, v in enumerate(val):
+                    pn = f"{prefix}_{token}_{i}"
+                    params[pn] = v
+                    phs.append(f":{pn}")
+                return "(" + ", ".join(phs) + ")"
+            pn = f"{prefix}_{token}"
+            params[pn] = val
+            return f":{pn}"
+
+        for token in set(re.findall(r"\{vocab:([A-Za-z0-9_]+)\}", sql)):
+            sql = sql.replace(f"{{vocab:{token}}}", _resolve(token, vocab, "__vocab"))
+        for token in set(re.findall(r"\{param:([A-Za-z0-9_]+)\}", sql)):
+            sql = sql.replace(f"{{param:{token}}}", _resolve(token, params_cfg, "__param"))
+        return sql
 
     def _resolve_dimensions(self, slot: IntentSlot, metric: MetricDefinition) -> List[str]:
         """把 slot 维度解析为白名单内的列名（最多 3 个）。"""

@@ -33,6 +33,27 @@ time_presets:
   next7d:     {label: 未来7天, mode: lte, days: 7}
   next30d:    {label: 未来30天, mode: lte, days: 30}
 
+vocabularies:
+  wo_status_canceled: canceled
+  wo_status_completed_closed: [completed, closed]
+  wo_status_open_excl: [completed, closed, canceled]
+  wo_status_released_in_progress: [released, in_progress]
+  qc_result_acc: ACC
+  qc_result_rej: REJ
+  qc_result_uai: UAI
+  qc_result_acc_rej: [ACC, REJ]
+  qc_result_judged: [ACC, REJ, UAI]
+  qc_result_pass: PASS
+  qc_result_fail: FAIL
+  maint_plan_active: active
+  maint_task_completed: completed
+  repair_task_type: repair
+  andon_open_statuses: [pending, acknowledged, in_progress, escalated]
+  andon_closed_statuses: [resolved, cancelled]
+
+parameters:
+  sluggish_days: "90 day"
+
 metrics:
   # ══════════ 1. 生产工单域（WO）══════════
   - metric_code: work_order_count
@@ -62,7 +83,7 @@ metrics:
     sql_template: >
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM work_orders
-      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status <> 'canceled'
+      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status <> {vocab:wo_status_canceled}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -91,7 +112,7 @@ metrics:
     sql_template: >
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM work_orders
-      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status IN ('completed','closed')
+      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status IN {vocab:wo_status_completed_closed}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -121,7 +142,7 @@ metrics:
     sql_template: >
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM work_orders
-      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status IN ('released','in_progress')
+      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status IN {vocab:wo_status_released_in_progress}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -155,7 +176,7 @@ metrics:
         COUNT(*) AS record_count
       FROM work_orders
       WHERE work_orders.tenant_id = :tenant_id
-        AND work_orders.wo_status IN ('completed','closed')
+        AND work_orders.wo_status IN {vocab:wo_status_completed_closed}
         AND work_orders.actual_end_at IS NOT NULL
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
@@ -192,7 +213,7 @@ metrics:
         SUM(work_orders.planned_qty) AS planned_qty,
         COUNT(*) AS record_count
       FROM work_orders
-      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status <> 'canceled'
+      WHERE work_orders.tenant_id = :tenant_id AND work_orders.wo_status <> {vocab:wo_status_canceled}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -485,14 +506,14 @@ metrics:
       - {key: order_type, column: inspection_order.order_type}
     sql_template: >
       SELECT {select_dims}
-        CASE WHEN SUM(CASE WHEN inspection_order.result IN ('ACC','REJ') THEN 1 ELSE 0 END) > 0
-             THEN SUM(CASE WHEN inspection_order.result = 'ACC' THEN 1 ELSE 0 END) * 1.0
-                  / SUM(CASE WHEN inspection_order.result IN ('ACC','REJ') THEN 1 ELSE 0 END)
+        CASE WHEN SUM(CASE WHEN inspection_order.result IN {vocab:qc_result_acc_rej} THEN 1 ELSE 0 END) > 0
+             THEN SUM(CASE WHEN inspection_order.result = {vocab:qc_result_acc} THEN 1 ELSE 0 END) * 1.0
+                  / SUM(CASE WHEN inspection_order.result IN {vocab:qc_result_acc_rej} THEN 1 ELSE 0 END)
              ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM inspection_order
       WHERE inspection_order.tenant_id = :tenant_id
-        AND inspection_order.result IN ('ACC','REJ','UAI')
+        AND inspection_order.result IN {vocab:qc_result_judged}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -549,7 +570,7 @@ metrics:
       - {key: result, column: inspection_result.result}
     sql_template: >
       SELECT {select_dims}
-        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN inspection_result.result = 'FAIL' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
+        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN inspection_result.result = {vocab:qc_result_fail} THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM inspection_result
       WHERE inspection_result.tenant_id = :tenant_id
@@ -719,7 +740,7 @@ metrics:
     sql_template: >
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM maintenance_tasks
-      WHERE maintenance_tasks.tenant_id = :tenant_id AND maintenance_tasks.task_type = 'repair'
+      WHERE maintenance_tasks.tenant_id = :tenant_id AND maintenance_tasks.task_type = {vocab:repair_task_type}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -748,7 +769,7 @@ metrics:
     sql_template: >
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM maintenance_plans
-      WHERE maintenance_plans.tenant_id = :tenant_id AND maintenance_plans.status = 'active'
+      WHERE maintenance_plans.tenant_id = :tenant_id AND maintenance_plans.status = {vocab:maint_plan_active}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -775,7 +796,7 @@ metrics:
       - {key: task_type, column: maintenance_tasks.task_type}
     sql_template: >
       SELECT {select_dims}
-        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN maintenance_tasks.status = 'completed' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
+        CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN maintenance_tasks.status = {vocab:maint_task_completed} THEN 1 ELSE 0 END) * 1.0 / COUNT(*) ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM maintenance_tasks
       WHERE maintenance_tasks.tenant_id = :tenant_id
@@ -982,7 +1003,7 @@ metrics:
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM andon_call
       WHERE andon_call.tenant_id = :tenant_id
-        AND andon_call.status IN ('pending','acknowledged','in_progress','escalated')
+        AND andon_call.status IN {vocab:andon_open_statuses}
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
@@ -1098,7 +1119,7 @@ metrics:
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM work_orders
       WHERE work_orders.tenant_id = :tenant_id
-        AND work_orders.wo_status NOT IN ('completed','closed','canceled')
+        AND work_orders.wo_status NOT IN {vocab:wo_status_open_excl}
         AND work_orders.scheduled_end_at < CURRENT_DATE
       {scope_clause} {filter_clause}
       {group_by}
@@ -1199,7 +1220,7 @@ metrics:
     sql_template: >
       SELECT {select_dims}
         CASE WHEN COUNT(*) > 0
-             THEN SUM(CASE WHEN inspection_result.result = 'PASS' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+             THEN SUM(CASE WHEN inspection_result.result = {vocab:qc_result_pass} THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
              ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM inspection_result
@@ -1268,7 +1289,7 @@ metrics:
       FROM maintenance_tasks mt
       LEFT JOIN equipment eq ON eq.id = mt.equipment_id AND eq.tenant_id = :tenant_id
       WHERE mt.tenant_id = :tenant_id
-        AND mt.task_type = 'repair'
+        AND mt.task_type = {vocab:repair_task_type}
         AND mt.actual_end_at IS NOT NULL AND mt.actual_start_at IS NOT NULL
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
@@ -1300,7 +1321,7 @@ metrics:
       FROM maintenance_plans mp
       LEFT JOIN equipment eq ON eq.id = mp.equipment_id AND eq.tenant_id = :tenant_id
       WHERE mp.tenant_id = :tenant_id
-        AND mp.status = 'active'
+        AND mp.status = {vocab:maint_plan_active}
         AND mp.next_execute_at < CURRENT_DATE
       {scope_clause} {filter_clause}
       {group_by}
@@ -1392,7 +1413,7 @@ metrics:
       SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
       FROM inventory
       WHERE inventory.tenant_id = :tenant_id
-        AND inventory.last_transaction_at < CURRENT_DATE - INTERVAL '90 day'
+        AND inventory.last_transaction_at < CURRENT_DATE - ({param:sluggish_days})::interval
       {scope_clause} {filter_clause}
       {group_by}
 
@@ -1453,7 +1474,7 @@ metrics:
     sql_template: >
       SELECT {select_dims}
         CASE WHEN COUNT(*) > 0
-             THEN SUM(CASE WHEN andon_call.status IN ('resolved','cancelled') THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+             THEN SUM(CASE WHEN andon_call.status IN {vocab:andon_closed_statuses} THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
              ELSE NULL END AS value,
         COUNT(*) AS record_count
       FROM andon_call
