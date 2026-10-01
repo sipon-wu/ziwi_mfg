@@ -18,7 +18,7 @@ class AndonCall(Base):
     caller_name = Column(String(100))
     description = Column(Text, nullable=False)
     priority = Column(String(10), nullable=False, default="normal", comment="low/normal/high/emergency")
-    status = Column(String(20), nullable=False, default="pending", comment="pending/acknowledged/in_progress/resolved/cancelled/escalated")
+    status = Column(String(20), nullable=False, default="pending", comment="pending/open/acknowledged/responding/in_progress/resolved/cancelled/escalated")
     acknowledged_at = Column(DateTime(timezone=True))
     acknowledged_by = Column(BigInteger)
     resolved_at = Column(DateTime(timezone=True))

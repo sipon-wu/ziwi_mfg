@@ -10,7 +10,7 @@ class WorkOrder(Base):
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     wo_no = Column(String(100), nullable=False, comment="工单编号")
     wo_type = Column(String(50), default="production", comment="工单类型: production/maintenance/quality")
-    wo_status = Column(String(50), default="draft", comment="状态: draft/released/in_progress/completed/closed/canceled")
+    wo_status = Column(String(50), default="draft", comment="状态: draft/released/in_progress/paused/completed/closed/cancelled")
     product_code = Column(String(100), nullable=False, comment="产品编码")
     product_name = Column(String(200), nullable=False, comment="产品名称")
     planned_qty = Column(Integer, default=0, comment="计划数量")

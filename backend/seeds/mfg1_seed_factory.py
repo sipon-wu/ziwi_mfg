@@ -493,20 +493,21 @@ async def phase_7(session, refs):
         std_ids[(name, stype)] = sid
     print(f"  ✅ 检验标准: {len(std_ids)}")
 
+    # result 规范大写值：ACC/REJ/UAI（见 models/quality.py InspectionOrder.result）
     insp_data = [
-        ("WO-2026-0704", "轴承座来料检验标准", "incoming", "pass"),
-        ("WO-2026-0704", "轴承座过程检验标准", "process", "pass"),
-        ("WO-2026-0705", "法兰盘来料检验标准", "incoming", "pass"),
-        ("WO-2026-0705", "法兰盘过程检验标准", "process", "pass"),
-        ("WO-2026-0706", "轴承座来料检验标准", "incoming", "pass"),
-        ("WO-2026-0706", "轴承座过程检验标准", "process", "pass"),
-        ("WO-2026-0707", "传动轴成品检验标准", "final", "pass"),
-        ("WO-2026-0708", "法兰盘过程检验标准", "process", "pass"),
-        ("WO-2026-0709", "轴承座成品检验标准", "final", "pass"),
-        ("WO-2026-0713", "轴承座来料检验标准", "incoming", "pass"),
-        ("WO-2026-0713", "轴承座过程检验标准", "process", "pass"),
-        ("WO-2026-0714", "法兰盘来料检验标准", "incoming", "pass"),
-        ("WO-2026-0715", "轴承座过程检验标准", "process", "pass"),
+        ("WO-2026-0704", "轴承座来料检验标准", "incoming", "ACC"),
+        ("WO-2026-0704", "轴承座过程检验标准", "process", "ACC"),
+        ("WO-2026-0705", "法兰盘来料检验标准", "incoming", "ACC"),
+        ("WO-2026-0705", "法兰盘过程检验标准", "process", "ACC"),
+        ("WO-2026-0706", "轴承座来料检验标准", "incoming", "ACC"),
+        ("WO-2026-0706", "轴承座过程检验标准", "process", "ACC"),
+        ("WO-2026-0707", "传动轴成品检验标准", "final", "ACC"),
+        ("WO-2026-0708", "法兰盘过程检验标准", "process", "ACC"),
+        ("WO-2026-0709", "轴承座成品检验标准", "final", "ACC"),
+        ("WO-2026-0713", "轴承座来料检验标准", "incoming", "ACC"),
+        ("WO-2026-0713", "轴承座过程检验标准", "process", "ACC"),
+        ("WO-2026-0714", "法兰盘来料检验标准", "incoming", "ACC"),
+        ("WO-2026-0715", "轴承座过程检验标准", "process", "ACC"),
     ]
     for wno, sname, stype, result in insp_data:
         oid = await ins(session, "inspection_order", {
