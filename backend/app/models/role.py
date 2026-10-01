@@ -11,6 +11,15 @@ KEY_USER_PERMISSIONS = [
     {"code": "key_user:dept_scope",     "name": "关键用户-部门范围", "module": "M00", "resource_type": "dept", "action": "manage",   "description": "关键用户部门数据范围配置权限"},
 ]
 KEY_USER_DATA_SCOPE = "DEPT_CHILD"
+
+# ── B12/B13: 角色数据作用域常量（纯本地语义，cloud 不管）───────────────
+# SELF: 仅本人数据 | DEPT: 本部门 | DEPT_CHILD: 本部门及下级 | ALL: 全租户
+ROLE_SCOPE_SELF = "SELF"
+ROLE_SCOPE_DEPT = "DEPT"
+ROLE_SCOPE_DEPT_CHILD = "DEPT_CHILD"
+ROLE_SCOPE_ALL = "ALL"
+ROLE_SCOPES = (ROLE_SCOPE_SELF, ROLE_SCOPE_DEPT, ROLE_SCOPE_DEPT_CHILD, ROLE_SCOPE_ALL)
+ROLE_SCOPE_DEFAULT = ROLE_SCOPE_ALL
 # ────────────────────────────────────────────────────────────────────
 
 
@@ -23,6 +32,11 @@ class Role(Base):
     code = Column(String(100), nullable=False, comment="角色编码")
     description = Column(Text, comment="角色描述")
     is_system = Column(Boolean, default=False, comment="系统角色")
+
+    # ── B12: 数据作用域（角色属性，与租户级 feature_flags 严格解耦）──
+    scope = Column(String(20), default=ROLE_SCOPE_DEFAULT,
+                   comment="数据作用域: SELF/DEPT/DEPT_CHILD/ALL")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

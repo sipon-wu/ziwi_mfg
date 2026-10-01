@@ -2,7 +2,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.role_repo import RoleRepository
 from app.services.role_service import RoleService
-from app.schemas.role import CreateRoleRequest, UpdateRoleRequest, AssignPermissionRequest, AssignKeyUserPermissionsRequest
+from app.schemas.role import (
+    CreateRoleRequest, UpdateRoleRequest, AssignPermissionRequest,
+    AssignKeyUserPermissionsRequest, SetRoleScopeRequest,
+)
 
 router = APIRouter(prefix="/api/v1/roles", tags=["M00-角色管理"])
 
@@ -20,6 +23,7 @@ async def create_role(
     req: CreateRoleRequest, current_user: dict = Depends(get_current_user),
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository)),
 ):
+    """B13: 创建角色，支持同时携带 `permissions`(权限编码数组) 与 `scope`(数据作用域)。"""
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     svc = RoleService(repo)
@@ -31,6 +35,7 @@ async def get_role(
     role_id: int,
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    """B13: 返回角色详情（含权限编码数组 `permissions` 与数据作用域 `scope`）。"""
     svc = RoleService(repo)
     role = await svc.get(role_id)
     if not role:
@@ -45,6 +50,19 @@ async def update_role(
     svc = RoleService(repo)
     result = await svc.update(role_id, req.model_dump(exclude_unset=True))
     return {"code": 0, "message": "更新成功", "data": result}
+
+@router.put("/{role_id}/scope")
+async def set_role_scope(
+    role_id: int, req: SetRoleScopeRequest,
+    repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
+):
+    """B12: 设置角色的数据作用域（SELF/DEPT/DEPT_CHILD/ALL，纯本地语义）。"""
+    svc = RoleService(repo)
+    try:
+        result = await svc.set_scope(role_id, req.scope)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
+    return {"code": 0, "message": "数据作用域已更新", "data": result}
 
 @router.delete("/{role_id}")
 async def delete_role(
@@ -78,6 +96,8 @@ async def get_role_users(
     role_id: int,
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    # B13: 返回用户列表（含 primary_org_id）。
+    # 注：org_name 需在任务 B3（organizations 表）落地后由 JOIN 回填，本轮整个 org 树链路未建表。
     svc = RoleService(repo)
     data = await svc.get_users(role_id)
     return {"code": 0, "message": "success", "data": data}
@@ -101,7 +121,7 @@ async def assign_key_user_permissions(
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository)),
 ):
     """为指定角色分配 key_user 的三个专属权限（模块配置、审批范围、部门范围）。
-    
+
     如果 role_id 未传递，则自动创建 key_user 角色并分配权限。
     """
     svc = RoleService(repo)

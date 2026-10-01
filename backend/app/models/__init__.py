@@ -1,5 +1,5 @@
 from app.models.tenant import Tenant
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, UserOrganization
 from app.models.role import Role, Permission, RolePermission
 from app.models.excel_import import ExcelImportTask, ImportTemplate
 from app.models.production import WorkOrder, WorkOrderStatusLog, WorkReport, ProductBom, BomSnapshot
@@ -38,7 +38,7 @@ from app.models.trial import TrialOrder, TrialRoute, TrialBom, TrialReview
 from app.models.lab import LabRequest, LabTestResult, TestStandard, LabReport, LabCalibration
 
 __all__ = [
-    "Tenant", "User", "UserRole", "Role", "Permission", "RolePermission",
+    "Tenant", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
     "ExcelImportTask", "ImportTemplate",
     "WorkOrder", "WorkOrderStatusLog", "WorkReport", "ProductBom", "BomSnapshot",
     "SpcControlLimit", "SpcDataPoint", "SpcAlert",

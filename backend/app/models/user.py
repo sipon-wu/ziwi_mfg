@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -16,10 +16,20 @@ class User(Base):
     avatar_url = Column(String(500), comment="头像URL")
     status = Column(String(20), default="active", comment="状态: active/locked/disabled")
     last_login_at = Column(DateTime(timezone=True), comment="最后登录时间")
+
+    # ── B7: 用户主组织归属（组织树由 B3 的 organizations 表承载，本轮仅存 ID）──
+    primary_org_id = Column(BigInteger, comment="主组织ID（指向 organizations.id，见任务 B3）")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     roles = relationship("Role", secondary="user_roles", viewonly=True)
+    user_orgs = relationship(
+        "UserOrganization",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=False,
+    )
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "username", name="uq_tenant_username"),
@@ -34,3 +44,34 @@ class UserRole(Base):
     role_id = Column(BigInteger, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserOrganization(Base):
+    """B7: 用户-组织多对多归属表（用户可有一个主组织 + 若干兼任组织）。
+
+    说明：
+    - `org_id` 不建外键约束：组织树表 `organizations` 由任务 B3 新建，
+      在 B3 落地前建外键会导致 SQLAlchemy metadata 解析失败（NoReferencedTableError）。
+    - `is_primary=1` 对同一用户全局唯一（部分唯一索引 `uq_user_primary_org`）。
+    - 删除 `is_primary=1` 的记录由服务层保护（见 `UserService` / B11 校验）。
+    """
+
+    __tablename__ = "user_organizations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "org_id", name="uq_user_org"),
+        # 部分唯一索引：同一用户最多一个主组织（SQLite / PostgreSQL 各自方言关键字）
+        Index("uq_user_primary_org", "user_id", unique=True,
+              sqlite_where="is_primary = 1", postgresql_where="is_primary = 1"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False, comment="租户ID")
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+                     comment="用户ID")
+    org_id = Column(BigInteger, nullable=False, comment="组织ID（指向 organizations.id，见任务 B3）")
+    is_primary = Column(Boolean, default=False, nullable=False, comment="是否主组织")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="user_orgs", foreign_keys=[user_id])
+    # 说明：暂不声明到 organizations 的 relationship —— 该表由任务 B3 新建，
+    # 提前声明会让 SQLAlchemy mapper 在 B3 落地前直接抛 NoReferencedClassError。
