@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -261,7 +261,9 @@ class MetricQueryService:
 
     # ── 时间预设计算（租户本地时区语义）────────────────────────────
     def _today(self) -> date:
-        return (datetime.utcnow() + self._tz_offset).date()
+        # 取当前 UTC 再叠加租户时区偏移（naive UTC 语义）。
+        # 用 timezone-aware 写法，规避 Py3.12+ 对 datetime.utcnow() 的弃用告警。
+        return (datetime.now(timezone.utc).replace(tzinfo=None) + self._tz_offset).date()
 
     def _preset_start(self, preset: str, metric: Optional[MetricDefinition] = None) -> Any:
         today = self._today()

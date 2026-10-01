@@ -17,7 +17,7 @@ import json
 import os
 import tempfile
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -100,7 +100,11 @@ async def env():
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=_TABLES))
 
-    today = (datetime.now() + _TZ).date()
+    # 时间基准须与服务端一致：MetricQueryService._today() = UTC+租户偏移 → 本地墙钟日期。
+    # 本机 tz 已是 UTC+8，若用 datetime.now()+8h 会重复叠加（跨 16:00 错日导致假失败）；
+    # 这里以 timezone-aware 方式取 UTC 再叠加偏移，得到与服务同一基准的 naive 本地时间。
+    now_local = datetime.now(timezone.utc).replace(tzinfo=None) + _TZ
+    today = now_local.date()
     yesterday = today - timedelta(days=1)
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -112,7 +116,7 @@ async def env():
                 "planned_qty, completed_qty, scrap_qty, workshop, line_code, created_at) VALUES "
                 "(1,'default','WO-D1','completed','P1','产品1',100,100,5,'一号车间','L3',:t)"
             ),
-            {"t": datetime.now()},
+            {"t": now_local},
         )
         # default 租户：昨天 产出 100 / 不良 5
         await s.execute(
@@ -140,7 +144,7 @@ async def env():
                 "priority, status, created_at) VALUES "
                 "(1,'default','AD1','equipment',1,'设备故障','high','pending',:t)"
             ),
-            {"t": datetime.now()},
+            {"t": now_local},
         )
         await s.commit()
 

@@ -22,7 +22,7 @@ import os
 import sys
 import tempfile
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND_DIR = os.path.join(CODE_ROOT, "backend")
@@ -93,7 +93,9 @@ async def main() -> int:
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))
 
-    today = (datetime.now() + _TZ).date()
+    # 时间基准与服务端一致（MetricQueryService._today() = UTC+偏移 → 本地墙钟）：
+    # 用 timezone-aware 写法（utcnow() 在 Py3.12+ 已弃用），避免重复叠加时区。
+    today = (datetime.now(timezone.utc).replace(tzinfo=None) + _TZ).date()
     yesterday = today - timedelta(days=1)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as s:
