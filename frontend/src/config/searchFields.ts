@@ -57,7 +57,7 @@ const WO_STATUS = [
   { value: 'in_progress', label: '生产中' },
   { value: 'completed', label: '已完成' },
   { value: 'closed', label: '已关闭' },
-  { value: 'canceled', label: '已取消' },
+  { value: 'cancelled', label: '已取消' },
 ]
 const RECEIPT_TYPE = [
   { value: 'purchase', label: '采购入库' },
