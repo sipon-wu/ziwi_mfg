@@ -1,0 +1,45 @@
+# 角色日报简报模板（briefing_templates.yaml）
+# 固定 4 套：厂长 / 质量 / 设备 / 车间主任；每个角色由若干「指标项」组成。
+# 生成时逐项复用 MetricQueryService 取数（含 tenant + scope 注入），不新增取数路径。
+# availability 为 unavailable/approximate 的指标项由 BriefingService 标注「暂不可用/近似」。
+
+roles:
+  - role: 厂长
+    title: 厂长经营简报
+    metrics:
+      - {metric_code: output_qty, label: 今日产量, time_preset: today}
+      - {metric_code: yield_rate, label: 今日良率, time_preset: today}
+      - {metric_code: wip_work_orders, label: 在制工单, time_preset: all}
+      - {metric_code: on_time_delivery_rate, label: 本月按期交付率, time_preset: this_month}
+      - {metric_code: andon_open_count, label: 未闭环安灯, time_preset: today}
+      - {metric_code: oee, label: OEE, time_preset: today}
+
+  - role: 质量
+    title: 质量简报
+    metrics:
+      - {metric_code: yield_rate, label: 今日良率, time_preset: today}
+      - {metric_code: defect_rate, label: 本月不良率, time_preset: this_month}
+      - {metric_code: inspection_pass_rate, label: 本月检验合格率, time_preset: this_month}
+      - {metric_code: defect_top, label: 本月不良TOP, time_preset: this_month}
+      - {metric_code: spc_alert_count, label: 本周SPC告警, time_preset: last_week}
+      - {metric_code: inspection_order_count, label: 今日检验单, time_preset: today}
+
+  - role: 设备
+    title: 设备简报
+    metrics:
+      - {metric_code: equipment_status_count, label: 设备状态分布, time_preset: all}
+      - {metric_code: equipment_repair_count, label: 本月维修工单, time_preset: this_month}
+      - {metric_code: maintenance_due_count, label: 保养即将到期, time_preset: next7d}
+      - {metric_code: maintenance_execution_rate, label: 本月维保执行率, time_preset: this_month}
+      - {metric_code: equipment_downtime_hours, label: 设备停机时长, time_preset: this_month}
+      - {metric_code: oee, label: OEE, time_preset: today}
+
+  - role: 车间主任
+    title: 车间简报
+    metrics:
+      - {metric_code: output_qty, label: 今日产量, time_preset: today}
+      - {metric_code: yield_rate, label: 今日良率, time_preset: today}
+      - {metric_code: wip_work_orders, label: 在制工单, time_preset: all}
+      - {metric_code: andon_call_count, label: 今日安灯, time_preset: today}
+      - {metric_code: andon_open_count, label: 未响应安灯, time_preset: today}
+      - {metric_code: work_order_completion_rate, label: 本月工单完成率, time_preset: this_month}

@@ -1,0 +1,162 @@
+classDiagram
+    %% ── 数据模型（ORM，表；全部含 tenant_id）──
+    class CopilotSession {
+        +BigInteger id
+        +String tenant_id
+        +BigInteger user_id
+        +String title
+        +JSON slot_state
+        +DateTime created_at
+        +DateTime last_active_at
+    }
+    class CopilotMessage {
+        +BigInteger id
+        +String tenant_id
+        +BigInteger session_id
+        +String role
+        +Text question
+        +JSON answer_payload
+        +String viz_hint
+        +JSON source_footnote
+        +Float confidence
+        +DateTime created_at
+    }
+    class CopilotFeedback {
+        +BigInteger id
+        +String tenant_id
+        +BigInteger message_id
+        +String rating
+        +Text reason
+        +DateTime created_at
+    }
+    class CopilotAskLog {
+        +BigInteger id
+        +String tenant_id
+        +BigInteger user_id
+        +Text question
+        +String metric_code
+        +String outcome
+        +Int latency_ms
+        +DateTime created_at
+    }
+    class MetricDefinition {
+        +String metric_code
+        +String name
+        +String domain
+        +String formula
+        +JSON source_tables
+        +JSON dimensions
+        +String granularity
+        +String default_time_window
+        +String viz_hint
+        +String sensitivity
+        +Boolean enabled
+    }
+
+    %% ── 服务层 ──
+    class CopilotOrchestrator {
+        +ask(user, question, session_id) AsyncIterator
+        +briefing(user, role, date) AnswerPayload
+    }
+    class IntentParser {
+        +parse(question, slot_state) IntentSlot
+    }
+    class DegradeMatcher {
+        +match(question) IntentSlot
+    }
+    class GuardrailService {
+        +check_read_only(slot) Result
+        +check_tenant(user) Result
+        +check_scope(user, slot) Result
+        +check_sensitive(user, slot) Result
+        +check_confidence(slot) Result
+    }
+    class MetricRegistry {
+        +get(metric_code) MetricDefinition
+        +list_by_domain(domain) List~MetricDefinition~
+        +resolve_aliases(text) List~str~
+    }
+    class MetricQueryService {
+        +query(user, slot) QueryResult
+        -_build_sql(metric, slot) str
+        -_inject_scope(user, params) dict
+    }
+    class Narrator {
+        +compose(slot, query_result) str
+        -_inject_values(template, values) str
+    }
+    class SourceFootnoteBuilder {
+        +build(slot, metric, query_result) SourceFootnote
+    }
+    class AnswerBuilder {
+        +build(slot, query_result, narrative, footnote) AnswerPayload
+        +pick_viz(metric, query_result) str
+    }
+    class BriefingService {
+        +generate(user, role, date) AnswerPayload
+    }
+    class CopilotSessionService {
+        +get_or_create(user, session_id) CopilotSession
+        +append_message(session, role, payload) CopilotMessage
+        +update_slots(session, slot) void
+    }
+    class RAGRetriever {
+        +retrieve(tenant_id, query, top_k) List~DocChunk~
+    }
+    class LLMGatewayClient {
+        +chat(messages, schema, model) dict
+        +embed(texts, model) List~List~float~~
+    }
+
+    %% ── 契约（DTO）──
+    class IntentSlot {
+        +str metric_code
+        +List~str~ dimensions
+        +dict time_range
+        +List~dict~ filters
+        +List~str~ extra_metrics
+        +float confidence
+        +str clarify
+    }
+    class QueryResult {
+        +List~dict~ rows
+        +dict aggregates
+        +int record_count
+        +str resolved_table
+    }
+    class AnswerPayload {
+        +str narrative
+        +str viz_hint
+        +dict data
+        +SourceFootnote source
+    }
+    class SourceFootnote {
+        +str modules
+        +str table_or_caliber
+        +str caliber
+        +str time_range
+        +int record_count
+    }
+
+    %% ── 关系 ──
+    CopilotOrchestrator --> IntentParser : uses
+    CopilotOrchestrator --> DegradeMatcher : fallback
+    CopilotOrchestrator --> GuardrailService : enforces
+    CopilotOrchestrator --> MetricQueryService : queries
+    CopilotOrchestrator --> Narrator : composes
+    CopilotOrchestrator --> AnswerBuilder : builds
+    CopilotOrchestrator --> CopilotSessionService : manages context
+    CopilotOrchestrator --> RAGRetriever : optional
+    IntentParser --> LLMGatewayClient : calls
+    Narrator --> LLMGatewayClient : calls
+    RAGRetriever --> LLMGatewayClient : embeds
+    MetricQueryService --> MetricRegistry : reads
+    MetricQueryService --> QueryResult : returns
+    MetricRegistry --> MetricDefinition : holds
+    AnswerBuilder --> AnswerPayload : returns
+    AnswerBuilder --> SourceFootnoteBuilder : uses
+    SourceFootnoteBuilder --> SourceFootnote : returns
+    BriefingService --> MetricQueryService : queries
+    BriefingService --> AnswerBuilder : builds
+    CopilotSession --> CopilotMessage : has many
+    CopilotMessage --> CopilotFeedback : has many

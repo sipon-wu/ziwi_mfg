@@ -36,6 +36,10 @@ from app.models.wms import (
 from .warehouse import *
 from app.models.trial import TrialOrder, TrialRoute, TrialBom, TrialReview
 from app.models.lab import LabRequest, LabTestResult, TestStandard, LabReport, LabCalibration
+from app.models.copilot import (
+    CopilotSession, CopilotMessage, CopilotFeedback, CopilotAskLog,
+    MetricDefinition, CopilotDocChunk,
+)
 
 __all__ = [
     "Tenant", "User", "UserRole", "Role", "Permission", "RolePermission",
@@ -74,4 +78,7 @@ __all__ = [
     "TrialOrder", "TrialRoute", "TrialBom", "TrialReview",
     # M15 实验室管理
     "LabRequest", "LabTestResult", "TestStandard", "LabReport", "LabCalibration",
+    # AI Copilot（E1）
+    "CopilotSession", "CopilotMessage", "CopilotFeedback", "CopilotAskLog",
+    "MetricDefinition", "CopilotDocChunk",
 ]

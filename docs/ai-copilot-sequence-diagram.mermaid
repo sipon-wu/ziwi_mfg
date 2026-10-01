@@ -1,0 +1,71 @@
+sequenceDiagram
+    autonumber
+    participant U as 用户(前端 Drawer)
+    participant R as CopilotRouter
+    participant O as Orchestrator
+    participant S as SessionService
+    participant G as Guardrail
+    participant I as IntentParser
+    participant Q as MetricQueryService
+    participant DB as PostgreSQL
+    participant N as Narrator
+    participant LG as ai-gateway
+
+    Note over U,R: 场景A：只读问数（正常链路）
+    U->>R: POST /copilot/ask {question,session_id}
+    R->>O: ask(user, question, session_id)
+    O->>S: get_or_create(user, session_id)
+    S-->>O: session(with slot_state)
+    O->>I: parse(question, slot_state)
+    I->>LG: chat(小模型, JSON schema)
+    LG-->>I: IntentSlot{metric_code, dims, filters, conf}
+    I-->>O: IntentSlot
+    O->>G: check(slot, user)
+    alt 写意图 (R1)
+        G->>G: detect __WRITE_INTENT__
+        G-->>O: REJECT
+        O-->>U: "我目前只能查询数据，暂不支持修改操作"
+    else 低置信 (R7)
+        G-->>O: CLARIFY
+        O-->>U: "你是想问 X 还是 Y？"
+    else 通过
+        G-->>O: PASS(注入 tenant_id + scope)
+        O->>Q: query(user, slot)
+        Q->>Q: registry.get(metric_code) → 模板
+        Q->>Q: 绑定 tenant_id + DataScope + 时间/维度参数
+        Q->>DB: 执行受控参数化 SQL（无字符串拼接）
+        DB-->>Q: rows / aggregates / count
+        Q-->>O: QueryResult
+        O->>N: compose(slot, QueryResult)
+        N->>LG: chat(大模型, 数值占位模板)
+        LG-->>N: 话术（数值由占位符注入，非生成）
+        N-->>O: narrative
+        O->>O: SourceFootnoteBuilder.build()
+        O->>O: AnswerBuilder.build() → AnswerPayload + viz_hint
+        O->>S: append_message() + update_slots()
+        O-->>U: SSE: {type:answer, payload}（分帧推送）
+    end
+
+    Note over U,O: 场景B：角色简报
+    U->>R: POST /copilot/briefing {role: 厂长, date}
+    R->>O: briefing(user, role, date)
+    O->>O: 加载 briefing_templates.yaml[role]
+    loop 每个指标项
+        O->>G: check(scope)
+        O->>Q: query(user, slot)
+        Q->>DB: 受控查询
+        DB-->>Q: result
+    end
+    O->>O: 汇总 → BriefingBoard payload（4类摘要卡）
+    O-->>U: AnswerPayload(简报)
+
+    Note over U,LG: 场景C：ai-gateway 未就绪 → 降级
+    O->>I: parse()
+    I->>LG: chat()
+    LG--xI: 超时/不可用
+    I-->>O: raise GatewayUnavailable
+    O->>O: DegradeMatcher.match(question)
+    Note over O: 规则+关键词+模板匹配确定性问句<br/>输出同构 IntentSlot
+    O->>G: check(slot)（同主链路护栏）
+    O->>Q: query() → 复用取数层
+    O-->>U: 答案（无 LLM 话术，用模板文案）

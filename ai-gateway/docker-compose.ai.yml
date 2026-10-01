@@ -1,0 +1,30 @@
+# ai-gateway 编排（与 cloud / heartbeat 同范式：仅内网映射，不暴露宿主机端口）
+# 启动：docker compose -f ai-gateway/docker-compose.ai.yml up -d
+version: "3.9"
+
+services:
+  ai-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ziwi/ai-gateway:1.0.0
+    container_name: ziwi-ai-gateway
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      PROVIDER: ${PROVIDER:-mock}                 # mock | bailian
+      BAILIAN_BASE_URL: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
+      INTENT_MODEL: ${INTENT_MODEL:-qwen-turbo}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen-plus}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-v3}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose:
+      - "8100"
+    # 仅加入内网，不发布端口到宿主机（由 mfg 主线的 AI_GATEWAY_URL 内网访问）
+    networks:
+      - ziwi-internal
+
+networks:
+  ziwi-internal:
+    external: false
