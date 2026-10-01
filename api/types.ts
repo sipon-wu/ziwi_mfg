@@ -223,7 +223,7 @@ export interface ApprovalInstance {
   biz_type: string
   biz_id: string
   applicant_id: number
-  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'canceled'
+  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'cancelled'
   form_data: Record<string, unknown>
   current_node?: ApprovalNode
   nodes: ApprovalNode[]
@@ -310,7 +310,7 @@ export interface WorkOrder {
   tenant_id: string
   wo_no: string
   wo_type: 'production' | 'maintenance' | 'quality'
-  wo_status: 'draft' | 'released' | 'in_progress' | 'completed' | 'closed' | 'canceled'
+  wo_status: 'draft' | 'released' | 'in_progress' | 'paused' | 'completed' | 'closed' | 'cancelled'
   product_code: string
   product_name: string
   planned_qty: number
@@ -424,7 +424,7 @@ export interface MaintenanceTask {
   assignee_id?: number
   scheduled_start_at?: string
   scheduled_end_at?: string
-  status: 'pending' | 'in_progress' | 'completed' | 'canceled'
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
   created_at: string
   updated_at: string
 }

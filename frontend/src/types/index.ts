@@ -199,7 +199,7 @@ export interface WorkOrder {
   tenant_id: string
   wo_no: string
   wo_type: 'production' | 'maintenance' | 'quality'
-  wo_status: 'draft' | 'released' | 'in_progress' | 'completed' | 'closed' | 'cancelled'
+  wo_status: 'draft' | 'released' | 'in_progress' | 'paused' | 'completed' | 'closed' | 'cancelled'
   product_code: string
   product_name: string
   planned_qty: number
