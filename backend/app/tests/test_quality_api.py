@@ -487,8 +487,22 @@ class TestInspectionOrderAPI:
         resp = await async_client.put(
             "/api/v1/inspection-orders/1/judge", json={"result": "INVALID"}
         )
-        # API currently accepts any result value without schema validation
-        assert resp.status_code == 200
+        # 2026-10-02 起 result 收紧为 Literal["ACC","REJ","UAI"]，
+        # 非法值由 schema 拦截（此前该断言为 200，等于固化了「接受任意值」的缺陷）
+        assert resp.status_code == 422
+        # 非法值不得穿透到存储层
+        mock_update.assert_not_called()
+
+    @patch("app.api.quality.InspectionOrderRepository.update_inspection_order")
+    @patch("app.api.quality.InspectionOrderRepository.get_inspection_order")
+    async def test_judge_lowercase_result_rejected(self, mock_update, mock_get, async_client):
+        """小写 acc 同样应被拒：规范值为大写，杜绝再次产生大小写混存脏数据"""
+        mock_get.return_value = dict(ORDER_ITEM)
+        resp = await async_client.put(
+            "/api/v1/inspection-orders/1/judge", json={"result": "acc"}
+        )
+        assert resp.status_code == 422
+        mock_update.assert_not_called()
 
     @patch("app.api.quality.InspectionOrderRepository.get_inspection_order")
     async def test_judge_order_not_found(self, mock_get, async_client):

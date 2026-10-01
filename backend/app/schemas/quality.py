@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
 
@@ -157,7 +157,9 @@ class UpdateInspectionOrderRequest(BaseModel):
 
 
 class JudgeOrderRequest(BaseModel):
-    result: str  # ACC/REJ/UAI
+    # 检验单判定结论，与 models/quality.py InspectionOrder.result 注释一致。
+    # 未判定状态 pending 由创建接口写入，不经过本判定接口。
+    result: Literal["ACC", "REJ", "UAI"]
     remark: Optional[str] = None
 
 
@@ -187,7 +189,9 @@ class CreateInspectionResultRequest(BaseModel):
     measured_value: Optional[str] = None
     deviation: Optional[str] = None
     unit: Optional[str] = None
-    result: str  # PASS/FAIL
+    # 检验项结论，与 models/quality.py InspectionResult.result 注释一致（规范大写）。
+    # 历史库内存在小写 pass 脏数据，读取侧已用 LOWER() 兼容；此处收紧写入，杜绝新增。
+    result: Literal["PASS", "FAIL"]
     remark: Optional[str] = None
 
 
@@ -198,7 +202,7 @@ class UpdateInspectionResultRequest(BaseModel):
     measured_value: Optional[str] = None
     deviation: Optional[str] = None
     unit: Optional[str] = None
-    result: Optional[str] = None
+    result: Optional[Literal["PASS", "FAIL"]] = None
     remark: Optional[str] = None
 
 

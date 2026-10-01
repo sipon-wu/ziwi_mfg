@@ -177,7 +177,7 @@ onMounted(loadYear)
       <div class="flex items-center gap-2">
         <van-button icon="arrow-left" size="small" plain @click="prevMonth" />
         <span class="text-lg font-bold">{{ currentYear }} 年 {{ currentMonth }} 月</span>
-        <van-button icon="arrow" size="small" plain @click="nextMonth" />
+        <van-button icon="arrow-right" size="small" plain @click="nextMonth" />
         <van-button size="small" plain @click="goToday">今天</van-button>
       </div>
       <div class="flex gap-2">
