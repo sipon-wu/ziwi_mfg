@@ -1042,7 +1042,7 @@ metrics:
       {time_clause} {scope_clause} {filter_clause}
       {group_by}
 
-  # ══════════ 7. 能碳域（EC，P1 占位，首期不纳入）══════════
+  # ══════════ 7. 能碳域（EC，E1 增量纳入）══════════
   - metric_code: energy_consumption
     code: EC-01
     name: 能耗量
@@ -1050,22 +1050,476 @@ metrics:
     formula: "SUM(energy_consumption) GROUP BY energy_type"
     unit: kWh
     source_tables: [carbon_emission_record]
-    module: 能碳管理(P1)
-    caliber: 期间各能源类型消耗量（P1，首期占位）
-    time_field: carbon_emission_record.record_date
+    module: 能碳管理
+    caliber: 期间各能源类型消耗量（kWh），按能源类型分组
+    time_field: cer.record_date
     time_field_type: date
     default_time_window: this_month
     granularity: [day, week, month]
     viz_hint: metric
     sensitivity: normal
-    availability: unavailable
-    unavailable_reason: 能碳域为 P1 范围，首期不纳入可问范围（PRD §9 Q5）。
-    enabled: false
+    availability: available
     aliases: [能耗, 用电量, 用能]
     dimensions:
-      - {key: energy_type, column: carbon_emission_record.energy_type, label: 能源类型}
-    filters: []
-    sql_template: ""
+      - {key: energy_type, column: cer.energy_type, label: 能源类型}
+    filters:
+      - {key: energy_type, column: cer.energy_type}
+    sql_template: >
+      SELECT {select_dims} COALESCE(SUM(cer.energy_consumption), 0) AS value, COUNT(*) AS record_count
+      FROM carbon_emission_record cer
+      WHERE cer.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  # ──────────── E1 增量（2026-10-01）新增指标（14 条）────────────────────
+  - metric_code: overdue_work_orders
+    code: WO-07
+    name: 工单超期数
+    domain: 工单
+    formula: "COUNT(*) WHERE scheduled_end_at < CURRENT_DATE AND wo_status NOT IN ('completed','closed','canceled')"
+    unit: 张
+    source_tables: [work_orders]
+    module: 生产管理(M01)
+    caliber: 计划结束时间早于今日且未完工（completed/closed/canceled 之外）的工单数；scheduled_end_at 为空不计入。TODO(口径待确认) §7-3
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [工单超期, 超期工单, 超期数量, 逾期未完工]
+    dimensions:
+      - {key: workshop, column: work_orders.workshop, label: 车间}
+      - {key: line_code, column: work_orders.line_code, label: 产线}
+    filters:
+      - {key: wo_status, column: work_orders.wo_status}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM work_orders
+      WHERE work_orders.tenant_id = :tenant_id
+        AND work_orders.wo_status NOT IN ('completed','closed','canceled')
+        AND work_orders.scheduled_end_at < CURRENT_DATE
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: labor_productivity
+    code: WR-08
+    name: 人效
+    domain: 报工
+    formula: "SUM(output_qty) / NULLIF(SUM(labor_hours),0)"
+    unit: 件/小时
+    source_tables: [work_reports, work_orders]
+    module: 生产管理(M01)
+    caliber: 单位人工工时产出数量（产出/人工工时）；分母为 0 返回无数据。TODO(口径待确认) §7-5/§7-6
+    time_field: wr.report_date
+    time_field_type: date
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    scope_field: wr.reporter_id
+    aliases: [人效, 人均产量, 人工效率, 每工时产出]
+    dimensions:
+      - {key: line_code, column: wo.line_code, label: 产线}
+      - {key: workshop, column: wo.workshop, label: 车间}
+      - {key: product_code, column: wo.product_code, label: 产品}
+    filters:
+      - {key: line_code, column: wo.line_code}
+    sql_template: >
+      SELECT {select_dims}
+        CASE WHEN SUM(wr.labor_hours) > 0
+             THEN SUM(wr.output_qty) * 1.0 / SUM(wr.labor_hours)
+             ELSE NULL END AS value,
+        SUM(wr.output_qty) AS output_qty, SUM(wr.labor_hours) AS labor_hours, COUNT(*) AS record_count
+      FROM work_reports wr
+      LEFT JOIN work_orders wo ON wo.id = wr.work_order_id
+      WHERE wr.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: input_output_ratio
+    code: WR-09
+    name: 投入产出比
+    domain: 报工
+    formula: "SUM(output_qty) / NULLIF(SUM(input_qty),0)"
+    unit: 无量纲
+    source_tables: [work_reports, work_orders]
+    module: 生产管理(M01)
+    caliber: 产出数量占投入数量之比；分母为 0 返回无数据。TODO(口径待确认) §7-5/§7-6
+    time_field: wr.report_date
+    time_field_type: date
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    scope_field: wr.reporter_id
+    aliases: [投入产出比, 产出效率, 投入产出, 收得率]
+    dimensions:
+      - {key: line_code, column: wo.line_code, label: 产线}
+      - {key: workshop, column: wo.workshop, label: 车间}
+      - {key: product_code, column: wo.product_code, label: 产品}
+    filters:
+      - {key: line_code, column: wo.line_code}
+    sql_template: >
+      SELECT {select_dims}
+        CASE WHEN SUM(wr.input_qty) > 0
+             THEN SUM(wr.output_qty) * 1.0 / SUM(wr.input_qty)
+             ELSE NULL END AS value,
+        SUM(wr.output_qty) AS output_qty, SUM(wr.input_qty) AS input_qty, COUNT(*) AS record_count
+      FROM work_reports wr
+      LEFT JOIN work_orders wo ON wo.id = wr.work_order_id
+      WHERE wr.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: inspection_item_pass_rate
+    code: QC-07
+    name: 检验项合格率
+    domain: 品质
+    formula: "SUM(result='PASS') / COUNT(*)"
+    unit: "%"
+    source_tables: [inspection_result]
+    module: 质量管理(M02)
+    caliber: 检验明细项判定 PASS 的比例（按项非按单）；分母 0 返回无数据。TODO(口径待确认) §7-8
+    time_field: inspection_result.created_at
+    time_field_type: datetime
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [检验项合格率, 项合格率, 检验项通过率]
+    dimensions:
+      - {key: item_name, column: inspection_result.item_name, label: 检验项}
+    filters:
+      - {key: result, column: inspection_result.result}
+    sql_template: >
+      SELECT {select_dims}
+        CASE WHEN COUNT(*) > 0
+             THEN SUM(CASE WHEN inspection_result.result = 'PASS' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+             ELSE NULL END AS value,
+        COUNT(*) AS record_count
+      FROM inspection_result
+      WHERE inspection_result.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: spc_anomaly_points
+    code: QC-08
+    name: SPC 异常数据点
+    domain: 品质
+    formula: "COUNT(*) WHERE is_anomaly = TRUE AND excluded = FALSE"
+    unit: 个
+    source_tables: [spc_data_points]
+    module: 质量管理(M02)
+    caliber: 控制图数据点中标记为异常（is_anomaly）且未被剔除的数量；与 QC-05 告警数互补。TODO(口径待确认) §7-10
+    time_field: spc_data_points.created_at
+    time_field_type: datetime
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [SPC异常点, 异常数据点, SPC异常, 控制图异常点]
+    dimensions:
+      - {key: chart_type, column: spc_data_points.chart_type, label: 图表类型}
+      - {key: dimension_key, column: spc_data_points.dimension_key, label: 维度}
+    filters:
+      - {key: chart_type, column: spc_data_points.chart_type}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM spc_data_points
+      WHERE spc_data_points.tenant_id = :tenant_id
+        AND spc_data_points.is_anomaly = TRUE
+        AND spc_data_points.excluded = FALSE
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: repair_man_hours
+    code: EQ-07
+    name: 维修工时
+    domain: 设备
+    formula: "SUM(EXTRACT(EPOCH FROM (actual_end_at - actual_start_at)) / 3600.0) WHERE task_type='repair'"
+    unit: 小时
+    source_tables: [maintenance_tasks, equipment]
+    module: 设备管理(TPM)
+    caliber: 维修类任务实际起止时间差之和（小时）；为 EQ-02 停机时长的降级近似。TODO(口径待确认) §7-11
+    time_field: mt.created_at
+    time_field_type: datetime
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [维修工时, 维修时长, 停机近似, 维修小时]
+    dimensions:
+      - {key: equipment_id, column: mt.equipment_id, label: 设备}
+      - {key: task_type, column: mt.task_type, label: 类型}
+      - {key: equipment_category, column: eq.category_id, label: 设备分类}
+    filters:
+      - {key: equipment_id, column: mt.equipment_id}
+    sql_template: >
+      SELECT {select_dims}
+        COALESCE(SUM(EXTRACT(EPOCH FROM (mt.actual_end_at - mt.actual_start_at)) / 3600.0), 0) AS value,
+        COUNT(*) AS record_count
+      FROM maintenance_tasks mt
+      LEFT JOIN equipment eq ON eq.id = mt.equipment_id AND eq.tenant_id = :tenant_id
+      WHERE mt.tenant_id = :tenant_id
+        AND mt.task_type = 'repair'
+        AND mt.actual_end_at IS NOT NULL AND mt.actual_start_at IS NOT NULL
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: overdue_maintenance
+    code: EQ-08
+    name: 保养逾期数
+    domain: 设备
+    formula: "COUNT(*) WHERE status='active' AND next_execute_at < CURRENT_DATE"
+    unit: 项
+    source_tables: [maintenance_plans, equipment]
+    module: 设备管理(TPM)
+    caliber: 计划保养中状态 active 且下次执行时间早于今日的项数（含已逾期）。TODO(口径待确认) §7-12
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [保养逾期, 逾期保养, 过期保养, 逾期未保养]
+    dimensions:
+      - {key: equipment_id, column: mp.equipment_id, label: 设备}
+      - {key: equipment_category, column: eq.category_id, label: 设备分类}
+    filters:
+      - {key: status, column: mp.status}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM maintenance_plans mp
+      LEFT JOIN equipment eq ON eq.id = mp.equipment_id AND eq.tenant_id = :tenant_id
+      WHERE mp.tenant_id = :tenant_id
+        AND mp.status = 'active'
+        AND mp.next_execute_at < CURRENT_DATE
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: spare_part_stock_alert
+    code: EQ-09
+    name: 备件库存预警
+    domain: 设备
+    formula: "COUNT(*) WHERE current_stock < min_stock"
+    unit: 项
+    source_tables: [spare_parts]
+    module: 设备管理(TPM)
+    caliber: 当前库存低于最小库存的备件项数（快照）
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [备件预警, 备件库存不足, 备件缺货, 低库存备件]
+    dimensions:
+      - {key: location, column: spare_parts.location, label: 存放位置}
+    filters:
+      - {key: location, column: spare_parts.location}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM spare_parts
+      WHERE spare_parts.tenant_id = :tenant_id
+        AND spare_parts.current_stock < spare_parts.min_stock
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: safety_stock_alert
+    code: WM-05
+    name: 安全库存预警
+    domain: 仓储
+    formula: "COUNT(inventory.quantity < materials.safety_stock_qty)"
+    unit: 项
+    source_tables: [inventory, materials]
+    module: 仓储管理(M20)
+    caliber: 现存量低于安全库存的物料项数（以 safety_stock_qty 为阈值；与 WM-02 最小库存阈值互补）。TODO(口径待确认) §7-14
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [安全库存预警, 安全库存不足, 低于安全库存, 安全库存缺口]
+    dimensions:
+      - {key: warehouse_id, column: inventory.warehouse_id, label: 仓库}
+      - {key: material_id, column: inventory.material_id, label: 物料}
+    filters:
+      - {key: material_id, column: inventory.material_id}
+      - {key: warehouse_id, column: inventory.warehouse_id}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM inventory
+      JOIN materials ON materials.id = inventory.material_id AND materials.tenant_id = :tenant_id
+      WHERE inventory.tenant_id = :tenant_id
+        AND inventory.quantity < materials.safety_stock_qty
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: sluggish_inventory
+    code: WM-06
+    name: 呆滞库存
+    domain: 仓储
+    formula: "COUNT(*) WHERE last_transaction_at < CURRENT_DATE - INTERVAL '90 day'"
+    unit: 项
+    source_tables: [inventory]
+    module: 仓储管理(M20)
+    caliber: 最后交易时间早于今日 90 天的库存项数（呆滞默认阈值 90 天）
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [呆滞库存, 长期未动库存, 慢动库存, 积压库存]
+    dimensions:
+      - {key: warehouse_id, column: inventory.warehouse_id, label: 仓库}
+      - {key: material_id, column: inventory.material_id, label: 物料}
+    filters:
+      - {key: material_id, column: inventory.material_id}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM inventory
+      WHERE inventory.tenant_id = :tenant_id
+        AND inventory.last_transaction_at < CURRENT_DATE - INTERVAL '90 day'
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: location_utilization
+    code: WM-07
+    name: 库位利用率
+    domain: 仓储
+    formula: "SUM(current_qty) / NULLIF(SUM(max_capacity),0)"
+    unit: "%"
+    source_tables: [warehouse_locations]
+    module: 仓储管理(M20)
+    caliber: 库位当前占用容量占最大容量的比例；分母为 0 返回无数据
+    time_field: null
+    time_field_type: none
+    default_time_window: all
+    granularity: [day]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [库位利用率, 库位占用率, 仓位利用率, 库容使用率]
+    dimensions:
+      - {key: warehouse_id, column: wl.warehouse_id, label: 仓库}
+    filters:
+      - {key: warehouse_id, column: wl.warehouse_id}
+    sql_template: >
+      SELECT {select_dims}
+        CASE WHEN SUM(wl.max_capacity) > 0
+             THEN SUM(wl.current_qty) * 1.0 / SUM(wl.max_capacity)
+             ELSE NULL END AS value,
+        SUM(wl.current_qty) AS current_qty, SUM(wl.max_capacity) AS max_capacity, COUNT(*) AS record_count
+      FROM warehouse_locations wl
+      WHERE wl.tenant_id = :tenant_id
+      {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: andon_resolve_rate
+    code: AD-05
+    name: 安灯解决率
+    domain: 安灯
+    formula: "SUM(status IN ('resolved','cancelled')) / COUNT(*)"
+    unit: "%"
+    source_tables: [andon_call]
+    module: 安灯管理(M11)
+    caliber: 已解决或已取消的安灯占总量比例（解决=resolved/cancelled）。TODO(口径待确认) §7-15
+    time_field: andon_call.created_at
+    time_field_type: datetime
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [安灯解决率, 安灯闭环率, 安灯处理率, 呼叫解决率]
+    dimensions:
+      - {key: priority, column: andon_call.priority, label: 优先级}
+      - {key: call_type, column: andon_call.call_type, label: 类型}
+    filters:
+      - {key: call_type, column: andon_call.call_type}
+    sql_template: >
+      SELECT {select_dims}
+        CASE WHEN COUNT(*) > 0
+             THEN SUM(CASE WHEN andon_call.status IN ('resolved','cancelled') THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+             ELSE NULL END AS value,
+        COUNT(*) AS record_count
+      FROM andon_call
+      WHERE andon_call.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: andon_by_priority
+    code: AD-06
+    name: 安灯按优先级分布
+    domain: 安灯
+    formula: "COUNT(*) GROUP BY priority"
+    unit: 起
+    source_tables: [andon_call]
+    module: 安灯管理(M11)
+    caliber: 按优先级（low/normal/high/emergency）分组的安灯呼叫量
+    time_field: andon_call.created_at
+    time_field_type: datetime
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: bar
+    sensitivity: normal
+    availability: available
+    default_dimensions: [priority]
+    aliases: [安灯优先级分布, 优先级安灯, 紧急安灯数, 安灯优先级]
+    dimensions:
+      - {key: priority, column: andon_call.priority, label: 优先级}
+      - {key: call_type, column: andon_call.call_type, label: 类型}
+    filters:
+      - {key: priority, column: andon_call.priority}
+    sql_template: >
+      SELECT {select_dims} COUNT(*) AS value, COUNT(*) AS record_count
+      FROM andon_call
+      WHERE andon_call.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
+
+  - metric_code: carbon_emission_amount
+    code: EC-02
+    name: 碳排放量
+    domain: 能碳
+    formula: "SUM(emission_amount) GROUP BY scope"
+    unit: tCO₂e
+    source_tables: [carbon_emission_record]
+    module: 能碳管理
+    caliber: 期间碳排放总量（按 scope1/2/3 分组）；数据已存在，本增量纳入可问范围
+    time_field: cer.record_date
+    time_field_type: date
+    default_time_window: this_month
+    granularity: [day, week, month]
+    viz_hint: metric
+    sensitivity: normal
+    availability: available
+    aliases: [碳排放, 碳排放量, 碳排, 排放量]
+    dimensions:
+      - {key: scope, column: cer.scope, label: 碳范围}
+      - {key: energy_type, column: cer.energy_type, label: 能源类型}
+      - {key: factory_id, column: cer.factory_id, label: 工厂}
+    filters:
+      - {key: scope, column: cer.scope}
+    sql_template: >
+      SELECT {select_dims} COALESCE(SUM(cer.emission_amount), 0) AS value, COUNT(*) AS record_count
+      FROM carbon_emission_record cer
+      WHERE cer.tenant_id = :tenant_id
+      {time_clause} {scope_clause} {filter_clause}
+      {group_by}
 
 # ── 复合问句（一次命中多指标）─────────────────────────────────────────
 composites:
