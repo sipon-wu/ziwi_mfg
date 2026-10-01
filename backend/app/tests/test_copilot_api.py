@@ -265,6 +265,72 @@ class TestCopilotAsk:
         assert answer["payload"]["data"]["value"] == 100
 
 
+class TestCopilotGuardrailRegression:
+    """回归：QA 独立验证（严过关）发现的缺陷 D1/D2/D3 + 观察项 O1/O2。"""
+
+    async def test_weak_write_intents_rejected(self, env):
+        """D1：弱写意图（改成/改一下/变更/设为/置为…）必须 100% 拒绝。
+
+        修复前 _WRITE_KEYWORDS 只覆盖强动词，「改成/改一下」等弱变体漏判走读路径。
+        """
+        cases = (
+            "把工单状态改成完成",
+            "帮我改一下良率数据",
+            "变更生产计划",
+            "把状态设为完成",
+            "把优先级置为高",
+            "设置默认产线",
+        )
+        for q in cases:
+            events = await _ask(env, q)
+            reject = _find(events, "reject")
+            assert reject is not None, f"{q} 未被拒绝: {events}"
+            assert reject["reason"] == "write_intent", (q, reject)
+            answer = _find(events, "answer")
+            assert answer is not None and answer["payload"]["answered"] is False
+
+    async def test_no_data_never_zero_masquerade(self, env):
+        """D2：无数据态不得用 0 冒充（value=None 且 formatted 非数值）。"""
+        events = await _ask(env, "上周的产量是多少")
+        payload = _find(events, "answer")["payload"]
+        assert payload["answered"] is False
+        assert payload["data"]["value"] is None
+        formatted = payload["data"]["formatted"]
+        assert not (isinstance(formatted, str) and formatted.strip().startswith("0")), formatted
+        assert formatted in ("—", "-", ""), formatted
+
+    async def test_missing_tenant_rejected_not_error(self, env):
+        """D3：缺 tenant_id → reject(no_permission)，不得 INTERNAL error。
+
+        修复前会话先于护栏创建，缺租户时抛 INTERNAL；现将 R2 前置。
+        """
+        _Env.tenant = None
+        events = await _ask(env, "昨天产量是多少")
+        reject = _find(events, "reject")
+        assert reject is not None and reject["reason"] == "no_permission", events
+        assert _find(events, "error") is None, events
+
+    async def test_read_question_with_write_noun_not_killed(self, env):
+        """O1：「报工产量」（含写名词『报工』但属读别名）不得误杀。"""
+        events = await _ask(env, "昨天报工产量是多少")
+        assert _find(events, "reject") is None, events
+        answer = _find(events, "answer")
+        assert answer is not None and answer["payload"]["data"]["value"] == 100
+
+    async def test_chinese_numeral_line_filter(self, env):
+        """O2：「三号线」中文数字应解析为 line_code=L3。"""
+        from app.copilot.degrade import DegradeMatcher
+        from app.copilot.metric_registry import MetricRegistry
+
+        dm = DegradeMatcher(MetricRegistry.instance())
+        for q in ("昨天三号线良率", "本周两号线产量"):
+            slot = dm.match(q)
+            filters = {f.field: f.value for f in slot.filters}
+            assert filters.get("line_code") in ("L2", "L3"), (q, slot.filters)
+        slot3 = dm.match("昨天三号线良率")
+        assert {f.field: f.value for f in slot3.filters}.get("line_code") == "L3"
+
+
 class TestCopilotBriefing:
     """角色简报 / 反馈 / 会话。"""
 

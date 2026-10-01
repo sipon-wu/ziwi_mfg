@@ -107,6 +107,13 @@ class IntentParser:
             slot.time_range = dict(slot_state["time_range"])
         if not slot.dimensions and slot_state.get("dimensions"):
             slot.dimensions = list(slot_state["dimensions"])
+        # O3：多轮追问继承上一轮的过滤条件（如 line_code=L3）
+        if not slot.filters and slot_state.get("filters"):
+            slot.filters = [
+                FilterClause(field=f.get("field"), op=f.get("op", "="), value=f.get("value"))
+                for f in slot_state["filters"]
+                if isinstance(f, dict) and f.get("field")
+            ]
 
 
 __all__ = ["IntentParser"]

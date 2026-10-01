@@ -58,7 +58,11 @@ class AnswerBuilder:
     ) -> Dict[str, Any]:
         rows = query_result.rows or []
         agg = query_result.aggregates or {}
-        value = agg.get("value")
+        # P0-06 零臆造：无有效结果（未作答 / 空集）时**不得**用 0 冒充，
+        # 强制 value=None、formatted="—"；真值 0（有记录且 answered=True）仍原样呈现。
+        has_result = answered and query_result.record_count > 0
+        raw_value = agg.get("value") if has_result else None
+        value = raw_value if (has_result and raw_value is not None) else None
         labels = [r.get("label") for r in rows if r.get("label") is not None]
 
         # 列定义（供表格卡渲染）

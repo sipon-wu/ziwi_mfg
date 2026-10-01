@@ -19,11 +19,23 @@ from typing import Any, Dict, List, Optional
 from app.copilot.metric_registry import MetricRegistry
 from app.copilot.schemas import FilterClause, IntentSlot, UNKNOWN_INTENT_CODE, WRITE_INTENT_CODE
 
-# 写意图关键词
-_WRITE_KEYWORDS = (
+# 明确写动词（命中即判定为写意图；多字词优先，避免误杀）
+_WRITE_VERBS = (
     "创建", "新建", "新增", "修改", "更新", "删除", "下达", "下发", "审批",
-    "报工", "入库", "出库", "关闭", "取消", "提交", "审核", "导入", "指派", "调整",
+    "关闭", "取消", "提交", "审核", "指派", "调整", "录入", "登记", "补录",
+    "冲销", "驳回", "启用", "停用", "设置",
+    "改成", "改为", "改一下", "改下", "变更", "更改为", "设为", "设置为", "设置成", "置为",
 )
+
+# 歧义写名词：既可能是写操作、也可能是读指标别名的一部分（如「报工产量」）。
+# 仅当该名词**未出现在某个读指标别名**中时，才视为写意图（规避 O1 误杀）。
+_AMBIGUOUS_NOUNS = ("报工", "入库", "出库", "导入")
+
+# 中文数字产线（O2：支持「三号线」等中文数字）
+_CN_DIGIT = {
+    "一": "1", "二": "2", "两": "2", "三": "3", "四": "4", "五": "5",
+    "六": "6", "七": "7", "八": "8", "九": "9", "十": "10",
+}
 
 # 时间预设关键词（长词优先，避免「今天」覆盖「今天上午」等）
 _TIME_PATTERNS: List[tuple] = [
@@ -52,7 +64,7 @@ _DIM_PATTERNS: List[tuple] = [
 ]
 
 # 过滤值抽取
-_LINE_RE = re.compile(r"(\d+)\s*号\s*线")
+_LINE_RE = re.compile(r"([0-9]+|[一二两三四五六七八九十]+)\s*号\s*线")
 _PRODUCT_RE = re.compile(r"([A-Za-z0-9\-]+)\s*产品")
 
 
@@ -67,13 +79,21 @@ class DegradeMatcher:
         q = (question or "").strip()
         slot_state = slot_state or {}
 
-        # 1) 写意图
-        if any(kw in q for kw in _WRITE_KEYWORDS):
+        # 1) 明确写动词 → 拒绝
+        if any(verb in q for verb in _WRITE_VERBS):
             return IntentSlot(
                 metric_code=WRITE_INTENT_CODE,
                 confidence=0.9,
                 source="degrade",
             )
+        # 1b) 歧义写名词：仅当未被读指标别名包含时才判定为写意图（规避 O1 误杀）
+        for noun in _AMBIGUOUS_NOUNS:
+            if noun in q and not self._noun_in_read_alias(q, noun):
+                return IntentSlot(
+                    metric_code=WRITE_INTENT_CODE,
+                    confidence=0.85,
+                    source="degrade",
+                )
 
         # 2) 复合问句
         comp = self._registry.resolve_composite(q)
@@ -122,8 +142,10 @@ class DegradeMatcher:
         if not dimensions and not self._has_dim_intent(q) and inherited.get("dimensions"):
             dimensions = list(inherited["dimensions"])
 
-        # 6) 过滤
+        # 6) 过滤（多轮追问时继承上一轮的过滤条件，O3）
         filters = self._extract_filters(q, metric)
+        if not filters and slot_state.get("filters"):
+            filters = [FilterClause(**f) for f in slot_state["filters"] if isinstance(f, dict)]
 
         confidence = 0.8 if metric_code else 0.3
         return IntentSlot(
@@ -170,11 +192,22 @@ class DegradeMatcher:
         filters: List[FilterClause] = []
         m = _LINE_RE.search(q)
         if m and metric.filter_spec("line_code") is not None:
-            filters.append(FilterClause(field="line_code", op="=", value=f"L{m.group(1)}"))
+            raw = m.group(1)
+            num = raw if raw.isdigit() else _CN_DIGIT.get(raw, "")
+            if num:
+                filters.append(FilterClause(field="line_code", op="=", value=f"L{num}"))
         pm = _PRODUCT_RE.search(q)
         if pm and metric.filter_spec("product_code") is not None:
             filters.append(FilterClause(field="product_code", op="=", value=pm.group(1)))
         return filters
+
+    def _noun_in_read_alias(self, q: str, noun: str) -> bool:
+        """判断歧义写名词是否作为某个读指标别名（含该名词）的一部分出现。"""
+        for m in self._registry.list_all():
+            for alias in m.aliases:
+                if noun in alias and alias in q:
+                    return True
+        return False
 
 
 __all__ = ["DegradeMatcher"]

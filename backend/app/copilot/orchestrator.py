@@ -69,6 +69,22 @@ class CopilotOrchestrator:
             yield {"type": "error", "code": "EMPTY_QUESTION", "message": "请输入你想查询的问题。"}
             return
 
+        # ── R2 租户校验前置：无 tenant_id 直接拒绝，不建会话、不触表（P0-05）──
+        tenant_guard = self.guardrail.check_tenant(user)
+        if tenant_guard.action != "pass":
+            payload = AnswerPayload(
+                narrative=tenant_guard.message,
+                viz_hint="metric",
+                data={"available": False, "reason": tenant_guard.reason},
+                source=None,
+                metric_code="",
+                answered=False,
+                event="reject",
+            )
+            yield {"type": "reject", "reason": tenant_guard.reason, "message": tenant_guard.message}
+            yield {"type": "answer", "payload": payload.model_dump(), "message_id": None}
+            return
+
         session = await self.session_service.get_or_create(user, session_id, title=question[:40])
         yield {"type": "session", "session_id": session.get("id")}
 

@@ -65,10 +65,13 @@ class RAGRetriever:
         if not vecs:
             return []
         vec_literal = "[" + ",".join(str(float(x)) for x in vecs[0]) + "]"
+        # O4：'' 为**全局口径/帮助文档**共享命名空间（本表仅存口径说明与帮助文档，
+        # 绝不含业务数据）。租户私有文档严格按 :tenant_id 过滤，二者互不越界；
+        # 显式写成 OR 形式以便审计。
         sql = (
             "SELECT content, ref_code, 1 - (embedding <=> CAST(:vec AS vector)) AS score "
             "FROM copilot_doc_chunks "
-            "WHERE tenant_id IN (:tenant_id, '') AND embedding IS NOT NULL "
+            "WHERE (tenant_id = :tenant_id OR tenant_id = '') AND embedding IS NOT NULL "
             "ORDER BY embedding <=> CAST(:vec AS vector) LIMIT :k"
         )
         try:
