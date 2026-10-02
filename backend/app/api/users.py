@@ -27,6 +27,7 @@ async def create_user(
     repo: UserRepository = Depends(get_tenant_repo(UserRepository)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository)),
 ):
+    """B9: 创建用户，可同时带 `org_id`(主组织) / `org_ids`(兼任) / `role_ids`(角色)。"""
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     svc = UserService(repo, role_repo)
@@ -51,6 +52,7 @@ async def update_user(
     repo: UserRepository = Depends(get_tenant_repo(UserRepository, require_auth=True)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    """B9: 更新用户，支持 `org_id` 变更主组织、`org_ids` 调整兼任组织。"""
     svc = UserService(repo, role_repo)
     result = await svc.update(user_id, req.model_dump(exclude_unset=True))
     return {"code": 0, "message": "更新成功", "data": result}

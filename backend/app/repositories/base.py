@@ -155,8 +155,10 @@ class MultiTenantRepository(Repository):
         if match:
             pos = match.end()
             return f"{sql[:pos]} {tenant_filter} AND {sql[pos:].lstrip()}"
-        # 无 WHERE 子句，在 ORDER BY/GROUP BY/HAVING/LIMIT 之前插入
-        for keyword in ['ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT']:
+        # 无 WHERE 子句：插到第一个聚合/排序子句**之前**。
+        # 必须先于 GROUP BY/HAVING —— 否则会生成 "GROUP BY x WHERE ..." 这种非法 SQL
+        # （例：roles 列表的 GROUP BY r.id + COUNT(...) 就命中过这个坑）。
+        for keyword in ['GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT']:
             kw_match = re.search(rf'\b{keyword}\b', sql, re.IGNORECASE)
             if kw_match:
                 pos = kw_match.start()

@@ -1,0 +1,58 @@
+{
+  "base": "http://127.0.0.1:5178",
+  "results": [
+    {
+      "name": "LOGIN",
+      "status": "PASS",
+      "detail": "登录成功（BASE=http://127.0.0.1:5178），已获得 access_token"
+    },
+    {
+      "name": "P0-B2-GET/modules",
+      "status": "PASS",
+      "detail": "http=200 已启用模块键=[]"
+    },
+    {
+      "name": "P0-B1-GET/license",
+      "status": "PASS",
+      "detail": "http=200 tenant=default license_status=null license_expires_at=null"
+    },
+    {
+      "name": "P0-B13-GET/roles",
+      "status": "PASS",
+      "detail": "http=200 角色数=2 scope取值=[\"ALL\",\"ALL\"]"
+    },
+    {
+      "name": "P0-B9-GET/users",
+      "status": "PASS",
+      "detail": "http=200 用户数=2 含组织字段条数=2"
+    },
+    {
+      "name": "PAGE-M04产品",
+      "status": "PASS",
+      "detail": "route=#/basics/products 结构(grid+scroll:true) 列数=11(>1:true) 字段=11/预期11(一致:true) header=\"11 字段\"(N一致:true) 折叠按钮=false value色=rgb(30, 41, 59) 深色可读:true"
+    },
+    {
+      "name": "PAGE-M05工序",
+      "status": "PASS",
+      "detail": "route=#/basics/operations 结构(grid+scroll:true) 列数=13(>1:true) 字段=13/预期13(一致:true) header=\"13 字段\"(N一致:true) 折叠按钮=false value色=rgb(30, 41, 59) 深色可读:true"
+    },
+    {
+      "name": "PAGE-M01工艺路线",
+      "status": "PASS",
+      "detail": "route=#/basics/routes 结构(grid+scroll:true) 列数=12(>1:true) 字段=12/预期12(一致:true) header=\"12 字段\"(N一致:true) 折叠按钮=false value色=rgb(30, 41, 59) 深色可读:true"
+    },
+    {
+      "name": "PAGE-M03工作中心",
+      "status": "PASS",
+      "detail": "route=#/basics/work-centers 结构(grid+scroll:true) 列数=13(>1:true) 字段=13/预期13(一致:true) header=\"13 字段\"(N一致:true) 折叠按钮=false value色=rgb(30, 41, 59) 深色可读:true"
+    },
+    {
+      "name": "CONSOLE-ERRORS",
+      "status": "WARN",
+      "detail": "控制台错误 去重后共 1 条（与鉴权/token 相关 0 条），非鉴权类 1 条 | 样例: Failed to load resource: the server responded with a status of 404 (Not Found) | 404资源: [\"http://127.0.0.1:5178/vite.svg\"]"
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}
