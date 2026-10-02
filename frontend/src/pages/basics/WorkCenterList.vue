@@ -41,7 +41,7 @@ const showDialog_ = ref(false)
 const editing = ref<Partial<WorkCenter>>({})
 const isEdit = ref(false)
 
-// 高级检索 + 行展开
+// 高级检索 + 行展开（并集方式多列并排）
 const cfg = getSearchConfig('work-centers')
 const { conditions, applyFilter, removeCondition } = useAdvancedSearch<WorkCenter>(cfg)
 const list = computed<WorkCenter[]>(() =>
@@ -200,38 +200,62 @@ onMounted(() => {
     <!-- 列表 -->
     <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
     <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <van-cell-group v-else>
-      <van-cell
-        v-for="item in list"
-        :key="item.id"
-        @click="toggleExpand(item.id)"
-      >
-        <template #title>
-          <div class="flex items-center gap-2">
-            <span class="font-medium">{{ item.code }}</span>
-            <van-tag type="primary" size="small">{{ getWcTypeLabel(item.wc_type) }}</van-tag>
-            <van-tag v-if="!item.is_active" type="danger" size="small">禁用</van-tag>
-          </div>
-          <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
-        </template>
-        <template #label>
-          <div class="text-xs text-gray-400 mt-1">
-            效率: {{ (item.efficiency * 100).toFixed(0) }}% |
-            设备: {{ item.equipment_count }} 台 |
-            人员: {{ item.labor_count }} 人
-            <span v-if="item.is_esd"> | ESD</span>
-          </div>
-          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
-        </template>
-        <template #right-icon>
-          <div class="flex gap-1">
-            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="small" plain @click.stop="toggleExpand(item.id)" />
-            <van-button icon="edit" size="small" type="primary" plain @click.stop="openEdit(item)" />
-            <van-button icon="delete" size="small" type="danger" plain @click.stop="handleDelete(item)" />
-          </div>
-        </template>
-      </van-cell>
-    </van-cell-group>
+    <div v-else class="wc-table-wrap">
+      <table class="wc-table">
+        <thead>
+          <tr>
+            <th>工作中心编码</th>
+            <th>工作中心名称</th>
+            <th>类型</th>
+            <th class="num">效率</th>
+            <th class="num">设备数</th>
+            <th class="num">人员数</th>
+            <th>ESD</th>
+            <th>状态</th>
+            <th class="op">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="item in list" :key="item.id">
+            <tr @click="toggleExpand(item.id)">
+              <td>{{ item.code }}</td>
+              <td>{{ item.name }}</td>
+              <td>
+                <van-tag type="primary" size="small">{{ getWcTypeLabel(item.wc_type) }}</van-tag>
+              </td>
+              <td class="num">{{ (item.efficiency * 100).toFixed(0) }}%</td>
+              <td class="num">{{ item.equipment_count }}</td>
+              <td class="num">{{ item.labor_count }}</td>
+              <td>
+                <van-tag v-if="item.is_esd" type="warning" size="small">是</van-tag>
+                <span v-else class="text-gray-400">—</span>
+              </td>
+              <td>
+                <van-tag v-if="item.is_active" type="success" size="small">启用</van-tag>
+                <van-tag v-else type="default" size="small">禁用</van-tag>
+              </td>
+              <td class="op">
+                <div class="op-btns">
+                  <van-button
+                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                    size="mini"
+                    plain
+                    @click.stop="toggleExpand(item.id)"
+                  />
+                  <van-button icon="edit" size="mini" plain type="primary" @click.stop="openEdit(item)" />
+                  <van-button icon="delete" size="mini" plain type="danger" @click.stop="handleDelete(item)" />
+                </div>
+              </td>
+            </tr>
+            <tr v-if="expandedId === item.id" class="row-detail-row">
+              <td :colspan="9">
+                <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog
@@ -270,3 +294,76 @@ onMounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.wc-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wc-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: var(--ziwi-text-primary, #1e293b);
+  background: var(--ziwi-bg, #fff);
+}
+
+.wc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ziwi-bg-elevated, #f5f7fa);
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.wc-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  text-align: left;
+  vertical-align: middle;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.wc-table tbody td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.wc-table tbody td.op {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.op-btns {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
+.wc-table tbody tr.row-detail-row td {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
+  padding: 0;
+}
+
+.wc-table tbody tr:hover:not(.row-detail-row) {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.04));
+}
+
+@media (max-width: 768px) {
+  .wc-table {
+    font-size: 13px;
+  }
+  .wc-table thead th,
+  .wc-table tbody td {
+    padding: 8px 10px;
+  }
+}
+</style>

@@ -36,7 +36,7 @@ const showEditDialog = ref(false)
 const editing = ref<Partial<RouteItem>>({})
 const isEdit = ref(false)
 
-// 高级检索 + 行展开
+// 高级检索 + 行展开（并集方式多列并排）
 const cfg = getSearchConfig('routes')
 const { conditions, applyFilter, removeCondition } = useAdvancedSearch<RouteItem>(cfg)
 const list = computed<RouteItem[]>(() =>
@@ -260,61 +260,76 @@ onMounted(fetchData)
     <!-- 列表 -->
     <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
     <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <van-cell-group v-else>
-      <van-cell
-        v-for="item in list"
-        :key="item.id"
-        @click="goEditor(item)"
-        is-link
-      >
-        <template #title>
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="font-medium">{{ item.code }}</span>
-            <van-tag :type="statusColor(item.status)" size="small">{{ statusLabel(item.status) }}</van-tag>
-            <van-tag plain size="small">V{{ item.version }}</van-tag>
-            <van-tag plain size="small">{{ routeTypeLabel(item.route_type) }}</van-tag>
-          </div>
-          <div class="text-sm text-gray-500 mt-1">{{ item.name }}</div>
-        </template>
-        <template #label>
-          <div class="text-xs text-gray-400 mt-1">
-            工序步骤: {{ item.step_count }} 道
-            <span v-if="item.published_at"> | 发布于 {{ item.published_at?.slice(0, 10) }}</span>
-          </div>
-          <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
-        </template>
-        <template #right-icon>
-          <div class="flex gap-1" @click.stop>
-            <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="small" plain @click.stop="toggleExpand(item.id)" />
-            <van-button
-              v-if="item.status === 'draft'"
-              icon="edit" size="small" type="primary" plain
-              @click="openEdit(item)"
-            />
-            <van-button
-              v-if="item.status === 'draft'"
-              icon="success" size="small" type="success" plain
-              @click="handlePublish(item)"
-            />
-            <van-button
-              v-if="item.status === 'published'"
-              icon="records" size="small" type="warning" plain
-              @click="handleNewVersion(item)"
-            />
-            <van-button
-              v-if="item.status !== 'archived'"
-              icon="folder" size="small" plain
-              @click="handleArchive(item)"
-            />
-            <van-button
-              v-if="item.status === 'draft'"
-              icon="delete" size="small" type="danger" plain
-              @click="handleDelete(item)"
-            />
-          </div>
-        </template>
-      </van-cell>
-    </van-cell-group>
+    <div v-else class="route-table-wrap">
+      <table class="route-table">
+        <thead>
+          <tr>
+            <th>路线编码</th>
+            <th>路线名称</th>
+            <th class="num">版本</th>
+            <th>状态</th>
+            <th>路线类型</th>
+            <th class="num">步骤数</th>
+            <th class="op">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="item in list" :key="item.id">
+            <tr @click="toggleExpand(item.id)">
+              <td>{{ item.code }}</td>
+              <td>{{ item.name }}</td>
+              <td class="num">V{{ item.version }}</td>
+              <td>
+                <van-tag :type="statusColor(item.status)" size="small">{{ statusLabel(item.status) }}</van-tag>
+              </td>
+              <td>{{ routeTypeLabel(item.route_type) }}</td>
+              <td class="num">{{ item.step_count }}</td>
+              <td class="op">
+                <div class="op-btns">
+                  <van-button
+                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                    size="mini"
+                    plain
+                    @click.stop="toggleExpand(item.id)"
+                  />
+                  <van-button size="mini" plain icon="bars" @click.stop="goEditor(item)" title="工序编排" />
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    icon="edit" size="mini" plain type="primary"
+                    @click.stop="openEdit(item)"
+                  />
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    icon="success" size="mini" plain type="success"
+                    @click.stop="handlePublish(item)"
+                  />
+                  <van-button
+                    v-if="item.status === 'published'"
+                    icon="records" size="mini" plain type="warning"
+                    @click.stop="handleNewVersion(item)"
+                  />
+                  <van-button
+                    v-if="item.status !== 'archived'"
+                    icon="folder" size="mini" plain
+                    @click.stop="handleArchive(item)"
+                  />
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    icon="delete" size="mini" plain type="danger"
+                    @click.stop="handleDelete(item)"
+                  />
+                </div>
+              </td>
+            </tr>
+            <tr v-if="expandedId === item.id" class="row-detail-row">
+              <td :colspan="7">
+                <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
 
     <!-- 创建/编辑弹窗 -->
     <van-dialog
@@ -332,18 +347,8 @@ onMounted(fetchData)
             <SelectField v-model="editing.route_type" :options="ROUTE_TYPE_OPTIONS" class="w-full" />
           </template>
         </van-field>
-        <van-field label="生效日期" @click="showDateFrom = true">
-          <template #input>
-            <span v-if="editing.effective_from" class="text-sm">{{ editing.effective_from }}</span>
-            <span v-else class="text-sm text-gray-400">可选</span>
-          </template>
-        </van-field>
-        <van-field label="失效日期" @click="showDateTo = true">
-          <template #input>
-            <span v-if="editing.effective_to" class="text-sm">{{ editing.effective_to }}</span>
-            <span v-else class="text-sm text-gray-400">可选</span>
-          </template>
-        </van-field>
+        <van-field v-model="editing.effective_from" label="生效日期" type="date" placeholder="可选" />
+        <van-field v-model="editing.effective_to" label="失效日期" type="date" placeholder="可选" />
         <van-field v-model="editing.description" label="描述" type="textarea" rows="2" placeholder="可选" />
       </div>
     </van-dialog>
@@ -356,3 +361,78 @@ onMounted(fetchData)
     />
   </div>
 </template>
+
+<style scoped>
+.route-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.route-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: var(--ziwi-text-primary, #1e293b);
+  background: var(--ziwi-bg, #fff);
+}
+
+.route-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ziwi-bg-elevated, #f5f7fa);
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.route-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+  text-align: left;
+  vertical-align: middle;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+.route-table tbody td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.route-table tbody td.op {
+  text-align: right;
+  white-space: normal;
+}
+
+.op-btns {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  max-width: 340px;
+}
+
+/* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
+.route-table tbody tr.row-detail-row td {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
+  padding: 0;
+}
+
+.route-table tbody tr:hover:not(.row-detail-row) {
+  background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.04));
+}
+
+@media (max-width: 768px) {
+  .route-table {
+    font-size: 13px;
+  }
+  .route-table thead th,
+  .route-table tbody td {
+    padding: 8px 10px;
+  }
+}
+</style>
