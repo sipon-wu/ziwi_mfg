@@ -4,8 +4,17 @@
 -- 日期: 2026-07-10
 -- ============================================================
 
--- 1. 新增 cloud_uuid 列（UUID 格式，VARCHAR(36)）
-ALTER TABLE users ADD COLUMN cloud_uuid VARCHAR(36);
+-- 1. 新增 cloud_uuid 列（UUID 格式，VARCHAR(36)）—— 幂等：重跑不报错
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'cloud_uuid'
+    ) THEN
+        ALTER TABLE users ADD COLUMN cloud_uuid VARCHAR(36);
+    END IF;
+END
+$$;
 
 -- 2. 创建唯一约束（确保 cloud_uuid 全局唯一）
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_uuid ON users(cloud_uuid);

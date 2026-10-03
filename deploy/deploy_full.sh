@@ -54,6 +54,17 @@ docker network connect mfg1_default mfg1-backend 2>/dev/null || true
 docker restart mfg1-backend 2>/dev/null
 cd "$REPO_DIR"
 
+echo "[5.5/7] 应用数据库迁移（幂等，保留数据；不碰 mfg1-db 数据卷）"
+MIG_DIR="deploy/backend/migrations"
+PGU=$(docker exec mfg1-db printenv POSTGRES_USER 2>/dev/null || echo mfg)
+PGD=$(docker exec mfg1-db printenv POSTGRES_DB 2>/dev/null || echo mfg)
+for f in "$MIG_DIR"/*.sql; do
+  [ -f "$f" ] && docker exec -i mfg1-db psql -U "$PGU" -d "$PGD" -v ON_ERROR_STOP=0 < "$f" >/dev/null 2>&1 || true
+done
+# copilot 表依赖 pgvector；容器内未装时脚本自动降级关键词检索，不阻断部署
+docker exec mfg1-backend python /app/migrations/20261001_copilot.py >/dev/null 2>&1 || true
+echo "    迁移应用完成"
+
 echo "[6/7] 部署 ai-gateway（E1）+ 桥接 mfg1_default 网络"
 docker compose -f ai-gateway/docker-compose.ai.yml up -d
 docker network connect mfg1_default ziwi-ai-gateway 2>/dev/null || true
