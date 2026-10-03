@@ -3,7 +3,8 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://mirrors.tencent.com/pypi/simple
 
 WORKDIR /app
 
