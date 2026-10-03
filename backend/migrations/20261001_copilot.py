@@ -77,45 +77,54 @@ async def apply(url: str) -> int:
     engine = create_async_engine(url, **_engine_kwargs(url))
     changes = 0
 
+    # 先探测库内已有表与方言（独立事务，只读）
     async with engine.begin() as conn:
         dialect = conn.dialect.name
         existing = await conn.run_sync(_collect_tables)
 
-        # ── 1. pgvector 扩展（仅 PG）────────────────────────────────
-        if dialect == "postgresql":
-            try:
+    if dialect == "postgresql":
+        # ── 1. pgvector 扩展（独立事务；失败非致命，RAG 降级为关键词检索）
+        # 关键修复：原先与建表同事务，扩展失败会中止整个事务导致建表全失败。
+        # 现改为每步独立事务，扩展失败不再拖累 copilot_* 表的创建。
+        try:
+            async with engine.begin() as conn:
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                print("[apply] CREATE EXTENSION IF NOT EXISTS vector")
-                changes += 1
-            except Exception as exc:  # 权限不足时降级为关键词检索
-                print(f"[warn] 启用 pgvector 失败（将降级为关键词检索）: {exc}")
-        else:
-            print("[skip] 非 PostgreSQL，跳过 pgvector 扩展")
+            print("[apply] CREATE EXTENSION IF NOT EXISTS vector")
+            changes += 1
+        except Exception as exc:  # 未安装 pgvector / 权限不足 → 降级
+            print(f"[warn] 启用 pgvector 失败（将降级为关键词检索）: {exc}")
+    else:
+        print("[skip] 非 PostgreSQL，跳过 pgvector 扩展")
 
-        # ── 2. 建表（幂等：create_all 只建缺失表）────────────────────
-        missing = [t for t in tables if t.name not in existing]
-        if missing:
-            await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=missing))
-            for t in missing:
-                print(f"[apply] CREATE TABLE {t.name}")
-                changes += 1
-        else:
-            print("[skip] Copilot 表均已存在")
+    # ── 2. 建表（独立事务；幂等 create_all 只建缺失表）──────────────
+    try:
+        async with engine.begin() as conn:
+            missing = [t for t in tables if t.name not in existing]
+            if missing:
+                await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=missing))
+                for t in missing:
+                    print(f"[apply] CREATE TABLE {t.name}")
+                    changes += 1
+            else:
+                print("[skip] Copilot 表均已存在")
+    except Exception as exc:  # 防御：建表异常不阻断部署
+        print(f"[error] 建表失败（请检查日志）: {exc}")
 
-        # ── 3. PG: 向量列 + 索引 ────────────────────────────────────
-        if dialect == "postgresql" and "copilot_doc_chunks" in existing + {t.name for t in tables}:
-            cols = await conn.run_sync(
-                lambda c: {col["name"] for col in inspect(c).get_columns("copilot_doc_chunks")}
-            )
-            if "embedding" not in cols:
-                try:
+    # ── 3. PG: 向量列（独立事务；仅当上一步表已存在且列缺失时尝试）─
+    if dialect == "postgresql":
+        try:
+            async with engine.begin() as conn:
+                cols = await conn.run_sync(
+                    lambda c: {col["name"] for col in inspect(c).get_columns("copilot_doc_chunks")}
+                )
+                if "embedding" not in cols:
                     await conn.execute(
                         text(f"ALTER TABLE copilot_doc_chunks ADD COLUMN embedding vector({EMBED_DIM})")
                     )
                     print("[apply] ALTER TABLE copilot_doc_chunks ADD COLUMN embedding vector")
                     changes += 1
-                except Exception as exc:
-                    print(f"[warn] 增加 embedding 列失败（将降级为关键词检索）: {exc}")
+        except Exception as exc:
+            print(f"[warn] 增加 embedding 列失败（将降级为关键词检索）: {exc}")
 
     await engine.dispose()
     return changes
