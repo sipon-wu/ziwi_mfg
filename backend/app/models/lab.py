@@ -1,6 +1,6 @@
 # M15 实验室管理 — 数据库模型
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, ForeignKey, Numeric
 from app.core.database import Base
 
 
@@ -36,8 +36,9 @@ class LabTestResult(Base):
     tenant_id = Column(String(64), nullable=False, index=True)
     request_id = Column(Integer, ForeignKey("lab_requests.id", ondelete="CASCADE"), nullable=False)
     item_name = Column(String(128), nullable=False)
+    # spec_value 保持文本（区间描述，如 "0~1.6"）；actual_value 改数值型，与 lower/upper_limit 同类型便于判定
     spec_value = Column(String(256))
-    actual_value = Column(String(256))
+    actual_value = Column(Numeric(18, 6))
     unit = Column(String(32))
     lower_limit = Column(Float, nullable=True)
     upper_limit = Column(Float, nullable=True)

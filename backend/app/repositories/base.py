@@ -1,6 +1,7 @@
 # Repository 抽象基类 + 多租户实现
 import re
 from abc import ABC, abstractmethod
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,9 +36,23 @@ class Repository(ABC):
         Repository._sanitize_field_names(data)
         return ", ".join([f"{k} = :{k}" for k in data.keys()])
 
+    @staticmethod
+    def _row_to_dict(row) -> Dict[str, Any]:
+        """行 → dict，并把 Decimal 归一化为 float。
+
+        PostgreSQL 的 NUMERIC 列经 asyncpg 返回 Decimal，而 Decimal 无法被
+        JSONResponse 直接序列化（会 500）。在公共出口统一转 float，
+        使「列类型改 Numeric」对 API 层透明，无需逐个接口改。
+        """
+        d = dict(row._mapping)
+        for k, v in d.items():
+            if isinstance(v, Decimal):
+                d[k] = float(v)
+        return d
+
     async def query(self, sql: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         result = await self._session.execute(text(sql), params or {})
-        return [dict(row._mapping) for row in result]
+        return [self._row_to_dict(row) for row in result]
 
     async def rollback(self):
         """回滚当前事务"""
@@ -66,7 +81,7 @@ class Repository(ABC):
     async def query_one(self, sql: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         result = await self._session.execute(text(sql), params or {})
         row = result.first()
-        return dict(row._mapping) if row else None
+        return self._row_to_dict(row) if row else None
 
     async def query_page(self, sql: str, params: Dict[str, Any] = None, page: int = 1, page_size: int = 20) -> dict:
         # 先查总数
@@ -79,7 +94,7 @@ class Repository(ABC):
         page_sql = f"{sql} LIMIT :_limit OFFSET :_offset"
         page_params = {**(params or {}), "_limit": page_size, "_offset": offset}
         result = await self._session.execute(text(page_sql), page_params)
-        items = [dict(row._mapping) for row in result]
+        items = [self._row_to_dict(row) for row in result]
         
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 

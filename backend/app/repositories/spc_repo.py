@@ -110,7 +110,7 @@ class SpcDataPointRepository(MultiTenantRepository):
               AND io.process_id = :process_id
               AND ir.item_id = :item_id
               AND ir.measured_value IS NOT NULL
-              AND ir.measured_value != ''
+              -- 注：measured_value 已改为 NUMERIC（原为 VARCHAR，靠 != '' 过滤空串）
             ORDER BY io.created_at ASC
             LIMIT :lim
         """

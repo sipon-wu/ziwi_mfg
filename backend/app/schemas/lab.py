@@ -63,7 +63,7 @@ class LabTestResultResponse(BaseModel):
     request_id: int
     item_name: str
     spec_value: Optional[str] = None
-    actual_value: Optional[str] = None
+    actual_value: Optional[float] = None
     unit: Optional[str] = None
     lower_limit: Optional[float] = None
     upper_limit: Optional[float] = None
@@ -77,7 +77,7 @@ class LabTestResultResponse(BaseModel):
 class CreateTestResult(BaseModel):
     item_name: str
     spec_value: Optional[str] = None
-    actual_value: Optional[str] = None
+    actual_value: Optional[float] = None
     unit: Optional[str] = None
     lower_limit: Optional[float] = None
     upper_limit: Optional[float] = None

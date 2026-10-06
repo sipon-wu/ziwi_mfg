@@ -20,6 +20,11 @@ class User(Base):
     # ── B7: 用户主组织归属（组织树由 B3 的 organizations 表承载，本轮仅存 ID）──
     primary_org_id = Column(BigInteger, comment="主组织ID（指向 organizations.id，见任务 B3）")
 
+    # cloud.ziwi.cn 统一身份：JWT sub(UUID)。
+    # 注意：本列**不进** UserRepository._USER_COLUMNS 公共查询清单（见 user_repo.py 顶部注释），
+    # 以免本地 SQLite 老库未补列时炸掉登录/列表路径；仅 cloud 登录分支按需使用。
+    cloud_uuid = Column(String(36), comment="cloud IdP 用户UUID")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

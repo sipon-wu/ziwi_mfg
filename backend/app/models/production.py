@@ -36,6 +36,7 @@ class WorkOrderStatusLog(Base):
     __tablename__ = "work_order_status_logs"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False, comment="租户ID")
     work_order_id = Column(BigInteger, nullable=False, comment="工单ID")
     from_status = Column(String(50), comment="原状态")
     to_status = Column(String(50), nullable=False, comment="目标状态")

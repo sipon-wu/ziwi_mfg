@@ -86,8 +86,8 @@ class InspectionItemResponse(BaseModel):
     id: int
     standard_id: int
     item_name: str
-    spec_upper_limit: Optional[str] = None
-    spec_lower_limit: Optional[str] = None
+    spec_upper_limit: Optional[float] = None
+    spec_lower_limit: Optional[float] = None
     unit: Optional[str] = None
     method: Optional[str] = None
     sort_order: int = 0
@@ -99,8 +99,8 @@ class InspectionItemResponse(BaseModel):
 class CreateInspectionItemRequest(BaseModel):
     standard_id: int
     item_name: str
-    spec_upper_limit: Optional[str] = None
-    spec_lower_limit: Optional[str] = None
+    spec_upper_limit: Optional[float] = None
+    spec_lower_limit: Optional[float] = None
     unit: Optional[str] = None
     method: Optional[str] = None
     sort_order: int = 0
@@ -108,8 +108,8 @@ class CreateInspectionItemRequest(BaseModel):
 
 class UpdateInspectionItemRequest(BaseModel):
     item_name: Optional[str] = None
-    spec_upper_limit: Optional[str] = None
-    spec_lower_limit: Optional[str] = None
+    spec_upper_limit: Optional[float] = None
+    spec_lower_limit: Optional[float] = None
     unit: Optional[str] = None
     method: Optional[str] = None
     sort_order: Optional[int] = None
@@ -172,8 +172,8 @@ class InspectionResultResponse(BaseModel):
     item_id: Optional[int] = None
     item_name: Optional[str] = None
     spec_value: Optional[str] = None
-    measured_value: Optional[str] = None
-    deviation: Optional[str] = None
+    measured_value: Optional[float] = None
+    deviation: Optional[float] = None
     unit: Optional[str] = None
     result: str
     remark: Optional[str] = None
@@ -186,8 +186,8 @@ class CreateInspectionResultRequest(BaseModel):
     item_id: Optional[int] = None
     item_name: Optional[str] = None
     spec_value: Optional[str] = None
-    measured_value: Optional[str] = None
-    deviation: Optional[str] = None
+    measured_value: Optional[float] = None
+    deviation: Optional[float] = None
     unit: Optional[str] = None
     # 检验项结论，与 models/quality.py InspectionResult.result 注释一致（规范大写）。
     # 历史库内存在小写 pass 脏数据，读取侧已用 LOWER() 兼容；此处收紧写入，杜绝新增。
@@ -199,8 +199,8 @@ class UpdateInspectionResultRequest(BaseModel):
     item_id: Optional[int] = None
     item_name: Optional[str] = None
     spec_value: Optional[str] = None
-    measured_value: Optional[str] = None
-    deviation: Optional[str] = None
+    measured_value: Optional[float] = None
+    deviation: Optional[float] = None
     unit: Optional[str] = None
     result: Optional[Literal["PASS", "FAIL"]] = None
     remark: Optional[str] = None

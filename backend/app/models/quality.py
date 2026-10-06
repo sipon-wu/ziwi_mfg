@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Boolean, Text, DateTime
+from sqlalchemy import Column, BigInteger, String, Integer, Boolean, Text, DateTime, Numeric
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -42,8 +42,9 @@ class InspectionItem(Base):
     tenant_id = Column(String(50), nullable=False)
     standard_id = Column(BigInteger, nullable=False, comment="FK to inspection_standard.id")
     item_name = Column(String(200), nullable=False)
-    spec_upper_limit = Column(String(100))
-    spec_lower_limit = Column(String(100))
+    # 规格限改为数值型：SQL 层可直接 BETWEEN/比较（此前为 VARCHAR，"9">"10" 会逻辑错）
+    spec_upper_limit = Column(Numeric(18, 6))
+    spec_lower_limit = Column(Numeric(18, 6))
     unit = Column(String(20))
     method = Column(String(200))
     sort_order = Column(Integer, default=0)
@@ -78,9 +79,10 @@ class InspectionResult(Base):
     order_id = Column(BigInteger, nullable=False, comment="FK to inspection_order.id")
     item_id = Column(BigInteger, comment="FK to inspection_item.id")
     item_name = Column(String(200), comment="冗余字段")
+    # spec_value 保持文本：实测为**区间描述**（如 "39.95~40.05"、"0~1.6"），非单值，不能改数值
     spec_value = Column(String(100))
-    measured_value = Column(String(100))
-    deviation = Column(String(100))
+    measured_value = Column(Numeric(18, 6))
+    deviation = Column(Numeric(18, 6))
     unit = Column(String(20))
     result = Column(String(10), comment="PASS/FAIL")
     remark = Column(Text)

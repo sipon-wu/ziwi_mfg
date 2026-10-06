@@ -13,25 +13,25 @@ set -euo pipefail
 REPO_DIR="/opt/ziwi/mfg"
 cd "$REPO_DIR"
 
-echo "[1/5] 清理可能挡 git pull 的游离迁移文件（已知 blocker，幂等）"
-rm -f backend/migrations/add_work_order_status_logs_tenant_id.sql || true
-
-echo "[2/5] 拉取 origin/main（仅更新 backend/ 源码；CVM 上 backend/ 是纯部署目标，勿直接改）"
+echo "[1/5] 拉取 origin/main（仅更新 backend/ 源码；CVM 上 backend/ 是纯部署目标，勿直接改）"
 git checkout -- . || true
 git pull --ff-only
 
-echo "[3/5] rsync backend/ -> deploy/backend/（保留 deploy 的优化 Dockerfile）"
+echo "[2/5] rsync backend/ -> deploy/backend/（保留 deploy 的优化 Dockerfile）"
 rsync -a --exclude=Dockerfile --exclude=.git backend/ deploy/backend/
 
-echo "[4/5] 重建 mfg1-backend（不碰 mfg1-db）"
+echo "[3/5] 重建 mfg1-backend（不碰 mfg1-db）"
 cd deploy
 docker rm -f mfg1-backend 2>/dev/null || true
 docker compose up -d --no-deps --build mfg-backend
 
-echo "[5/6] 连接 DB 网络 mfg1_default（新版容器只连 deploy_default，DB 在 mfg1_default）"
+echo "[4/5] 连接 DB 网络 mfg1_default（新版容器只连 deploy_default，DB 在 mfg1_default）"
 docker network connect mfg1_default mfg1-backend 2>/dev/null || true
 docker restart mfg1-backend 2>/dev/null
 sleep 3
+
+echo "[5/6] 结构漂移迁移（补列 + 数值列类型收紧，幂等，失败不阻断）"
+docker exec -w /app mfg1-backend python /app/migrations/20261006_missing_columns.py || true
 
 echo "[6/6] 等待健康 + 轻量验证"
 sleep 10
