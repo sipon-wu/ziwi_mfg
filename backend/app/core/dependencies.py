@@ -17,9 +17,12 @@ from app.core.security import (
     TokenVerifyError,
     verify_cloud_token,
     verify_local_token,
+    pwd_context,
 )
 from app.repositories.user_repo import UserRepository
 from app.repositories.tenant_repo import TenantRepository
+from app.repositories.api_key_repo import ApiKeyRepository
+from app.models.api_key import API_KEY_PREFIX_LEN
 
 T = TypeVar("T")
 
@@ -161,6 +164,81 @@ async def get_feature_flags(
 
     tenant_repo = TenantRepository(db)
     return await tenant_repo.get_feature_flags_by_tenant_id(tenant_id)
+
+
+async def get_api_key_user(
+    x_api_key: str = Header(default=None, alias="X-API-Key"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Integration Gateway — API Key 认证依赖（IG MVP）。
+
+    用于服务器到服务器（OA / HR / LIMS / ERP）对接：调用方在请求头携带
+    `X-API-Key: ziwi_<48hex>`，本依赖校验前缀定位 + bcrypt 比对 + 启用/过期状态，
+    成功后注入 `{auth_type, tenant_id, key_id, key_name, permissions}`，供集成路由使用。
+
+    Raises:
+        HTTPException 401: 缺失 / 格式错误 / 无效 / 已吊销 / 已过期 / 不匹配
+    """
+    import json
+    from datetime import datetime, timezone
+
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "MISSING_API_KEY", "message": "X-API-Key 请求头缺失"},
+        )
+    if not x_api_key.startswith("ziwi_") or len(x_api_key) < API_KEY_PREFIX_LEN:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "INVALID_API_KEY", "message": "API Key 格式无效"},
+        )
+
+    key_prefix = x_api_key[:API_KEY_PREFIX_LEN]
+    repo = ApiKeyRepository(db)
+    row = await repo.get_by_prefix(key_prefix)
+    if not row:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "INVALID_API_KEY", "message": "API Key 无效"},
+        )
+    if not row.get("is_active"):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "API_KEY_REVOKED", "message": "API Key 已吊销"},
+        )
+    expires_at = row.get("expires_at")
+    if expires_at and expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "API_KEY_EXPIRED", "message": "API Key 已过期"},
+        )
+    if not pwd_context.verify(x_api_key, row["key_hash"]):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "INVALID_API_KEY", "message": "API Key 无效"},
+        )
+
+    # IP 白名单（可选）
+    allowed_ips = json.loads(row["allowed_ips"]) if row.get("allowed_ips") else []
+    if allowed_ips:
+        client_ip = ""  # 由反向代理在 X-Forwarded-For 透传，MVP 阶段不强制
+        # 注意：MVP 不强制校验 IP；生产应在网关层据 X-Forwarded-For 校验
+        _ = client_ip
+
+    # 异步刷新最近使用时间（不阻塞响应）
+    try:
+        await repo.update_last_used(row["id"])
+    except Exception:
+        pass
+
+    permissions = json.loads(row["permissions"]) if row.get("permissions") else []
+    return {
+        "auth_type": "api_key",
+        "tenant_id": row["tenant_id"],
+        "key_id": row["id"],
+        "key_name": row.get("key_name"),
+        "permissions": permissions,
+    }
 
 
 def get_tenant_repo(repo_class: Type[T], require_auth: bool = True) -> Callable[[], T]:

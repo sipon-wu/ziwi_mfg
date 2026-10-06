@@ -40,6 +40,7 @@ from app.models.copilot import (
     CopilotSession, CopilotMessage, CopilotFeedback, CopilotAskLog,
     MetricDefinition, CopilotDocChunk,
 )
+from app.models.api_key import ApiKey
 
 __all__ = [
     "Tenant", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
@@ -81,4 +82,6 @@ __all__ = [
     # AI Copilot（E1）
     "CopilotSession", "CopilotMessage", "CopilotFeedback", "CopilotAskLog",
     "MetricDefinition", "CopilotDocChunk",
+    # Integration Gateway（IG MVP）
+    "ApiKey",
 ]
