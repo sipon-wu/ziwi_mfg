@@ -40,7 +40,7 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from sqlalchemy import inspect, text  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 # (表名, 列名, 列DDL)
 ADD_COLUMNS = [
@@ -61,12 +61,23 @@ NUMERIC_TYPE = "NUMERIC(18,6)"
 NUMERIC_RE = r"^-?[0-9]+(\.[0-9]+)?$"
 
 
-def _existing_columns(sync_conn, table: str) -> dict:
-    """返回 {列名: 类型字符串(大写)}，表不存在返回 {}。"""
-    insp = inspect(sync_conn)
-    if table not in insp.get_table_names():
+async def _fetch_columns(conn, dialect: str, table: str) -> dict:
+    """返回 {列名: 类型字符串(大写)}；表不存在返回 {}。
+
+    注意：async 连接下**不能**访问 conn.sync_connection（会抛 greenlet_spawn 错误），
+    所以这里直接用 SQL 查元数据，而不是 sqlalchemy.inspect。
+    """
+    try:
+        if dialect == "sqlite":
+            res = await conn.execute(text(f"PRAGMA table_info({table})"))
+            return {r[1]: (r[2] or "").upper() for r in res}
+        res = await conn.execute(text(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = :t"
+        ), {"t": table})
+        return {r[0]: (r[1] or "").upper() for r in res}
+    except Exception:
         return {}
-    return {c["name"]: str(c["type"]).upper() for c in insp.get_columns(table)}
 
 
 async def _scalar(conn, sql, params=None):
@@ -85,19 +96,19 @@ async def apply() -> int:
     async with engine.begin() as conn:
         cols_cache = {}
 
-        def cols(table):
+        async def cols(table):
             if table not in cols_cache:
-                cols_cache[table] = _existing_columns(conn.sync_connection, table)
+                cols_cache[table] = await _fetch_columns(conn, dialect, table)
             return cols_cache[table]
 
         # ── 1. 补列 ──
         for table, column, ddl in ADD_COLUMNS:
-            existing = cols(table)
+            existing = await cols(table)
             if not existing:
                 print(f"[skip] 表 {table} 不存在")
                 continue
             if column in existing:
-                print(f"[skip] {table}.{column} 已存在")
+                print(f"[skip] {table}.{column} 已存在 ({existing[column]})")
                 continue
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
             print(f"[apply] ALTER TABLE {table} ADD COLUMN {column} {ddl}")
@@ -105,14 +116,14 @@ async def apply() -> int:
             changes += 1
 
         # ── 2. 唯一索引（cloud_uuid 全局唯一）──
-        if dialect == "postgresql" and "cloud_uuid" in cols("users"):
+        if dialect == "postgresql" and "cloud_uuid" in (await cols("users")):
             await conn.execute(
                 text("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_uuid ON users(cloud_uuid)")
             )
 
         # ── 3. 数值语义列类型收紧 ──
         for table, column in NUMERIC_COLUMNS:
-            existing = cols(table)
+            existing = await cols(table)
             if not existing:
                 print(f"[skip] 表 {table} 不存在")
                 continue

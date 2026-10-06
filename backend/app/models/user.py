@@ -1,4 +1,5 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import (Column, BigInteger, String, Boolean, DateTime, ForeignKey,
+                        UniqueConstraint, Index, text)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -65,8 +66,14 @@ class UserOrganization(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "user_id", "org_id", name="uq_user_org"),
         # 部分唯一索引：同一用户最多一个主组织（SQLite / PostgreSQL 各自方言关键字）
+        # 部分唯一索引：同一用户最多一个主组织。
+        # 注意：PG 的 is_primary 是真 BOOLEAN，写 "= 1" 会报错
+        #   `operator does not exist: boolean = integer`
+        # → 全新空库 create_all 建索引阶段直接失败（此前一直是靠老库规避，未暴露）。
+        # 故按方言分别给条件。
         Index("uq_user_primary_org", "user_id", unique=True,
-              sqlite_where="is_primary = 1", postgresql_where="is_primary = 1"),
+              sqlite_where=text("is_primary = 1"),
+              postgresql_where=text("is_primary")),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
