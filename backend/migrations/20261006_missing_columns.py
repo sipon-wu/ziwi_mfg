@@ -48,6 +48,11 @@ ADD_COLUMNS = [
     ("users", "cloud_uuid", "VARCHAR(36)"),
 ]
 
+# 需要收紧为 NOT NULL 的列（必须与模型 nullable=False 一致，不要多列）
+NOT_NULL_COLUMNS = [
+    ("work_order_status_logs", "tenant_id"),
+]
+
 # 需要收紧为数值型的列（保留文本的列不要放进来）
 NUMERIC_COLUMNS = [
     ("inspection_item", "spec_upper_limit"),
@@ -112,6 +117,34 @@ async def apply() -> int:
                 continue
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
             print(f"[apply] ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            cols_cache.pop(table, None)
+            changes += 1
+
+        # ── 1b. 收紧为 NOT NULL（仅对模型声明 nullable=False 的列）──
+        # 例：work_order_status_logs.tenant_id 当年手工补列时未带约束，
+        #     而模型是 nullable=False —— 两侧不一致，这里对齐。
+        # 注意：users.cloud_uuid 模型可空，**不在**收紧范围内。
+        # PG 对已是 NOT NULL 的列重复 SET NOT NULL 不报错，故可直接执行。
+        for table, column in NOT_NULL_COLUMNS:
+            if dialect != "postgresql":
+                continue
+            if column not in (await cols(table)):
+                continue
+            already = await _scalar(
+                conn,
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = :c AND is_nullable = 'YES'",
+                {"t": table, "c": column},
+            )
+            if not already:
+                print(f"[skip] {table}.{column} 已是 NOT NULL")
+                continue
+            nulls = await _scalar(conn, f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL")
+            if nulls:
+                print(f"[warn] {table}.{column} 有 {nulls} 行 NULL，跳过 SET NOT NULL（需先回填）")
+                continue
+            await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL"))
+            print(f"[apply] ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL")
             cols_cache.pop(table, None)
             changes += 1
 
