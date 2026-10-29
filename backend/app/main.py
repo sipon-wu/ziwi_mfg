@@ -1,15 +1,18 @@
 # FastAPI 应用入口
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uuid
 
 from app.core.config import get_settings
 from app.core.database import init_db, ensure_engine
+from app.core.permissions import (
+    assert_all_routes_declared, build_permission_map, permission_guard,
+)
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
-from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system, integration_gateway
+from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system, integration_gateway, ncr
 from app.copilot import router as copilot_router
 
 settings = get_settings()
@@ -71,6 +74,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
     debug=settings.IS_DEBUG,
+    # S1：全局权限依赖。所有 /api 路由先过 permission_guard，
+    # 豁免路径（登录/健康检查/文档）在 guard 内部跳过。
+    # 默认影子模式（PERMISSION_ENFORCE=false）：只记日志不阻断。
+    dependencies=[Depends(permission_guard)],
 )
 
 # CORS
@@ -107,11 +114,24 @@ app.include_router(basic_data.router)
 app.include_router(wms.router)
 app.include_router(trial.router)
 app.include_router(lab.router)
+app.include_router(ncr.router)
 app.include_router(system.router)
 # Integration Gateway（IG MVP）— API Key 认证
 app.include_router(integration_gateway.router)
 # AI Copilot（E1 只读 MVP）
 app.include_router(copilot_router.router)
+
+# ── S1：构建权限映射 + fail-closed 自检 ──
+# 必须在全部 include_router 之后执行；缺失路由清单为空才允许（strict 模式下）启动。
+_PERM_MAP = build_permission_map(app)
+_PERM_PROBLEMS = assert_all_routes_declared(app)
+if _PERM_PROBLEMS:
+    _msg = f"权限映射自检发现 {len(_PERM_PROBLEMS)} 处异常: {_PERM_PROBLEMS[:10]}"
+    if settings.PERMISSION_STRICT_STARTUP:
+        raise RuntimeError(_msg)
+    print(f"[WARN] {_msg}")
+else:
+    print(f"[INFO] 权限映射自检通过，共 {len(_PERM_MAP)} 条路由")
 
 # 健康检查
 @app.get("/health")

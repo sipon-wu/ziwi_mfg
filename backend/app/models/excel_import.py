@@ -1,11 +1,11 @@
 from sqlalchemy import Column, BigInteger, String, Integer, DateTime, Text, JSON
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class ExcelImportTask(Base):
     __tablename__ = "excel_import_tasks"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     task_name = Column(String(200), nullable=False, comment="任务名称")
     file_name = Column(String(500), nullable=False, comment="原始文件名")
@@ -24,7 +24,7 @@ class ExcelImportTask(Base):
 class ImportTemplate(Base):
     __tablename__ = "import_templates"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     import_type = Column(String(50), unique=True, nullable=False, comment="导入类型编码")
     template_name = Column(String(200), nullable=False, comment="模板名称")
     description = Column(Text, comment="模板说明")

@@ -93,7 +93,7 @@ async function fetchData() {
     const nodes = await get<TreeNode[]>(`/fmea/documents/${docId}/tree`)
     treeNodes.value = buildTree(nodes)
 
-    const itemsRes = await get<{ items: FmeaItem[]; total: number }>('/fmea/items', { doc_id: docId, page_size: 500 })
+    const itemsRes = await get<{ items: FmeaItem[]; total: number }>('/fmea/items', { doc_id: docId, page_size: 100 })
     fmeaItems.value = itemsRes.items || []
   } catch (e) {
     showToast('加载FMEA数据失败')

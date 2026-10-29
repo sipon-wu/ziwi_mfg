@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { showToast } from 'vant'
 import router from '@/router'
 
 const client = axios.create({
@@ -18,12 +19,25 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (res) => res,
   (error) => {
-    const { code } = error.response?.data || {}
-    if (code === '401-1001' || code === '401-0000') {
+    const status = error.response?.status
+    const payload = error.response?.data || {}
+    const { code } = payload
+    const detail = payload.detail || {}
+
+    if (code === '401-1001' || code === '401-0000' || status === 401) {
       localStorage.removeItem('access_token')
       localStorage.removeItem('user_info')
       router.push('/login')
+      return Promise.reject(error)
     }
+
+    // S1：后端 permission_guard 拒绝 → 提示缺少哪条权限，不跳转
+    // （跳转会打断用户正在进行的操作，例如批量提交中的一条）
+    if (status === 403 && detail.code === '403-0001') {
+      showToast(`缺少权限：${detail.required || '未知'}`)
+      return Promise.reject(error)
+    }
+
     return Promise.reject(error)
   }
 )

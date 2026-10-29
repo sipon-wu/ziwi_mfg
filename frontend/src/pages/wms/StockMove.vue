@@ -15,7 +15,7 @@ const showSrcLocPicker = ref(false)
 const showTgtLocPicker = ref(false)
 
 async function loadWarehouses() { warehouses.value = await get<any[]>('/wms/warehouses/all/active') }
-async function loadMaterials() { materials.value = await get<any[]>('/wms/materials', { page: 1, page_size: 200 }).then(r => (r as any).items) }
+async function loadMaterials() { materials.value = await get<any[]>('/wms/materials', { page: 1, page_size: 100 }).then(r => (r as any).items) }
 async function loadLocations() {
   if (!selectedWh.value) return
   locations.value = await get<any[]>(`/wms/warehouses/${selectedWh.value}/locations`)

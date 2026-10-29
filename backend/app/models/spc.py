@@ -1,13 +1,13 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class SpcControlLimit(Base):
     """控制限配置"""
     __tablename__ = "spc_control_limits"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     chart_type = Column(String(20), nullable=False, comment="xbar_r / p / np")
     dimension_key = Column(String(200), nullable=False, comment="维度标识：product_id / process_id / item_id")
@@ -27,7 +27,7 @@ class SpcDataPoint(Base):
     """控制图数据点"""
     __tablename__ = "spc_data_points"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     chart_type = Column(String(20), nullable=False, comment="xbar_r / p / np")
     dimension_key = Column(String(200), nullable=False, comment="与 SpcControlLimit.dimension_key 对应")
@@ -48,7 +48,7 @@ class SpcAlert(Base):
     """判异告警记录"""
     __tablename__ = "spc_alerts"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     chart_type = Column(String(20), nullable=False, comment="xbar_r / p / np")
     dimension_key = Column(String(200), nullable=False)

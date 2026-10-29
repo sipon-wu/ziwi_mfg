@@ -1,13 +1,13 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime, Date
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class FmeaDocument(Base):
     """FMEA 文档"""
     __tablename__ = "fmea_documents"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     doc_no = Column(String(100), nullable=False, comment="文档编号")
     fmea_type = Column(String(20), nullable=False, comment="DFMEA / PFMEA")
@@ -31,7 +31,7 @@ class FmeaHierarchy(Base):
     """FMEA 结构树层级"""
     __tablename__ = "fmea_hierarchies"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     doc_id = Column(BigInteger, nullable=False, comment="FK to fmea_documents.id")
     parent_id = Column(BigInteger, comment="自引用父节点（null=根节点）")
@@ -46,7 +46,7 @@ class FmeaItem(Base):
     """FMEA 项（功能/失效模式/原因/控制/S/O/D/RPN）"""
     __tablename__ = "fmea_items"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     doc_id = Column(BigInteger, nullable=False, comment="FK to fmea_documents.id")
     hierarchy_id = Column(BigInteger, nullable=False, comment="FK to fmea_hierarchies.id")
@@ -72,7 +72,7 @@ class FmeaAction(Base):
     """FMEA 整改措施"""
     __tablename__ = "fmea_actions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     item_id = Column(BigInteger, nullable=False, comment="FK to fmea_items.id")
     action_desc = Column(Text, nullable=False, comment="措施描述")
@@ -93,7 +93,7 @@ class ControlPlan(Base):
     """控制计划（从 FMEA 自动生成）"""
     __tablename__ = "control_plans"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     fmea_doc_id = Column(BigInteger, nullable=False, comment="FK to fmea_documents.id")
     fmea_item_id = Column(BigInteger, nullable=False, comment="FK to fmea_items.id")

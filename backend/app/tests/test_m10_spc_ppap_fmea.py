@@ -521,15 +521,14 @@ class TestSpcChartAndCapabilityAPI:
         )
         assert resp.status_code == 404
 
-    @patch("app.api.spc.SpcDataPointRepository.get_inspection_data_for_xbar_r")
-    async def test_capability_analysis(self, mock_get_data, async_client):
+    @patch("app.api.spc.SpcDataPointRepository.list_points")
+    async def test_capability_analysis(self, mock_list_points, async_client):
         """Test process capability analysis."""
-        mock_get_data.return_value = [
-            {"measured_value": str(v)} for v in [
-                10.05, 10.03, 9.98, 10.00, 10.02, 10.01,
-                9.99, 10.04, 10.06, 9.97, 10.01, 10.03,
-            ]
+        vals = [
+            10.05, 10.03, 9.98, 10.00, 10.02, 10.01,
+            9.99, 10.04, 10.06, 9.97, 10.01, 10.03,
         ]
+        mock_list_points.return_value = {"items": [{"xbar": v} for v in vals], "total": len(vals)}
         resp = await async_client.get(
             "/api/v1/spc/capability-analysis"
             "?dimension_key=test&product_id=1&process_id=1&check_item=1"
@@ -543,20 +542,20 @@ class TestSpcChartAndCapabilityAPI:
         assert data["cpk"] is not None
         assert data["data_count"] == 12
 
-    @patch("app.api.spc.SpcDataPointRepository.get_inspection_data_for_xbar_r")
-    async def test_capability_analysis_no_data(self, mock_get_data, async_client):
+    @patch("app.api.spc.SpcDataPointRepository.list_points")
+    async def test_capability_analysis_no_data(self, mock_list_points, async_client):
         """Test capability with no data."""
-        mock_get_data.return_value = []
+        mock_list_points.return_value = {"items": [], "total": 0}
         resp = await async_client.get(
             "/api/v1/spc/capability-analysis"
             "?dimension_key=test&product_id=1&process_id=1&check_item=1"
         )
         assert resp.status_code == 400
 
-    @patch("app.api.spc.SpcDataPointRepository.get_inspection_data_for_xbar_r")
-    async def test_capability_analysis_insufficient_data(self, mock_get_data, async_client):
+    @patch("app.api.spc.SpcDataPointRepository.list_points")
+    async def test_capability_analysis_insufficient_data(self, mock_list_points, async_client):
         """Test capability with only 1 data point."""
-        mock_get_data.return_value = [{"measured_value": "10.0"}]
+        mock_list_points.return_value = {"items": [{"xbar": 10.0}], "total": 1}
         resp = await async_client.get(
             "/api/v1/spc/capability-analysis"
             "?dimension_key=test&product_id=1&process_id=1&check_item=1"

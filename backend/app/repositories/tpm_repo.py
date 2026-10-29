@@ -96,14 +96,19 @@ class TpmRepository(MultiTenantRepository):
         return await self.execute("DELETE FROM maintenance_tasks WHERE id = :id", {"id": id})
 
     # === 保养计划 ===
-    async def list_plans(self, equipment_id: int = None) -> List[Dict]:
-        sql = "SELECT mp.*, e.equipment_name FROM maintenance_plans mp LEFT JOIN equipment e ON e.id = mp.equipment_id WHERE 1=1"
+    async def list_plans(self, page: int = 1, page_size: int = 20, equipment_id: int = None) -> dict:
+        # 与 TpmService.list_plans(page, page_size) 对齐：返回分页 dict（此前签名是
+        # equipment_id 单参 + 返回 List，导致 API 传 3 参触发 TypeError 500）。
+        sql = (
+            "SELECT mp.*, e.equipment_name FROM maintenance_plans mp "
+            "LEFT JOIN equipment e ON e.id = mp.equipment_id WHERE 1=1"
+        )
         params = {}
         if equipment_id:
             sql += " AND mp.equipment_id = :eid"
             params["eid"] = equipment_id
         sql += " ORDER BY mp.next_execute_at"
-        return await self.query(sql, params)
+        return await self.query_page(sql, params, page=page, page_size=page_size)
 
     async def create_plan(self, data: dict) -> int:
         return await self.execute(

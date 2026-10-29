@@ -43,6 +43,18 @@ async def list_control_limits(
     return {"code": 0, "message": "success", "data": data}
 
 
+@router.get("/spc/control-limits/{limit_id}")
+async def get_control_limit(
+    limit_id: int,
+    repo: SpcControlLimitRepository = Depends(get_tenant_repo(SpcControlLimitRepository)),
+):
+    # 前端 ControlChart/CapabilityAnalysis 均按 id 拉取控制限配置，此前缺该端点导致 404
+    data = await repo.get_limit(limit_id)
+    if not data:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "控制限配置不存在"})
+    return {"code": 0, "message": "success", "data": data}
+
+
 @router.post("/spc/control-limits")
 async def create_control_limit(
     req: CreateSpcControlLimitRequest,
@@ -249,29 +261,36 @@ async def exclude_data_point(
 # ============================================================
 @router.get("/spc/capability-analysis")
 async def capability_analysis(
-    dimension_key: str = Query(...),
-    product_id: int = Query(...),
-    process_id: int = Query(...),
-    check_item: int = Query(...),
+    dimension_key: str = Query(..., description="维度标识（与控制限一致）"),
+    chart_type: str = Query("xbar-r", description="控制图类型"),
+    product_id: int = Query(None),
+    process_id: int = Query(None),
+    check_item: int = Query(None),
     usl: float = Query(None),
     lsl: float = Query(None),
     target: float = Query(None),
     repo: SpcDataPointRepository = Depends(get_tenant_repo(SpcDataPointRepository)),
 ):
-    """过程能力分析"""
-    raw_data = await repo.get_inspection_data_for_xbar_r(
-        product_id, process_id, check_item,
-    )
-    if not raw_data:
-        raise HTTPException(400, detail={"code": "400-0000", "message": "无可用数据"})
+    """过程能力分析（与控制图同源：按 dimension_key 从 spc_data_points 取 xbar）。
 
+    原实现依赖 `inspection_order.product_id`，但该表并无 product_id 列（结构漂移），
+    且前端传入的是占位 0，整条取数链路从未真正打通（此前被测试 mock 掩盖）。
+    改为与控制图一致的取数路径：按 dimension_key + chart_type 读取数据点子组均值。
+    """
+    points = await repo.list_points(dimension_key, chart_type, page=1, page_size=500)
+    raw_data = points.get("items", []) if isinstance(points, dict) else []
     values = []
     for row in raw_data:
+        val = row.get("xbar")
+        if val is None:
+            continue
         try:
-            values.append(float(row.get("measured_value", "")))
+            values.append(float(val))
         except (ValueError, TypeError):
             continue
 
+    if not values:
+        raise HTTPException(400, detail={"code": "400-0000", "message": "无可用数据"})
     if len(values) < 2:
         raise HTTPException(400, detail={"code": "400-0000", "message": "数据点不足"})
 

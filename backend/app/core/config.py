@@ -30,6 +30,13 @@ class Settings(BaseSettings):
             return "sqlite+aiosqlite:///./ziwi.db"
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
+    # ── 权限体系（S1/S2）──
+    # False = 影子模式：只记录"本该 403 但放行"，不阻断。用于切换前对齐初始权限。
+    # True  = 强制模式：无权限直接 403。
+    PERMISSION_ENFORCE: bool = False
+    # True 时启动会校验"每个 /api/v1 路由都有权限声明"，缺失则启动失败（fail-closed）。
+    PERMISSION_STRICT_STARTUP: bool = False
+
     # Redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379

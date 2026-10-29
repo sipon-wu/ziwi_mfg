@@ -1,43 +1,51 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { get } from '@/api/client'
+import { get, put } from '@/api/client'
+import { showToast } from 'vant'
 
 const route = useRoute()
 const router = useRouter()
 
-// 后端实际字段为 order_type（仅 first/inspection/spot_check，见 models/quality.py:60）与 result（ACC/REJ/UAI，未判定时为 pending）
-// 这里同时保留 QA 命名的 qc_type/status/judge_result 作为兜底，绝不留空
+// 对齐后端：order_type ∈ first/inspection/spot_check；result ∈ ACC/REJ/UAI（未判定 pending）
 const ORDER_TYPE_MAP: Record<string, string> = {
   first: '首件检验',
   inspection: '过程检验',
   spot_check: '抽检',
 }
-const STATUS_MAP: Record<string, string> = {
-  pending: '待检验',
-  inspecting: '检验中',
-  completed: '已完成',
-  closed: '已关闭',
-  rejected: '已驳回',
-  ACC: '已合格',
-  REJ: '已不合格',
-  UAI: '待判定',
-}
-const JUDGE_MAP: Record<string, string> = {
+const RESULT_MAP: Record<string, string> = {
+  pending: '待判定',
   ACC: '合格',
   REJ: '不合格',
   UAI: '待判定',
-  pass: '合格',
-  fail: '不合格',
-  pending: '待判定',
-  conditional: '有条件接收',
 }
 
 const order = ref<any>(null)
+const judging = ref(false)
 
 async function fetch() {
-  const res = await get(`/inspection-orders/${route.params.id}`)
-  order.value = res
+  order.value = await get(`/inspection-orders/${route.params.id}`)
+}
+
+async function judge(result: string) {
+  judging.value = true
+  try {
+    const res: any = await put(`/inspection-orders/${route.params.id}/judge`, { result })
+    if (result === 'REJ' && res?.ncr_id) {
+      showToast(`已自动发起不合格评审 #${res.ncr_id}`)
+    } else if (result === 'ACC') {
+      showToast('判定为合格')
+    } else if (result === 'UAI') {
+      showToast('已标记待判定')
+    } else {
+      showToast('判定完成')
+    }
+    await fetch()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail?.message || '判定失败')
+  } finally {
+    judging.value = false
+  }
 }
 
 onMounted(fetch)
@@ -48,11 +56,26 @@ onMounted(fetch)
     <van-nav-bar title="检验详情" left-arrow @click-left="() => router.push('/quality')" />
     <div style="padding:16px;">
       <van-cell-group title="检验单信息">
-        <van-cell title="检验单号" :value="'#'+order.id" />
-        <van-cell title="检验类型" :value="ORDER_TYPE_MAP[order.order_type] || order.qc_type || order.order_type || '-'" />
-        <van-cell title="状态" :value="STATUS_MAP[order.status] || STATUS_MAP[order.result] || order.status || order.result || '-'" />
-        <van-cell title="检验结果" :value="JUDGE_MAP[order.judge_result] || JUDGE_MAP[order.result] || order.judge_result || order.result || '-'" />
+        <van-cell title="检验单号" :value="order.order_no || ('#' + order.id)" />
+        <van-cell title="检验类型" :value="ORDER_TYPE_MAP[order.order_type] || order.order_type || '-'" />
+        <van-cell title="判定结果" :value="RESULT_MAP[order.result] || order.result || '-'" />
         <van-cell title="创建时间" :value="order.created_at || '-'" />
+        <van-cell v-if="order.remark" title="备注" :value="order.remark" />
+      </van-cell-group>
+
+      <van-cell-group title="判定" style="margin-top:12px;">
+        <div style="padding:12px; display:flex; gap:10px;">
+          <van-button type="success" size="small" :loading="judging" @click="judge('ACC')">合格</van-button>
+          <van-button type="danger" size="small" :loading="judging" @click="judge('REJ')">不合格</van-button>
+          <van-button type="warning" size="small" :loading="judging" @click="judge('UAI')">待判定</van-button>
+        </div>
+        <van-cell
+          v-if="order.result === 'REJ'"
+          title="已自动发起不合格评审（NCR）"
+          is-link
+          @click="router.push('/quality/ncr')"
+          value="查看"
+        />
       </van-cell-group>
     </div>
   </div>

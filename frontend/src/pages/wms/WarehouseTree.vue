@@ -30,7 +30,7 @@ async function selectWarehouse(wh: Warehouse) {
 
 async function selectZone(zone: Zone) {
   selectedZone.value = zone.id
-  const res = await get<PaginatedResponse<Location>>(`/wms/zones/${zone.id}/locations`, { page: 1, page_size: 200 })
+  const res = await get<PaginatedResponse<Location>>(`/wms/zones/${zone.id}/locations`, { page: 1, page_size: 100 })
   locations.value = res.items as Location[]
 }
 

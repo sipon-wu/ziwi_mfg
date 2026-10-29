@@ -1,10 +1,10 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, Integer, DateTime, Text, JSON
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class ApprovalTemplate(Base):
     __tablename__ = "approval_templates"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     name = Column(String(200), nullable=False, comment="模板名称")
     code = Column(String(100), nullable=False, comment="模板编码")
@@ -15,7 +15,7 @@ class ApprovalTemplate(Base):
 
 class ApprovalInstance(Base):
     __tablename__ = "approval_instances"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     template_id = Column(BigInteger, nullable=False, comment="模板ID")
     title = Column(String(200), nullable=False, comment="审批标题")
@@ -29,7 +29,7 @@ class ApprovalInstance(Base):
 
 class ApprovalNode(Base):
     __tablename__ = "approval_nodes"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     approval_id = Column(BigInteger, nullable=False, comment="审批实例ID")
     node_order = Column(Integer, nullable=False, comment="节点顺序")
     approver_id = Column(BigInteger, comment="审批人ID")

@@ -10,7 +10,7 @@ from sqlalchemy import (
     Column, BigInteger, String, Boolean, DateTime, Text,
 )
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 # API Key 格式：ziwi_<48 位 hex>，前缀取前 12 字符用于定位记录
@@ -21,7 +21,7 @@ class ApiKey(Base):
     """租户级 API 密钥"""
     __tablename__ = "api_keys"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, index=True, comment="租户ID")
     key_name = Column(String(100), nullable=False, comment="密钥名称（便于识别用途）")
     key_prefix = Column(String(32), nullable=False, index=True, comment="密钥前缀（明文前 12 位）")

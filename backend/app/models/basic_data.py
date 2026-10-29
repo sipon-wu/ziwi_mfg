@@ -3,7 +3,7 @@
 
 from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 # ── M04 工序定义 ────────────────────────────────────────────────
@@ -12,7 +12,7 @@ class Operation(Base):
     """工序定义表"""
     __tablename__ = "operations"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     code          = Column(String(100), nullable=False, comment="工序编码")
     name          = Column(String(200), nullable=False, comment="工序名称")
@@ -36,7 +36,7 @@ class WorkCenter(Base):
     """工作中心表"""
     __tablename__ = "work_centers"
 
-    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     code            = Column(String(100), nullable=False, comment="工作中心编码")
     name            = Column(String(200), nullable=False, comment="工作中心名称")
@@ -59,7 +59,7 @@ class WcEquipment(Base):
     """工作中心关联设备表"""
     __tablename__ = "wc_equipments"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     wc_id         = Column(BigInteger, nullable=False, comment="工作中心ID")
     equip_id      = Column(BigInteger, nullable=False, comment="设备ID")
@@ -72,7 +72,7 @@ class WcTeam(Base):
     """工作中心关联班组表"""
     __tablename__ = "wc_teams"
 
-    id         = Column(BigInteger, primary_key=True, autoincrement=True)
+    id         = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id  = Column(String(50), nullable=False, comment="租户ID")
     wc_id      = Column(BigInteger, nullable=False, comment="工作中心ID")
     team_name  = Column(String(200), nullable=False, comment="班组名称")
@@ -90,7 +90,7 @@ class ProcessRoute(Base):
     """工艺路线主表"""
     __tablename__ = "process_routes"
 
-    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     code            = Column(String(100), nullable=False, comment="路线编码")
     name            = Column(String(200), nullable=False, comment="路线名称")
@@ -112,7 +112,7 @@ class RouteStep(Base):
     """工艺路线工序步骤表"""
     __tablename__ = "route_steps"
 
-    id                = Column(BigInteger, primary_key=True, autoincrement=True)
+    id                = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id         = Column(String(50), nullable=False, comment="租户ID")
     route_id          = Column(BigInteger, nullable=False, comment="工艺路线ID")
     operation_id      = Column(BigInteger, nullable=False, comment="工序ID(引用operations.id)")
@@ -135,7 +135,7 @@ class ProductRoute(Base):
     """产品-工艺路线关联表"""
     __tablename__ = "product_routes"
 
-    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     product_id      = Column(BigInteger, nullable=False, comment="产品ID")
     route_id        = Column(BigInteger, nullable=False, comment="工艺路线ID")
@@ -151,7 +151,7 @@ class Product(Base):
     """产品主数据表"""
     __tablename__ = "products"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     code          = Column(String(100), nullable=False, comment="产品编码")
     name          = Column(String(200), nullable=False, comment="产品名称")
@@ -171,7 +171,7 @@ class ProductVersion(Base):
     """产品版本表"""
     __tablename__ = "product_versions"
 
-    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     product_id      = Column(BigInteger, nullable=False, comment="产品ID")
     version_label   = Column(String(50), nullable=False, comment="版本标签 e.g. V1.0")
@@ -190,7 +190,7 @@ class FactoryCalendar(Base):
     """工厂日历表"""
     __tablename__ = "factory_calendars"
 
-    id         = Column(BigInteger, primary_key=True, autoincrement=True)
+    id         = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id  = Column(String(50), nullable=False, comment="租户ID")
     year       = Column(Integer, nullable=False, comment="年份")
     cal_date   = Column(Date, nullable=False, comment="日期")

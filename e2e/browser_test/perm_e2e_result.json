@@ -1,0 +1,54 @@
+{
+  "base": "http://127.0.0.1:5173",
+  "results": [
+    {
+      "id": "R1",
+      "name": "admin 菜单齐全",
+      "status": "PASS",
+      "detail": "menus=基础数据/生产管理/设备管理/品质管理 perms=332"
+    },
+    {
+      "id": "R2",
+      "name": "admin 直访工单页",
+      "status": "PASS",
+      "detail": "url=/work-orders"
+    },
+    {
+      "id": "R3",
+      "name": "inspector 菜单按权限裁剪",
+      "status": "PASS",
+      "detail": "品质=true 生产=false 设备=false perms=71"
+    },
+    {
+      "id": "R4",
+      "name": "inspector 直访设备页被拦",
+      "status": "PASS",
+      "detail": "url=/403?from=/equipment&perm=M06:equipment:read"
+    },
+    {
+      "id": "R5",
+      "name": "maintenance_tech 菜单按权限裁剪",
+      "status": "PASS",
+      "detail": "设备=true 品质=false perms=56"
+    },
+    {
+      "id": "R6",
+      "name": "maintenance_tech 直访品质页被拦",
+      "status": "PASS",
+      "detail": "url=/403?from=/quality&perm=M03:inspection_order:read"
+    },
+    {
+      "id": "R7",
+      "name": "403 页面可定位所需权限",
+      "status": "PASS",
+      "detail": "含权限码=false"
+    },
+    {
+      "id": "R8",
+      "name": "无未捕获页面错误",
+      "status": "PASS",
+      "detail": "0 error"
+    }
+  ],
+  "consoleErrors": []
+}

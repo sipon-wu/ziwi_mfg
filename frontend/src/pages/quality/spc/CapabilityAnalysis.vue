@@ -41,12 +41,10 @@ async function fetchData() {
     const usl = limitConfig?.usl
     const lsl = limitConfig?.lsl
 
-    // 调用能力分析 API
+    // 调用能力分析 API（与控制图同源，按 dimension_key 取数）
     capData.value = await get<CapabilityData>('/spc/capability-analysis', {
       dimension_key: dimensionKey,
-      product_id: 0,
-      process_id: 0,
-      check_item: 0,
+      chart_type: limitConfig?.chart_type || 'xbar-r',
       usl,
       lsl,
     })

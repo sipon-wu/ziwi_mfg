@@ -1,11 +1,11 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, DateTime, Text, JSON, Date
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class EquipmentCategory(Base):
     __tablename__ = "equipment_categories"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     parent_id = Column(BigInteger, default=0)
     name = Column(String(200), nullable=False)
@@ -18,7 +18,7 @@ class EquipmentCategory(Base):
 class Equipment(Base):
     __tablename__ = "equipment"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     equipment_code = Column(String(100), nullable=False)
     equipment_name = Column(String(200), nullable=False)
@@ -37,7 +37,7 @@ class Equipment(Base):
 class MaintenancePlan(Base):
     __tablename__ = "maintenance_plans"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     equipment_id = Column(BigInteger, nullable=False)
     plan_name = Column(String(200), nullable=False)
@@ -54,7 +54,7 @@ class MaintenancePlan(Base):
 class MaintenanceTask(Base):
     __tablename__ = "maintenance_tasks"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     equipment_id = Column(BigInteger, nullable=False)
     task_no = Column(String(100))
@@ -76,7 +76,7 @@ class MaintenanceTask(Base):
 class SparePart(Base):
     __tablename__ = "spare_parts"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     part_code = Column(String(100), nullable=False)
     part_name = Column(String(200), nullable=False)
@@ -93,7 +93,7 @@ class SparePart(Base):
 class SparePartInventory(Base):
     __tablename__ = "spare_part_inventories"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     part_id = Column(BigInteger, nullable=False)
     change_type = Column(String(20), comment="in/out/adjust")
     qty = Column(Integer, nullable=False)

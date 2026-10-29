@@ -1,14 +1,14 @@
 # M12 数据采集模块 — ORM 模型
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, DateTime, Text, JSON, Numeric, PrimaryKeyConstraint, Index
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class DataSourceConfig(Base):
     """数据源配置表 — 统一管理各种数据来源（IoT网关、数据库、文件等）"""
     __tablename__ = "data_source_config"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     source_name = Column(String(200), nullable=False, comment="数据源名称")
     source_type = Column(String(50), nullable=False, comment="数据源类型: iot_gateway/database/http/api/file")
@@ -27,7 +27,7 @@ class CollectTask(Base):
     """采集任务表 — 定义数据采集计划"""
     __tablename__ = "collect_task"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     task_no = Column(String(100), nullable=False, comment="任务编号")
     task_name = Column(String(200), nullable=False, comment="任务名称")
@@ -51,7 +51,7 @@ class CollectDataRecord(Base):
     """采集数据记录表 — 存储采集到的原始数据"""
     __tablename__ = "collect_data_record"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     task_id = Column(BigInteger, comment="关联采集任务ID")
     device_id = Column(BigInteger, comment="关联设备ID")
@@ -77,7 +77,7 @@ class IoTGateway(Base):
     """IoT网关表"""
     __tablename__ = "iot_gateway"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     gateway_code = Column(String(100), nullable=False)
     gateway_name = Column(String(200), nullable=False)
@@ -101,7 +101,7 @@ class IoTDevice(Base):
     """IoT设备表"""
     __tablename__ = "iot_device"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     gateway_id = Column(BigInteger, nullable=False)
     device_code = Column(String(100), nullable=False)
@@ -153,7 +153,7 @@ class ExcelImportTaskM12(Base):
     """Excel导入任务表(M12) — 与M01~M05的导入表共存"""
     __tablename__ = "excel_import_task"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     task_no = Column(String(100), nullable=False)
     module_code = Column(String(20), nullable=False, comment="M01/M02/M03/M05")
@@ -176,7 +176,7 @@ class ExcelImportMapping(Base):
     """Excel导入字段映射表"""
     __tablename__ = "excel_import_mapping"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     mapping_code = Column(String(100), nullable=False)
     mapping_name = Column(String(200), nullable=False)
@@ -192,7 +192,7 @@ class LinkMonitor(Base):
     """链路监控表"""
     __tablename__ = "link_monitor"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     monitor_name = Column(String(200), nullable=False)
     monitor_type = Column(String(50), nullable=False, comment="http/ping/mqtt/tcp/custom")
@@ -218,7 +218,7 @@ class LinkMonitorLog(Base):
     """链路监控日志表"""
     __tablename__ = "link_monitor_log"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     monitor_id = Column(BigInteger, nullable=False)
     check_time = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

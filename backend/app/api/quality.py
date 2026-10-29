@@ -2,6 +2,8 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
+from app.repositories.ncr_repo import NcrRepository
+from app.services.ncr_service import NcrService
 from app.repositories.quality_repo import (
     QcPointRepository,
     InspectionStandardRepository,
@@ -280,6 +282,7 @@ async def judge_order(
     order_id: int,
     req: JudgeOrderRequest,
     repo: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    user: dict = Depends(get_current_user),
 ):
     order = await repo.get_inspection_order(order_id)
     if not order:
@@ -288,7 +291,42 @@ async def judge_order(
     if req.remark:
         updates["remark"] = req.remark
     await repo.update_inspection_order(order_id, updates)
-    return {"code": 0, "message": f"判定为 {req.result}"}
+
+    # S-2：判定不合格（REJ）→ 自动发起不合格品评审（NCR）
+    # 此前 REJ 只改一个状态字段、无任何处置载体（评审报告 P0-2/P0-3 指出的缺口）。
+    # 幂等：同一检验单只开一张 NCR，重复判定不重复开单。
+    ncr_id = None
+    if req.result == "REJ":
+        ncr_repo = NcrRepository(repo._session)
+        ncr_repo.set_tenant_id(repo.tenant_id)
+        # 从检验单 repo 继承写入归属，否则自动开的 NCR 的 org_id 为 NULL，
+        # 部门负责人（DEPT/DEPT_CHILD）判完不合格就看不到自己开的评审单。
+        if hasattr(repo, "_write_org_id"):
+            ncr_repo.set_write_org_id(repo._write_org_id)
+        svc = NcrService(repo._session, repo.tenant_id, repo=ncr_repo)
+        source_type = order.get("order_type") or "inspection"
+        existing = await ncr_repo.get_by_source(source_type, order_id)
+        if existing:
+            ncr_id = existing["id"]
+        else:
+            created = await svc.create_ncr(
+                {
+                    "tenant_id": repo.tenant_id,
+                    "ncr_no": f"NC-{order.get('order_no')}",
+                    "source_type": source_type,
+                    "source_id": order_id,
+                    "source_no": order.get("order_no"),
+                    "material_id": order.get("material_id"),
+                    "work_order_id": order.get("work_order_id"),
+                    "defect_desc": f"检验单 {order.get('order_no')} 判定不合格（REJ），自动发起不合格评审",
+                    "raised_by": user.get("id"),
+                },
+                actor_id=user.get("id"),
+                actor_name=user.get("real_name") or user.get("username"),
+            )
+            ncr_id = created["id"]
+
+    return {"code": 0, "message": f"判定为 {req.result}", "data": {"ncr_id": ncr_id}}
 
 
 # ============================================================

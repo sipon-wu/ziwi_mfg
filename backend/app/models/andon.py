@@ -1,12 +1,12 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Text, DateTime, JSON, Boolean, Float
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class AndonCall(Base):
     __tablename__ = "andon_call"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     call_no = Column(String(100), nullable=False)
     call_type = Column(String(50), nullable=False, comment="quality/equipment/material/safety/other")
@@ -34,7 +34,7 @@ class AndonCall(Base):
 class AndonResponse(Base):
     __tablename__ = "andon_response"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     andon_call_id = Column(BigInteger, nullable=False)
     responder_id = Column(BigInteger, nullable=False)
@@ -51,7 +51,7 @@ class AndonEscalationRule(Base):
     """升级规则配置表"""
     __tablename__ = "andon_escalation_rules"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     rule_name = Column(String(100), nullable=False, comment="规则名称")
     call_type = Column(String(50), nullable=False, comment="适用安灯类型（quality/equipment/material/...）")
@@ -70,7 +70,7 @@ class AndonEscalationLog(Base):
     """升级历史记录表"""
     __tablename__ = "andon_escalation_logs"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     andon_call_id = Column(BigInteger, nullable=False, comment="关联安灯呼叫ID")
     escalation_level = Column(Integer, nullable=False, comment="升级级别")

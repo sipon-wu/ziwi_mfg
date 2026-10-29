@@ -1,13 +1,13 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class PpapLevel(Base):
     """PPAP 提交等级"""
     __tablename__ = "ppap_levels"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     level_no = Column(Integer, nullable=False, comment="1-5")
     level_name = Column(String(200), nullable=False, comment="等级名称")
@@ -22,7 +22,7 @@ class PpapElementTemplate(Base):
     """PPAP 文件包要素模板"""
     __tablename__ = "ppap_element_templates"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     element_code = Column(String(50), nullable=False, comment="要素编码（如 E01=设计记录）")
     element_name = Column(String(200), nullable=False, comment="要素名称")
@@ -40,7 +40,7 @@ class PpapSubmission(Base):
     """PPAP 提交记录"""
     __tablename__ = "ppap_submissions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     submission_no = Column(String(100), nullable=False, comment="提交编号（自动生成）")
     product_id = Column(BigInteger, nullable=False, comment="关联产品")
@@ -61,7 +61,7 @@ class PpapSubmissionItem(Base):
     """PPAP 提交明细（要素→文件映射）"""
     __tablename__ = "ppap_submission_items"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     submission_id = Column(BigInteger, nullable=False, comment="FK to ppap_submissions.id")
     element_id = Column(BigInteger, nullable=False, comment="FK to ppap_element_templates.id")

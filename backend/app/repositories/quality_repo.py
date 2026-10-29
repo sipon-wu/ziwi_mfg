@@ -1,5 +1,6 @@
 from app.repositories.base import MultiTenantRepository
 from typing import Optional, Dict, List
+from datetime import datetime, timezone
 
 
 class QcPointRepository(MultiTenantRepository):
@@ -179,6 +180,22 @@ class InspectionOrderRepository(MultiTenantRepository):
         return await self.execute(
             f"UPDATE inspection_order SET {sets} WHERE id = :id",
             {**data, "id": id},
+        )
+
+    async def judge_order(self, id: int, result: str, inspector_id: int) -> int:
+        """检验判定：写入结果、判定人与判定时间。
+
+        此前 `QualityService.judge_order` 调用了本方法，但仓储层从未实现 ——
+        一旦走 Service 路径必然 AttributeError（API 层走 update_inspection_order
+        所以长期未暴露）。此处补齐，保持与 InspectionOrder 模型字段一致。
+        """
+        return await self.update_inspection_order(
+            id,
+            {
+                "result": result,
+                "inspector_id": inspector_id,
+                "judge_at": datetime.now(timezone.utc),
+            },
         )
 
     async def delete_inspection_order(self, id: int) -> int:

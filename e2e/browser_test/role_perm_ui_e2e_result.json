@@ -1,0 +1,84 @@
+{
+  "base": "http://127.0.0.1:5173",
+  "results": [
+    {
+      "id": "U0",
+      "name": "准备临时角色",
+      "status": "PASS",
+      "detail": "role_id=11"
+    },
+    {
+      "id": "U1",
+      "name": "角色权限页渲染",
+      "status": "PASS",
+      "detail": "角色卡片=10 url=/system/roles"
+    },
+    {
+      "id": "U2",
+      "name": "模块/资源/动作三层 + 中文标签",
+      "status": "PASS",
+      "detail": "模块=14 工单资源=1 查看=true 新建=true"
+    },
+    {
+      "id": "U2b",
+      "name": "选中临时角色（初始 0 项）",
+      "status": "PASS",
+      "detail": "已勾选 0 / 332 项"
+    },
+    {
+      "id": "U3",
+      "name": "勾选后出现未保存提示",
+      "status": "PASS",
+      "detail": "有未保存的改动 重置 保存"
+    },
+    {
+      "id": "U4",
+      "name": "保存并真实落库",
+      "status": "PASS",
+      "detail": "后端权限=[\"M01:work_order:read\"] toast=true"
+    },
+    {
+      "id": "U5",
+      "name": "刷新后勾选持久",
+      "status": "PASS",
+      "detail": "已勾选标签=1 统计=已勾选 1 / 332 项"
+    },
+    {
+      "id": "U6",
+      "name": "数据范围保存",
+      "status": "PASS",
+      "detail": "scope=DEPT_CHILD"
+    },
+    {
+      "id": "U7",
+      "name": "搜索过滤生效",
+      "status": "PASS",
+      "detail": "模块 14→2；资源=工单/工单状态日志/试产工单"
+    },
+    {
+      "id": "U8",
+      "name": "重置回到已保存状态",
+      "status": "PASS",
+      "detail": "dirty=true 重置后勾选=1"
+    },
+    {
+      "id": "U9",
+      "name": "inspector 直访角色权限页被拦",
+      "status": "PASS",
+      "detail": "url=/403?from=/system/roles&perm=PLAT:role_permission:read"
+    },
+    {
+      "id": "CL",
+      "name": "清理临时角色",
+      "status": "PASS",
+      "detail": "HTTP 200 {\"code\":0,\"message\":\"删除成功\",\"data\":{\"affected\":1}}"
+    },
+    {
+      "id": "UZ",
+      "name": "无未捕获页面错误",
+      "status": "PASS",
+      "detail": "0 error"
+    }
+  ],
+  "consoleErrors": []
+}

@@ -30,7 +30,7 @@ async def ins(session, table: str, data: dict):
 
 # ── Phase 0: TRUNCATE ──
 BUSINESS_TABLES = [
-    "work_order_status_logs", "work_reports", "work_orders",
+    "work_order_status_logs", "entity_status_logs", "work_reports", "work_orders",
     "inventory_transactions", "inventory_alerts", "inventory_count_items",
     "inventory_counts", "issue_order_items", "issue_orders",
     "material_request_items", "material_requests",
@@ -40,7 +40,7 @@ BUSINESS_TABLES = [
     "products", "materials", "batches",
     "warehouse_locations", "warehouse_zones", "warehouses",
     "inspection_result", "inspection_order", "inspection_standard",
-    "inspection_item", "control_plans", "qc_point_config",
+    "inspection_item", "ncr_records", "control_plans", "qc_point_config",
     "quality_report", "spc_alerts", "spc_data_points", "spc_control_limits",
     "fmea_actions", "fmea_items", "fmea_hierarchies", "fmea_documents",
     "ppap_submission_items", "ppap_submissions", "ppap_levels",
@@ -65,9 +65,16 @@ BUSINESS_TABLES = [
 
 async def phase_0(session):
     print("=== Phase 0: 清理业务数据 ===")
-    for tbl in BUSINESS_TABLES:
-        await session.execute(text(f"TRUNCATE TABLE {tbl} CASCADE"))
-    print(f"  ✅ TRUNCATE {len(BUSINESS_TABLES)} 张表\n")
+    is_sqlite = "sqlite" in settings.DATABASE_URL
+    if is_sqlite:
+        # SQLite 不支持 TRUNCATE CASCADE；按「子表优先」逆序 DELETE
+        for tbl in reversed(BUSINESS_TABLES):
+            await session.execute(text(f"DELETE FROM {tbl}"))
+        print(f"  ✅ DELETE {len(BUSINESS_TABLES)} 张表（SQLite）\n")
+    else:
+        for tbl in BUSINESS_TABLES:
+            await session.execute(text(f"TRUNCATE TABLE {tbl} CASCADE"))
+        print(f"  ✅ TRUNCATE {len(BUSINESS_TABLES)} 张表\n")
 
 
 # ── Phase 1: 基础数据 ──

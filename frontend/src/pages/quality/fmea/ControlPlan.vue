@@ -57,7 +57,7 @@ async function fetchData() {
     docInfo.value = await get<DocInfo>(`/fmea/documents/${docId}`)
     const res = await get<{ items: ControlPlanItem[]; total: number }>('/fmea/control-plans', {
       fmea_doc_id: docId,
-      page_size: 500,
+      page_size: 100,
     })
     plans.value = res.items || []
   } catch (e) {

@@ -1,7 +1,7 @@
 """M20 仓储管理（WMS）模块 — ORM 模型（15 张表）"""
 from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 # ============================================
@@ -12,7 +12,7 @@ class Warehouse(Base):
     """仓库"""
     __tablename__ = "warehouses"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     code          = Column(String(64), nullable=False, comment="仓库编码")
     name          = Column(String(128), nullable=False, comment="仓库名称")
@@ -29,7 +29,7 @@ class WarehouseZone(Base):
     """库区"""
     __tablename__ = "warehouse_zones"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
     zone_code     = Column(String(64), nullable=False, comment="库区编码")
@@ -43,7 +43,7 @@ class WarehouseLocation(Base):
     """库位"""
     __tablename__ = "warehouse_locations"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
     zone_id       = Column(BigInteger, comment="库区ID")
@@ -63,7 +63,7 @@ class Material(Base):
     """物料主数据"""
     __tablename__ = "materials"
 
-    id                = Column(BigInteger, primary_key=True, autoincrement=True)
+    id                = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id         = Column(String(50), nullable=False, comment="租户ID")
     code              = Column(String(64), nullable=False, comment="物料编码")
     name              = Column(String(128), nullable=False, comment="物料名称")
@@ -94,7 +94,7 @@ class Batch(Base):
     """批次"""
     __tablename__ = "batches"
 
-    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id        = Column(String(50), nullable=False, comment="租户ID")
     batch_no         = Column(String(64), nullable=False, comment="批次号")
     material_id      = Column(BigInteger, nullable=False, comment="物料ID")
@@ -115,7 +115,7 @@ class Inventory(Base):
     """库存台账"""
     __tablename__ = "inventory"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     material_id   = Column(BigInteger, nullable=False, comment="物料ID")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
@@ -133,7 +133,7 @@ class InventoryTransaction(Base):
     """库存交易流水"""
     __tablename__ = "inventory_transactions"
 
-    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id        = Column(String(50), nullable=False, comment="租户ID")
     transaction_type = Column(String(32), nullable=False, comment="receipt/issue/transfer/adjust/scrap")
     voucher_no       = Column(String(64), nullable=False, comment="物料凭证号")
@@ -163,13 +163,14 @@ class ReceiptOrder(Base):
     """入库单"""
     __tablename__ = "receipt_orders"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     receipt_no    = Column(String(64), nullable=False, comment="入库单号")
     receipt_type  = Column(String(32), nullable=False, comment="purchase/生产入库/退货入库/transfer")
     status        = Column(String(32), default="pending", comment="pending/inspecting/partially_stored/stored/cancelled")
     source_type   = Column(String(32), comment="po/wo/return/transfer")
     source_doc_no = Column(String(64), comment="来源单据号")
+    org_id        = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
     supplier_id   = Column(BigInteger, comment="供应商ID")
     total_qty     = Column(Float, default=0, comment="总数量")
@@ -186,7 +187,7 @@ class ReceiptOrderItem(Base):
     """入库单明细"""
     __tablename__ = "receipt_order_items"
 
-    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id        = Column(String(50), nullable=False, comment="租户ID")
     receipt_id       = Column(BigInteger, nullable=False, comment="入库单ID")
     line_no          = Column(Integer, nullable=False, comment="行号")
@@ -210,7 +211,7 @@ class IssueOrder(Base):
     """出库单"""
     __tablename__ = "issue_orders"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     issue_no      = Column(String(64), nullable=False, comment="出库单号")
     issue_type    = Column(String(32), nullable=False, comment="production/销售出库/scrap/transfer")
@@ -232,7 +233,7 @@ class IssueOrderItem(Base):
     """出库单明细"""
     __tablename__ = "issue_order_items"
 
-    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     issue_id        = Column(BigInteger, nullable=False, comment="出库单ID")
     line_no         = Column(Integer, nullable=False, comment="行号")
@@ -254,7 +255,7 @@ class InventoryCount(Base):
     """盘点单"""
     __tablename__ = "inventory_counts"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     count_no      = Column(String(64), nullable=False, comment="盘点单号")
     count_type    = Column(String(32), nullable=False, comment="full/cycle/spot")
@@ -277,7 +278,7 @@ class InventoryCountItem(Base):
     """盘点明细"""
     __tablename__ = "inventory_count_items"
 
-    id          = Column(BigInteger, primary_key=True, autoincrement=True)
+    id          = Column(PK_TYPE, primary_key=True, autoincrement=True)
     count_id    = Column(BigInteger, nullable=False, comment="盘点单ID")
     material_id = Column(BigInteger, nullable=False, comment="物料ID")
     location_id = Column(BigInteger, comment="库位ID")
@@ -298,7 +299,7 @@ class InventoryAlert(Base):
     """库存预警记录"""
     __tablename__ = "inventory_alerts"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     alert_type    = Column(String(32), nullable=False, comment="min_stock/max_stock/safety_stock/slow_moving/expiry")
     material_id   = Column(BigInteger, nullable=False, comment="物料ID")
@@ -320,7 +321,7 @@ class MaterialRequest(Base):
     """领料申请单"""
     __tablename__ = "material_requests"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     request_no    = Column(String(64), nullable=False, comment="领料申请单号")
     work_order_id = Column(BigInteger, nullable=False, comment="关联工单ID")
@@ -337,7 +338,7 @@ class MaterialRequestItem(Base):
     """领料申请明细"""
     __tablename__ = "material_request_items"
 
-    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
     request_id       = Column(BigInteger, nullable=False, comment="申请单ID")
     line_no          = Column(Integer, nullable=False, comment="行号")
     material_id      = Column(BigInteger, nullable=False, comment="物料ID")

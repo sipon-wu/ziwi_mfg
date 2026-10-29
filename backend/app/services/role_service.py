@@ -1,6 +1,8 @@
 from app.repositories.role_repo import RoleRepository
 from app.models.role import KEY_USER_ROLE_CODE, KEY_USER_PERMISSIONS, ROLE_SCOPES, ROLE_SCOPE_DEFAULT
-from typing import Optional
+from app.constants.modules import MODULE_NAMES, MODULE_PLAT
+from app.constants.permission_labels import action_label, action_sort_key, resource_label
+from typing import Dict, List, Optional
 
 
 class RoleService:
@@ -56,21 +58,128 @@ class RoleService:
         return {"affected": count, "scope": data.get("scope")}
 
     async def delete(self, id: int) -> dict:
+        role = await self.role_repo.get(id)
+        if not role:
+            raise ValueError("角色不存在")
+        if role.get("is_system"):
+            raise ValueError("系统内置角色不可删除")
         count = await self.role_repo.delete(id)
         return {"affected": count}
 
     async def get_permissions(self, role_id: int) -> list:
         return await self.role_repo.get_permissions(role_id)
 
-    async def assign_permissions(self, role_id: int, permission_ids: list) -> dict:
-        await self.role_repo.assign_permissions(role_id, permission_ids)
-        return {"affected": len(permission_ids)}
+    async def get_permission_catalog(self) -> dict:
+        """全量权限目录，按 模块 → 资源 → 动作 三层聚合（供勾选界面）。
+
+        返回结构::
+
+            {"total": 331,
+             "modules": [
+               {"module": "M01", "module_name": "生产管理",
+                "resources": [
+                  {"resource": "work_order", "resource_name": "工单",
+                   "permissions": [{"id": 12, "code": "M01:work_order:read",
+                                    "action": "read", "action_name": "查看"}, ...]}
+                ]}]}
+
+        排序：业务模块 M00..M30 在前（按编码），PLAT 平台底座垫底；
+        动作按 查看→新建→修改→审批→执行→导出→删除 排列，符合"从只读到可写"的直觉。
+        """
+        rows = await self.role_repo.list_all_permissions()
+
+        buckets: Dict[str, dict] = {}
+        for row in rows:
+            module = row.get("module") or MODULE_PLAT
+            resource = row.get("resource_type") or "misc"
+            action = row.get("action") or ""
+
+            bucket = buckets.setdefault(module, {
+                "module": module,
+                "module_name": MODULE_NAMES.get(module, module),
+                "resources": {},
+            })
+            res = bucket["resources"].setdefault(resource, {
+                "resource": resource,
+                "resource_name": resource_label(resource),
+                "permissions": [],
+            })
+            res["permissions"].append({
+                "id": row["id"],
+                "code": row["code"],
+                "action": action,
+                "action_name": action_label(action),
+            })
+
+        def module_key(code: str):
+            # PLAT 垫底：业务模块按 M00/M01/... 字典序即可
+            return (1, "") if code == MODULE_PLAT else (0, code)
+
+        modules = []
+        for code in sorted(buckets, key=module_key):
+            bucket = buckets[code]
+            resources = sorted(bucket["resources"].values(), key=lambda r: r["resource"])
+            for res in resources:
+                res["permissions"].sort(key=lambda p: (action_sort_key(p["action"]), p["code"]))
+            modules.append({
+                "module": bucket["module"],
+                "module_name": bucket["module_name"],
+                "resources": resources,
+            })
+
+        return {"total": len(rows), "modules": modules}
+
+    async def assign_permissions(
+        self,
+        role_id: int,
+        permission_ids: Optional[List[int]] = None,
+        permission_codes: Optional[List[str]] = None,
+    ) -> dict:
+        """覆盖式授权：先清空再用给定的 id 集合重建。
+
+        - ``permission_codes`` 优先（前端拿到的就是编码，避免前端自己维护 code→id 映射）
+        - 传空列表 = 清空该角色全部权限（合法操作，不等于"未传"）
+        - 两者都没传 → ValueError（避免一次误调用把角色权限清空）
+
+        Returns:
+            {"affected": n, "unknown_codes": [...]}
+            ``unknown_codes`` 非空说明前端传了库里不存在的码（拼错或端点已删），
+            由调用方决定是否报错提示。
+        """
+        # 先确认 role 属于当前租户：role_permissions 无 tenant_id 列，
+        # 隔离只能靠这一步把关（否则可越权改写其它租户的角色授权）。
+        if not await self.role_repo.get(role_id):
+            raise ValueError("角色不存在")
+
+        if permission_codes is not None:
+            rows = await self.role_repo.find_permissions_by_codes(list(permission_codes))
+            resolved = {r["code"]: r["id"] for r in rows}
+            unknown = sorted({c for c in permission_codes if c not in resolved})
+            ids = [resolved[c] for c in permission_codes if c in resolved]
+        elif permission_ids is not None:
+            ids = [int(i) for i in permission_ids]
+            unknown = []
+        else:
+            raise ValueError("permission_ids 与 permission_codes 必须二选一")
+
+        # 去重保序（同一权限重复勾选不应重复插入）
+        seen = set()
+        unique_ids = [i for i in ids if not (i in seen or seen.add(i))]
+
+        await self.role_repo.assign_permissions(role_id, unique_ids)
+        return {"affected": len(unique_ids), "unknown_codes": unknown}
 
     async def get_users(self, role_id: int) -> list:
         return await self.role_repo.get_users(role_id)
 
     async def add_user(self, role_id: int, user_id: int, tenant_id: str) -> dict:
         count = await self.role_repo.add_user(role_id, user_id, tenant_id)
+        return {"affected": count}
+
+    async def remove_user(self, role_id: int, user_id: int) -> dict:
+        count = await self.role_repo.remove_user(role_id, user_id)
+        if not count:
+            raise ValueError("该用户不在此角色中")
         return {"affected": count}
 
     async def assign_key_user_permissions(self, role_id: int) -> dict:

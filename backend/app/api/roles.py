@@ -30,6 +30,23 @@ async def create_role(
     result = await svc.create(data)
     return {"code": 0, "message": "角色创建成功", "data": result}
 
+@router.get("/permissions")
+async def get_permission_catalog(
+    repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
+):
+    """全量权限目录（按 模块 → 资源 → 动作 聚合），供角色权限勾选界面使用。
+
+    ⚠️ **必须注册在 ``/{role_id}`` 之前**：FastAPI 按注册顺序匹配，
+    否则 ``/roles/permissions`` 会被 ``/roles/{role_id}`` 抢先命中并因
+    ``role_id`` 不是整数而返回 422。
+
+    权限码与 ``GET /roles/{role_id}/permissions`` 同为 ``PLAT:role_permission:read``，
+    不引入新的权限点。
+    """
+    svc = RoleService(repo)
+    data = await svc.get_permission_catalog()
+    return {"code": 0, "message": "success", "data": data}
+
 @router.get("/{role_id}")
 async def get_role(
     role_id: int,
@@ -69,8 +86,12 @@ async def delete_role(
     role_id: int,
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    """删除角色。系统内置角色（is_system）拒绝删除，返回 409。"""
     svc = RoleService(repo)
-    result = await svc.delete(role_id)
+    try:
+        result = await svc.delete(role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail={"code": "409-0003", "message": str(e)})
     return {"code": 0, "message": "删除成功", "data": result}
 
 @router.get("/{role_id}/permissions")
@@ -87,8 +108,27 @@ async def assign_permissions(
     role_id: int, req: AssignPermissionRequest,
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    """覆盖式分配角色权限。
+
+    支持两种入参（见 ``AssignPermissionRequest``）：
+    ``permission_codes``（前端勾选界面用）优先，其次 ``permission_ids``。
+    显式传空数组表示清空该角色全部权限。
+    """
+    payload = req.model_dump(exclude_unset=True)
+    if "permission_ids" not in payload and "permission_codes" not in payload:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "400-0000", "message": "必须提供 permission_codes 或 permission_ids"},
+        )
     svc = RoleService(repo)
-    result = await svc.assign_permissions(role_id, req.permission_ids)
+    try:
+        result = await svc.assign_permissions(
+            role_id,
+            permission_ids=payload.get("permission_ids"),
+            permission_codes=payload.get("permission_codes"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "权限分配成功", "data": result}
 
 @router.get("/{role_id}/users")
@@ -96,8 +136,7 @@ async def get_role_users(
     role_id: int,
     repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
-    # B13: 返回用户列表（含 primary_org_id）。
-    # 注：org_name 需在任务 B3（organizations 表）落地后由 JOIN 回填，本轮整个 org 树链路未建表。
+    """角色成员列表（含 primary_org_id / org_name —— 组织树已落地，JOIN 回填）。"""
     svc = RoleService(repo)
     data = await svc.get_users(role_id)
     return {"code": 0, "message": "success", "data": data}
@@ -111,6 +150,19 @@ async def add_role_user(
     svc = RoleService(repo)
     result = await svc.add_user(role_id, user_id, current_user.get("tenant_id", "default"))
     return {"code": 0, "message": "添加成功", "data": result}
+
+@router.delete("/{role_id}/users/{user_id}")
+async def remove_role_user(
+    role_id: int, user_id: int,
+    repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
+):
+    """把用户移出该角色（只解绑 user_roles，不删用户）。"""
+    svc = RoleService(repo)
+    try:
+        result = await svc.remove_user(role_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail={"code": "404-0000", "message": str(e)})
+    return {"code": 0, "message": "已移出", "data": result}
 
 # ==================== M00 key_user 专属权限分配 ====================
 

@@ -1,10 +1,10 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, JSON
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class Message(Base):
     __tablename__ = "messages"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     msg_type = Column(String(50), nullable=False, comment="类型: notification/approval/alert")
     title = Column(String(200), nullable=False, comment="标题")

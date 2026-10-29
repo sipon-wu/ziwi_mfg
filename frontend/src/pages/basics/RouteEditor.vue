@@ -116,14 +116,14 @@ async function loadSteps() {
 
 async function loadOperations() {
   try {
-    const res = await get('/operations', { params: { page_size: 500 } })
+    const res = await get('/operations', { params: { page_size: 100 } })
     allOperations.value = res.items || []
   } catch (_) { /* ignore */ }
 }
 
 async function loadWorkCenters() {
   try {
-    const res = await get('/work-centers', { params: { page_size: 500 } })
+    const res = await get('/work-centers', { params: { page_size: 100 } })
     allWorkCenters.value = res.items || []
   } catch (_) { /* ignore */ }
 }

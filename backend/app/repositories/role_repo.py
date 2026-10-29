@@ -1,14 +1,25 @@
 from app.repositories.base import MultiTenantRepository
 from typing import List, Dict, Any, Optional
 
+from sqlalchemy import text
+
+
 class RoleRepository(MultiTenantRepository):
 
     async def list(self, page: int = 1, page_size: int = 20) -> dict:
+        # ⚠️ 不要在这里用「相关子查询」统计 permission_count：
+        # query_page 会把整条 SQL 包进 `SELECT COUNT(*) FROM (<sql>)`，而
+        # `_inject_tenant_where_select` 用的是"第一个 FROM <标识符>"正则——
+        # 它会命中子查询里的 `FROM role_permissions rp`，于是给子查询注入
+        # `rp.tenant_id`（该表没有此列）→ 列表接口 500。
+        # 改用 LEFT JOIN + COUNT(DISTINCT) 等价实现。
         return await self.query_page(
             """SELECT r.id, r.tenant_id, r.name, r.code, r.description, r.is_system, r.scope, r.created_at,
-               COUNT(ur.user_id) AS user_count
+               COUNT(DISTINCT ur.user_id) AS user_count,
+               COUNT(DISTINCT rp.permission_id) AS permission_count
                FROM roles r
                LEFT JOIN user_roles ur ON ur.role_id = r.id
+               LEFT JOIN role_permissions rp ON rp.role_id = r.id
                GROUP BY r.id
                ORDER BY r.created_at DESC""",
             page=page, page_size=page_size
@@ -33,7 +44,27 @@ class RoleRepository(MultiTenantRepository):
         return await self.execute(f"UPDATE roles SET {sets} WHERE id = :id", params)
 
     async def delete(self, id: int) -> int:
-        return await self.execute("DELETE FROM roles WHERE id = :id AND is_system = false", {"id": id})
+        """删除角色（同时清掉关联表）。
+
+        ⚠️ 必须**显式**删关联表：SQLite 默认 ``PRAGMA foreign_keys=OFF``，
+        声明上的 ``ON DELETE CASCADE`` 根本不执行 —— 删角色会留下孤儿
+        ``role_permissions`` 行；而 SQLite 的 AUTOINCREMENT 在最大行被删后
+        会复用 rowid，于是"新建的角色莫名其妙带着上一个角色的权限"（实测踩过）。
+        PG 上外键会级联，这两条 DELETE 只是多做一次幂等清理，无副作用。
+        ``role_permissions`` 无 tenant_id 列，故走裸 session。
+        """
+        await self._session.execute(
+            text("DELETE FROM role_permissions WHERE role_id = :r"), {"r": id}
+        )
+        await self._session.execute(
+            text("DELETE FROM user_roles WHERE role_id = :r"), {"r": id}
+        )
+        # 不能写 `is_system = false`：存量行的 is_system 多为 NULL，
+        # `NULL = false` 求值为 NULL → WHERE 不成立 → 静默删 0 行（实测踩过）。
+        return await self.execute(
+            "DELETE FROM roles WHERE id = :id AND (is_system IS NULL OR is_system = false)",
+            {"id": id},
+        )
 
     async def set_scope(self, role_id: int, scope: str) -> int:
         """B12: 更新角色的数据作用域（UPDATE 由基类自动注入 tenant_id 过滤）。"""
@@ -43,14 +74,33 @@ class RoleRepository(MultiTenantRepository):
         )
 
     async def get_permissions(self, role_id: int) -> List[Dict]:
-        return await self.query(
+        """角色已授权的权限明细（含 id / code / module / action）。
+
+        必须用裸 session 而非 ``query()``：``query()`` 会把 tenant_id 过滤注入
+        主表（此处是 permissions），而 permissions 是**全局字典表、没有 tenant_id 列**，
+        注入后直接 SQL 报错（改造前该端点 500 就是这个原因）。
+        租户隔离由入参 role_id 的归属保证（调用方已从 roles 表取到该角色）。
+        """
+        result = await self._session.execute(text(
             """SELECT p.id, p.code, p.name, p.module, p.resource_type, p.action, p.description
                FROM permissions p
                JOIN role_permissions rp ON rp.permission_id = p.id
                WHERE rp.role_id = :role_id
-               ORDER BY p.module, p.code""",
-            {"role_id": role_id}
-        )
+               ORDER BY p.module, p.resource_type, p.action"""
+        ), {"role_id": role_id})
+        return [dict(row._mapping) for row in result.fetchall()]
+
+    async def list_all_permissions(self) -> List[Dict]:
+        """全量权限目录（供角色权限勾选界面）。
+
+        同 ``get_permissions``：permissions 无 tenant_id，必须走裸 session。
+        """
+        result = await self._session.execute(text(
+            """SELECT id, code, name, module, resource_type, action, description
+               FROM permissions
+               ORDER BY module, resource_type, action"""
+        ))
+        return [dict(row._mapping) for row in result.fetchall()]
 
     async def get_permission_codes(self, role_id: int) -> List[str]:
         """B13: 返回角色已授权的权限**编码**数组（roles 不进 JWT，本地体系）。
@@ -75,26 +125,51 @@ class RoleRepository(MultiTenantRepository):
         ), params)
         return [row[0] for row in rows.fetchall()]
 
-    async def assign_permissions(self, role_id: int, permission_ids: List[int]) -> None:
-        # 先清除旧权限
-        await self.execute("DELETE FROM role_permissions WHERE role_id = :role_id", {"role_id": role_id})
-        # 再插入新权限
-        for pid in permission_ids:
-            await self.execute(
-                "INSERT INTO role_permissions (role_id, permission_id) VALUES (:role_id, :pid)",
-                {"role_id": role_id, "pid": pid}
+    async def _replace_role_permissions(self, role_id: int, permission_ids: List[int]) -> int:
+        """清空并用给定 id 重建 role_permissions，返回写入条数。
+
+        ⚠️ **必须走裸 session**：``role_permissions`` 表**没有 tenant_id 列**，
+        而基类 ``execute()`` 会给 UPDATE/DELETE 自动注入 ``tenant_id = :_tenant_id``
+        → 直接报 ``no such column: tenant_id``（改造前该端点 500 就是这个原因）。
+        租户隔离不靠这里，而靠调用方先校验 role_id 属于当前租户
+        （见 ``RoleService.assign_permissions``）。
+        """
+        await self._session.execute(
+            text("DELETE FROM role_permissions WHERE role_id = :role_id"),
+            {"role_id": role_id},
+        )
+        if permission_ids:
+            # 一次 executemany，避免 332 次往返
+            await self._session.execute(
+                text("INSERT INTO role_permissions (role_id, permission_id) "
+                     "VALUES (:role_id, :pid)"),
+                [{"role_id": role_id, "pid": pid} for pid in permission_ids],
             )
+        return len(permission_ids)
+
+    async def assign_permissions(self, role_id: int, permission_ids: List[int]) -> None:
+        await self._replace_role_permissions(role_id, permission_ids)
 
     async def get_users(self, role_id: int) -> List[Dict]:
-        # B13: 附带 primary_org_id（org_name/org_path 依赖 B3 的 organizations 表，见 services 层注释）
+        """角色成员列表（B3 组织树落地后已 JOIN 回填 org_name / org_code）。"""
         return await self.query(
-            """SELECT u.id, u.username, u.real_name, u.status, u.primary_org_id
+            """SELECT u.id, u.username, u.real_name, u.status, u.primary_org_id,
+                      o.name AS org_name, o.code AS org_code
                FROM users u
+               LEFT JOIN organizations o ON o.id = u.primary_org_id
                JOIN user_roles ur ON ur.role_id = :role_id
                WHERE ur.role_id = :role_id
                ORDER BY u.id""",
             {"role_id": role_id}
         )
+
+    async def remove_user(self, role_id: int, user_id: int) -> int:
+        """移出角色成员（UPDATE/DELETE 由基类自动注入 tenant_id 过滤）。"""
+        return await self.execute(
+            "DELETE FROM user_roles WHERE role_id = :rid AND user_id = :uid",
+            {"rid": role_id, "uid": user_id},
+        )
+
 
     async def add_user(self, role_id: int, user_id: int, tenant_id: str) -> int:
         return await self.execute(
@@ -103,15 +178,11 @@ class RoleRepository(MultiTenantRepository):
         )
 
     async def bulk_assign_permissions(self, role_id: int, permission_ids: List[int]) -> None:
-        """批量分配权限（清空旧权限后一次性插入新权限）。"""
-        # 先清除旧权限
-        await self.execute("DELETE FROM role_permissions WHERE role_id = :role_id", {"role_id": role_id})
-        # 批量插入新权限（逐行插入以保证 SQLite 兼容）
-        for pid in permission_ids:
-            await self.execute(
-                "INSERT INTO role_permissions (role_id, permission_id) VALUES (:role_id, :pid)",
-                {"role_id": role_id, "pid": pid},
-            )
+        """批量分配权限（清空旧权限后一次性插入新权限）。
+
+        保留该名字是为兼容 key_user 授权链路；实现与 assign_permissions 相同。
+        """
+        await self._replace_role_permissions(role_id, permission_ids)
 
     async def get_by_code(self, code: str) -> Optional[Dict]:
         """按角色编码查询角色。"""
@@ -129,6 +200,22 @@ class RoleRepository(MultiTenantRepository):
             {f"c{i}": code for i, code in enumerate(codes)},
         )
         return [r["id"] for r in rows]
+
+    async def find_permissions_by_codes(self, codes: List[str]) -> List[Dict]:
+        """按权限码批量取 ``{id, code}``，供按编码授权时**回报拼错/失效的码**。
+
+        同样走裸 session —— permissions 无 tenant_id 列。
+        """
+        if not codes:
+            return []
+        result = await self._session.execute(
+            text(
+                f"SELECT id, code FROM permissions WHERE code IN "
+                f"({','.join(f':c{i}' for i in range(len(codes)))})"
+            ),
+            {f"c{i}": code for i, code in enumerate(codes)},
+        )
+        return [dict(row._mapping) for row in result.fetchall()]
 
     async def get_user_roles(self, user_id: int) -> List[Dict]:
         """查询用户关联的角色列表。"""

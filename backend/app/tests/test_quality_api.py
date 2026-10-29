@@ -14,7 +14,7 @@ Testing strategy (when re-enabled):
 
 import pytest
 from datetime import datetime, date
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 # ---------------------------------------------------------------------------
 # Test data helpers
@@ -458,16 +458,42 @@ class TestInspectionOrderAPI:
         assert body["code"] == 0
         assert body["message"] == "判定为 ACC"
 
+    @patch("app.api.quality.NcrService.create_ncr", new_callable=AsyncMock)
+    @patch("app.api.quality.NcrRepository.get_by_source", new_callable=AsyncMock)
     @patch("app.api.quality.InspectionOrderRepository.get_inspection_order")
     @patch("app.api.quality.InspectionOrderRepository.update_inspection_order")
-    async def test_judge_rej(self, mock_update, mock_get, async_client):
+    async def test_judge_rej(self, mock_update, mock_get, mock_get_by_source, mock_create, async_client):
         mock_get.return_value = dict(ORDER_ITEM)
         mock_update.return_value = 1
+        mock_get_by_source.return_value = None
+        mock_create.return_value = {"id": 9001, "status": "open"}
         resp = await async_client.put(
             "/api/v1/inspection-orders/1/judge", json={"result": "REJ"}
         )
         assert resp.status_code == 200
-        assert resp.json()["message"] == "判定为 REJ"
+        body = resp.json()
+        assert body["message"] == "判定为 REJ"
+        # S-2：REJ 应自动发起不合格品评审（NCR）
+        assert body["data"]["ncr_id"] == 9001
+        mock_create.assert_awaited_once()
+
+    @patch("app.api.quality.NcrService.create_ncr", new_callable=AsyncMock)
+    @patch("app.api.quality.NcrRepository.get_by_source", new_callable=AsyncMock)
+    @patch("app.api.quality.InspectionOrderRepository.get_inspection_order")
+    @patch("app.api.quality.InspectionOrderRepository.update_inspection_order")
+    async def test_judge_rej_idempotent(
+        self, mock_update, mock_get, mock_get_by_source, mock_create, async_client
+    ):
+        """同一检验单重复判定 REJ：已有 NCR 则不重复开单"""
+        mock_get.return_value = dict(ORDER_ITEM)
+        mock_update.return_value = 1
+        mock_get_by_source.return_value = {"id": 777}
+        resp = await async_client.put(
+            "/api/v1/inspection-orders/1/judge", json={"result": "REJ"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["ncr_id"] == 777
+        mock_create.assert_not_awaited()
 
     @patch("app.api.quality.InspectionOrderRepository.get_inspection_order")
     @patch("app.api.quality.InspectionOrderRepository.update_inspection_order")

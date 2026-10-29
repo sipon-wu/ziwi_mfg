@@ -67,7 +67,56 @@ class PermissionResponse(BaseModel):
 
 
 class AssignPermissionRequest(BaseModel):
-    permission_ids: List[int]
+    """角色权限分配请求。
+
+    两种入参二选一（同时传以 ``permission_codes`` 为准）：
+
+    - ``permission_codes``：权限编码数组，如 ``["M01:work_order:read"]``。
+      **前端勾选界面用这个** —— 目录接口返回的就是编码，不必自己维护 code→id。
+    - ``permission_ids``：权限主键数组，保留给内部调用/兼容旧客户端。
+
+    显式传空数组 = 清空该角色全部权限（与"未传"语义不同，见 service 层）。
+    """
+
+    permission_ids: Optional[List[int]] = None
+    permission_codes: Optional[List[str]] = Field(
+        default=None, description="权限编码数组；与 permission_ids 二选一，同时传以本字段为准"
+    )
+
+
+class AssignPermissionResponse(BaseModel):
+    affected: int
+    unknown_codes: List[str] = Field(default_factory=list)
+
+
+class PermissionCatalogItem(BaseModel):
+    """目录中的一个权限点（动作级）。"""
+
+    id: int
+    code: str
+    action: str
+    action_name: str
+
+
+class PermissionCatalogResource(BaseModel):
+    """目录中的一个资源（如「工单」），下挂动作级权限点。"""
+
+    resource: str
+    resource_name: str
+    permissions: List[PermissionCatalogItem]
+
+
+class PermissionCatalogModule(BaseModel):
+    """目录中的一个模块（如「M01 生产管理」）。"""
+
+    module: str
+    module_name: str
+    resources: List[PermissionCatalogResource]
+
+
+class PermissionCatalogResponse(BaseModel):
+    total: int
+    modules: List[PermissionCatalogModule]
 
 
 class AssignKeyUserPermissionsRequest(BaseModel):

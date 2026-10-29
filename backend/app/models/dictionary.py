@@ -1,10 +1,10 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, Integer, DateTime, Text
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class Dictionary(Base):
     __tablename__ = "dictionaries"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     dict_code = Column(String(100), nullable=False, comment="字典编码")
     dict_name = Column(String(200), nullable=False, comment="字典名称")
@@ -15,7 +15,7 @@ class Dictionary(Base):
 
 class DictionaryItem(Base):
     __tablename__ = "dictionary_items"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     dict_id = Column(BigInteger, nullable=False, comment="字典ID")
     item_code = Column(String(100), nullable=False, comment="项编码")
     item_name = Column(String(200), nullable=False, comment="项名称")

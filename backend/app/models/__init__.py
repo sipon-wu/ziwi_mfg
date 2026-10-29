@@ -1,4 +1,5 @@
 from app.models.tenant import Tenant
+from app.models.organization import Organization
 from app.models.user import User, UserRole, UserOrganization
 from app.models.role import Role, Permission, RolePermission
 from app.models.excel_import import ExcelImportTask, ImportTemplate
@@ -11,7 +12,8 @@ from app.models.message import Message
 from app.models.approval import ApprovalTemplate, ApprovalInstance, ApprovalNode
 from app.models.team import Team, Employee
 from app.models.tpm import EquipmentCategory, Equipment, MaintenancePlan, MaintenanceTask, SparePart, SparePartInventory
-from app.models.quality import QcPointConfig, InspectionStandard, InspectionItem, InspectionOrder, InspectionResult, QualityReport
+from app.models.quality import QcPointConfig, InspectionStandard, InspectionItem, InspectionOrder, InspectionResult, QualityReport, NcrRecord
+from app.models.status_log import EntityStatusLog
 from app.models.andon import AndonCall, AndonResponse, AndonEscalationRule, AndonEscalationLog
 from app.models.energy import EnergyDevice, CarbonEmissionRecord, EnergyAlert
 from app.models.sync import ChangeLog, SyncConsumer
@@ -43,7 +45,7 @@ from app.models.copilot import (
 from app.models.api_key import ApiKey
 
 __all__ = [
-    "Tenant", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
+    "Tenant", "Organization", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
     "ExcelImportTask", "ImportTemplate",
     "WorkOrder", "WorkOrderStatusLog", "WorkReport", "ProductBom", "BomSnapshot",
     "SpcControlLimit", "SpcDataPoint", "SpcAlert",
@@ -54,7 +56,9 @@ __all__ = [
     "Team", "Employee",
     "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask", "SparePart", "SparePartInventory",
     "QcPointConfig", "InspectionStandard", "InspectionItem", "InspectionOrder", "InspectionResult",
-    "QualityReport",
+    "QualityReport", "NcrRecord",
+    # 通用状态流水（平台层 M02，append-only）
+    "EntityStatusLog",
     "AndonCall", "AndonResponse", "AndonEscalationRule", "AndonEscalationLog",
     "EnergyDevice", "CarbonEmissionRecord", "EnergyAlert",
     "ChangeLog", "SyncConsumer",

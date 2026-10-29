@@ -65,7 +65,7 @@ async function fetchData() {
   loading.value = true
   try {
     // Get all FMEA items for this doc
-    const itemsRes = await get<{ items: FmeaItem[]; total: number }>('/fmea/items', { doc_id: docId, page_size: 500 })
+    const itemsRes = await get<{ items: FmeaItem[]; total: number }>('/fmea/items', { doc_id: docId, page_size: 100 })
     fmeaItems.value = itemsRes.items || []
 
     // Get all actions from each item

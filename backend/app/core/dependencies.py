@@ -5,7 +5,7 @@ FastAPI 依赖注入：获取当前用户、获取 DB session、租户感知的 
 - get_current_user: 增加本地 JWT 认证降级（子账号不走 cloud，走本地 bcrypt + HS256 JWT）
 """
 
-from typing import Any, Callable, Dict, Type, TypeVar
+from typing import Any, Callable, Dict, Optional, Type, TypeVar
 
 from fastapi import Depends, HTTPException, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -241,6 +241,59 @@ async def get_api_key_user(
     }
 
 
+async def resolve_data_scope_org_ids(current_user: dict, db: AsyncSession) -> Optional[list]:
+    """解析当前用户的数据范围可视组织 id 列表（S1 数据范围落地）。
+
+    返回语义
+    --------
+    - ``None``      → 不限（ALL），不加组织过滤
+    - ``[1, 2, 3]`` → 只可见这些组织的数据
+    - ``[]``        → 无可见组织（过滤器恒假）
+
+    计算规则
+    --------
+    1. 取用户全部角色的 ``scope``，合并为**最宽**的一个（``widest_scope``）
+    2. ALL → ``None``；SELF → ``None``（组织维度不限定，由业务按 reporter/created_by 过滤）
+    3. DEPT → 用户所属组织；DEPT_CHILD → 所属组织 + 全部子孙
+    4. 用户无组织归属 → ``None``（避免新用户"什么都看不到"）
+
+    注：不做跨请求缓存 —— 曾考虑用 ``id(db)`` 作键，但 AsyncSession 会被连接池
+    复用、``id()`` 可被回收重用，会导致串数据。每次请求重算是当前正确做法。
+    """
+    from app.constants.modules import SCOPE_ALL, SCOPE_SELF, widest_scope
+    from app.models.organization import Organization  # noqa: F401 确保 metadata 就绪
+    from app.repositories.organization_repo import OrganizationRepository
+    from app.repositories.role_repo import RoleRepository
+
+    user_id = current_user.get("id")
+    tenant_id = current_user.get("tenant_id")
+    if not user_id or not tenant_id:
+        return None
+
+    try:
+        role_repo = RoleRepository(db)
+        role_repo.set_tenant_id(tenant_id)
+        roles = await role_repo.get_user_roles(user_id)
+        scope = widest_scope([r.get("scope") for r in roles or []])
+
+        if scope in (SCOPE_ALL, SCOPE_SELF):
+            result = None
+        else:
+            org_repo = OrganizationRepository(db)
+            org_repo.set_tenant_id(tenant_id)
+            my_org_ids = await org_repo.user_org_ids(user_id)
+            if not my_org_ids:
+                result = None
+            else:
+                from app.services.organization_service import OrganizationService
+                svc = OrganizationService(org_repo)
+                result = await svc.resolve_scope_org_ids(user_id, scope)
+    except Exception:
+        result = None
+
+    return result
+
+
 def get_tenant_repo(repo_class: Type[T], require_auth: bool = True) -> Callable[[], T]:
     """统一的租户感知 Repo 依赖工厂。
 
@@ -268,6 +321,23 @@ def get_tenant_repo(repo_class: Type[T], require_auth: bool = True) -> Callable[
             tenant_id = current_user.get("tenant_id") if current_user else None
             if tenant_id and hasattr(repo, "set_tenant_id"):
                 repo.set_tenant_id(tenant_id)
+            # S1：注入组织数据范围（仅对 ORG_SCOPED_TABLES 白名单内的表生效，
+            # 其它表 set_org_scope 无副作用——注入时按 FROM 表名判断）
+            if current_user and hasattr(repo, "set_org_scope"):
+                try:
+                    org_ids = await resolve_data_scope_org_ids(current_user, db)
+                    repo.set_org_scope(org_ids)
+                except Exception:
+                    # 数据范围解析失败时退回 ALL，宁可放宽也不误伤业务
+                    repo.set_org_scope(None)
+            # S1b：注入写入归属组织（新建单据自动落 org_id）。
+            # 与读过滤是一对：只过滤不归属 → 自己建的单会立刻掉出自己的可见范围。
+            # 取值优先主组织（user.org_id），无组织归属时保持 None（不注入）。
+            if current_user and hasattr(repo, "set_write_org_id"):
+                try:
+                    repo.set_write_org_id(current_user.get("org_id"))
+                except Exception:
+                    repo.set_write_org_id(None)
             return repo
 
     else:

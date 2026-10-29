@@ -1,13 +1,13 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class TrialOrder(Base):
     """试产工单"""
     __tablename__ = "trial_orders"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     order_no = Column(String(64), nullable=False, comment="工单编号 NP-YYYYMM-NNNN")
     trial_type = Column(String(32), nullable=False, comment="new_product/new_process/new_material/eco_verification/tooling_trial")
@@ -37,7 +37,7 @@ class TrialRoute(Base):
     """试产工艺路线"""
     __tablename__ = "trial_routes"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     trial_order_id = Column(BigInteger, nullable=False, comment="FK to trial_orders.id")
     route_json = Column(Text, nullable=False, comment="完整路线数据 JSON")
@@ -54,7 +54,7 @@ class TrialBom(Base):
     """试产BOM"""
     __tablename__ = "trial_bom"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     trial_order_id = Column(BigInteger, nullable=False, comment="FK to trial_orders.id")
     bom_json = Column(Text, nullable=False, comment="完整物料清单 JSON")
@@ -67,7 +67,7 @@ class TrialReview(Base):
     """试产评审记录"""
     __tablename__ = "trial_reviews"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     trial_order_id = Column(BigInteger, nullable=False, comment="FK to trial_orders.id")
     review_stage = Column(String(20), comment="评审阶段")

@@ -1,7 +1,7 @@
 """M07 齐套性检查 — 临时库存表（Phase 1 过渡方案，待 M20 替换）"""
 from sqlalchemy import Column, BigInteger, String, Float, DateTime
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class InventoryItem(Base):
@@ -12,7 +12,7 @@ class InventoryItem(Base):
     """
     __tablename__ = "inventory_items"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     material_code = Column(String(100), nullable=False, comment="物料编码")
     material_name = Column(String(200), comment="物料名称")

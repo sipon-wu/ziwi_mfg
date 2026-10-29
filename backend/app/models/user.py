@@ -2,12 +2,12 @@ from sqlalchemy import (Column, BigInteger, String, Boolean, DateTime, ForeignKe
                         UniqueConstraint, Index, text)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     username = Column(String(100), nullable=False, comment="用户名")
     password_hash = Column(String(255), nullable=False, comment="密码哈希")
@@ -45,7 +45,7 @@ class User(Base):
 class UserRole(Base):
     __tablename__ = "user_roles"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role_id = Column(BigInteger, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(50), nullable=False)
@@ -76,7 +76,7 @@ class UserOrganization(Base):
               postgresql_where=text("is_primary")),
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
                      comment="用户ID")

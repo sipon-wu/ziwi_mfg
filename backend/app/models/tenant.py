@@ -1,11 +1,11 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, JSON
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class Tenant(Base):
     __tablename__ = "tenants"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), unique=True, nullable=False, comment="租户ID")
     name = Column(String(200), nullable=False, comment="租户名称")
     code = Column(String(100), nullable=False, comment="租户编码")

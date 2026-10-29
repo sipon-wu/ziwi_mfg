@@ -1,10 +1,10 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, Integer, DateTime, Text
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 class Team(Base):
     __tablename__ = "teams"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     name = Column(String(200), nullable=False, comment="班组名称")
     code = Column(String(100), nullable=False, comment="班组编码")
@@ -16,7 +16,7 @@ class Team(Base):
 
 class Employee(Base):
     __tablename__ = "employees"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     user_id = Column(BigInteger, comment="关联用户ID")
     employee_no = Column(String(100), nullable=False, comment="工号")

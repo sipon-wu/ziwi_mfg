@@ -129,7 +129,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, matchPermission } from '@/stores/auth'
 import { useCopilotStore } from '@/stores/copilot'
 import CopilotDrawer from '@/components/copilot/CopilotDrawer.vue'
 
@@ -156,7 +156,17 @@ function loadUser() {
 
 onMounted(loadUser)
 
-/* ── 获取当前用户角色编码列表 ── */
+/* ── 获取当前用户的权限码列表 + 角色编码（兼容老 token） ── */
+function getUserPerms(): string[] {
+  try {
+    const raw = localStorage.getItem('user_info')
+    if (!raw || raw === 'undefined') return []
+    const u = JSON.parse(raw)
+    return Array.isArray(u.permissions) ? u.permissions : []
+  } catch { /* ignore */ }
+  return []
+}
+
 function getUserRoleCodes(): string[] {
   try {
     const raw = localStorage.getItem('user_info')
@@ -171,20 +181,23 @@ function getUserRoleCodes(): string[] {
   return []
 }
 
-/* ── 角色菜单过滤 ── */
-function hasAnyRole(userRoles: string[], requiredRoles?: string[]): boolean {
-  if (!requiredRoles || requiredRoles.length === 0) return true
-  return requiredRoles.some(r => userRoles.includes(r))
+/* ── 权限判定：委托给与后端同规则的 matchPermission ── */
+function can(userPerms: string[], required?: string): boolean {
+  if (!required) return true
+  return matchPermission(userPerms, required)
 }
 
 function filterMenuTree(): MenuItem[] {
+  const userPerms = getUserPerms()
   const userRoles = getUserRoleCodes()
-  const isAdmin = userRoles.includes('admin')
+  const isAdmin = userRoles.includes('admin') || userPerms.includes('*')
+  // 老 token 尚未拿到 permissions → 回退到"全部可见"，避免切换期菜单空白
+  const permsNotLoaded = userPerms.length === 0
 
   return allMenuTree.reduce<MenuItem[]>((result, menu) => {
-    const perm: MenuPermission | undefined = menuPermissions.find(p => p.menuId === menu.id)
+    const permCfg: MenuPermission | undefined = menuPermissions.find(p => p.menuId === menu.id)
     // 没有配置权限限制 → 所有角色可见
-    if (!perm) {
+    if (!permCfg) {
       result.push(menu)
       return result
     }
@@ -193,18 +206,21 @@ function filterMenuTree(): MenuItem[] {
       result.push(menu)
       return result
     }
-
-    // 检查父菜单角色要求
-    if (perm.roles && perm.roles.length > 0) {
-      if (!hasAnyRole(userRoles, perm.roles)) return result
+    // 权限未加载：保守放行（真正的拦截在后端）
+    if (permsNotLoaded) {
+      result.push(menu)
+      return result
     }
+
+    // 检查父菜单权限
+    if (permCfg.perm && !can(userPerms, permCfg.perm)) return result
 
     // 处理子菜单过滤
     if (menu.children && menu.children.length > 0) {
       const visibleChildren = menu.children.filter(child => {
-        const childPerm = perm.children?.find(c => c.childId === child.id)
+        const childPerm = permCfg.children?.find(c => c.childId === child.id)
         if (childPerm) {
-          return hasAnyRole(userRoles, childPerm.roles)
+          return can(userPerms, childPerm.perm)
         }
         // 子菜单没有额外限制，继承父级可见性
         return true
@@ -316,6 +332,7 @@ const allMenuTree: MenuItem[] = [
     icon: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 4L12 14.01l-3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
     children: [
       { id: 'quality_list', path: '/quality', label: '品质管理' },
+      { id: 'ncr_list', path: '/quality/ncr', label: '不合格评审' },
       { id: 'spc_limits', path: '/quality/spc/control-limits', label: 'SPC控制限' },
       { id: 'ppap_levels', path: '/quality/ppap/levels', label: 'PPAP等级' },
       { id: 'ppap_submissions', path: '/quality/ppap/submissions', label: 'PPAP提交' },
@@ -365,6 +382,7 @@ const allMenuTree: MenuItem[] = [
     icon: '<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     children: [
       { id: 'system_config', path: '/system/config', label: '系统配置' },
+      { id: 'system_roles', path: '/system/roles', label: '角色权限' },
       { id: 'system_license', path: '/system/license', label: '许可证' },
     ],
   },

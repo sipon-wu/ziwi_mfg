@@ -1,12 +1,12 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, DateTime, Text, JSON, Date, Numeric
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class EnergyDevice(Base):
     __tablename__ = "energy_device"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     device_code = Column(String(100), nullable=False)
     device_name = Column(String(200), nullable=False)
@@ -33,7 +33,7 @@ class EnergyDevice(Base):
 class CarbonEmissionRecord(Base):
     __tablename__ = "carbon_emission_record"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     record_date = Column(Date, nullable=False)
     energy_type = Column(String(50), nullable=False)
@@ -50,7 +50,7 @@ class CarbonEmissionRecord(Base):
 class EnergyAlert(Base):
     __tablename__ = "energy_alert"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     alert_code = Column(String(100), nullable=False)
     alert_name = Column(String(200), nullable=False)

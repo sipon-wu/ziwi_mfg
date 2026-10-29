@@ -1,12 +1,12 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class WorkOrder(Base):
     __tablename__ = "work_orders"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     wo_no = Column(String(100), nullable=False, comment="工单编号")
     wo_type = Column(String(50), default="production", comment="工单类型: production/maintenance/quality")
@@ -23,6 +23,7 @@ class WorkOrder(Base):
     actual_end_at = Column(DateTime(timezone=True), comment="实际结束时间")
     assignee_id = Column(BigInteger, comment="负责人ID")
     workshop = Column(String(100), comment="车间")
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用，创建时取创建人主组织）")
     line_code = Column(String(100), comment="产线编码")
     remark = Column(Text, comment="备注")
     # M07 齐套性检查字段
@@ -35,7 +36,7 @@ class WorkOrder(Base):
 class WorkOrderStatusLog(Base):
     __tablename__ = "work_order_status_logs"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     work_order_id = Column(BigInteger, nullable=False, comment="工单ID")
     from_status = Column(String(50), comment="原状态")
@@ -48,7 +49,7 @@ class WorkOrderStatusLog(Base):
 class WorkReport(Base):
     __tablename__ = "work_reports"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     work_order_id = Column(BigInteger, nullable=False, comment="关联工单ID")
     report_date = Column(Date, nullable=False, comment="报工日期")
@@ -73,7 +74,7 @@ class ProductBom(Base):
     """产品 BOM 物料清单表"""
     __tablename__ = "product_bom"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     product_id = Column(BigInteger, nullable=False, comment="关联产品ID")
     material_code = Column(String(100), nullable=False, comment="物料编码")
@@ -96,7 +97,7 @@ class BomSnapshot(Base):
     """BOM 快照表（工单下达时生成）"""
     __tablename__ = "bom_snapshots"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     work_order_id = Column(BigInteger, nullable=False, comment="工单ID")
     bom_version = Column(Integer, default=1, comment="快照时的 BOM 版本")

@@ -1,7 +1,7 @@
 from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 # ── M00 key_user 角色与权限编码常量 ──────────────────────────────────
 KEY_USER_ROLE_CODE = "key_user"
@@ -26,7 +26,7 @@ ROLE_SCOPE_DEFAULT = ROLE_SCOPE_ALL
 class Role(Base):
     __tablename__ = "roles"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     name = Column(String(100), nullable=False, comment="角色名称")
     code = Column(String(100), nullable=False, comment="角色编码")
@@ -44,7 +44,7 @@ class Role(Base):
 class Permission(Base):
     __tablename__ = "permissions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     code = Column(String(100), unique=True, nullable=False, comment="权限编码")
     name = Column(String(200), nullable=False, comment="权限名称")
     module = Column(String(50), nullable=False, comment="模块编码")
@@ -57,7 +57,7 @@ class Permission(Base):
 class RolePermission(Base):
     __tablename__ = "role_permissions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     role_id = Column(BigInteger, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
     permission_id = Column(BigInteger, ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

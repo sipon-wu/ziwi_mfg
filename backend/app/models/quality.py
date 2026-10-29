@@ -1,12 +1,12 @@
 from sqlalchemy import Column, BigInteger, String, Integer, Boolean, Text, DateTime, Numeric
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, PK_TYPE
 
 
 class QcPointConfig(Base):
     __tablename__ = "qc_point_config"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     point_type = Column(String(20), nullable=False, comment="IQC/IPQC/FQC/OQC")
     point_name = Column(String(200), nullable=False)
@@ -24,7 +24,7 @@ class QcPointConfig(Base):
 class InspectionStandard(Base):
     __tablename__ = "inspection_standard"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     name = Column(String(200), nullable=False)
     standard_type = Column(String(20), nullable=False, default="enterprise", comment="national/enterprise")
@@ -38,7 +38,7 @@ class InspectionStandard(Base):
 class InspectionItem(Base):
     __tablename__ = "inspection_item"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     standard_id = Column(BigInteger, nullable=False, comment="FK to inspection_standard.id")
     item_name = Column(String(200), nullable=False)
@@ -55,7 +55,7 @@ class InspectionItem(Base):
 class InspectionOrder(Base):
     __tablename__ = "inspection_order"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     order_no = Column(String(100), nullable=False)
     order_type = Column(String(20), nullable=False, comment="first/inspection/spot_check")
@@ -63,6 +63,7 @@ class InspectionOrder(Base):
     process_id = Column(BigInteger)
     material_id = Column(BigInteger)
     qc_point_id = Column(BigInteger, comment="FK to qc_point_config.id")
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     inspector_id = Column(BigInteger)
     result = Column(String(10), comment="ACC/REJ/UAI")
     judge_at = Column(DateTime(timezone=True))
@@ -74,7 +75,7 @@ class InspectionOrder(Base):
 class InspectionResult(Base):
     __tablename__ = "inspection_result"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     order_id = Column(BigInteger, nullable=False, comment="FK to inspection_order.id")
     item_id = Column(BigInteger, comment="FK to inspection_item.id")
@@ -91,10 +92,71 @@ class InspectionResult(Base):
 
 class QualityReport(Base):
     __tablename__ = "quality_report"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     report_type = Column(String(20), nullable=False, comment="daily/weekly/monthly")
     period = Column(String(20), nullable=False, comment="统计周期, 如 2026-06-13")
     report_data = Column(Text, comment="报表数据 JSON 字符串")
     generated_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class NcrRecord(Base):
+    """不合格品评审记录（NCR, Non-Conformance Report）——M30 质量域。
+
+    补齐此前的一个结构性缺口：现有 `inspection_order.result`(ACC/REJ/UAI) 与
+    `inspection_result.result`(PASS/FAIL) **只有判定、没有处置**，
+    REJ 之后的「退货 / 挑选 / 让步接收 / 返工 / 报废 / 索赔」无处记录。
+
+    与 SRM 第四层（SI&D）的关系：本表是 SCAR 的**源头事件与闭环证据**。
+    按松耦合纪律②，M40 只订阅本表的领域事件并保存 `source_id` + 快照，
+    不跨域 JOIN、不 import 本模块；`need_supplier_action` 仅为标志位，
+    由 M40 订阅 `quality.ncr_disposed` 后自行决定是否生成 SCAR。
+
+    设计出处：docs/架构v2-松耦合目标态与迁移路径-2026-10-28.md §3.13
+    """
+    __tablename__ = "ncr_records"
+
+    # 同 status_log.py：sqlite 方言下 BigInteger 主键不会自增，降级为 Integer
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False)
+    ncr_no = Column(String(100), nullable=False, comment="不合格单号, 如 NC-202610-0001")
+
+    # 来源（ID + 快照，守松耦合纪律②）
+    source_type = Column(String(20), nullable=False, comment="iqc/ipqc/fqc/oqc/lab/manual")
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
+    source_id = Column(BigInteger, comment="源头单据ID, 如 inspection_order.id")
+    source_no = Column(String(100), comment="源头单号快照")
+
+    # 对象（均为快照字段，避免跨域 JOIN）
+    material_id = Column(BigInteger)
+    material_name = Column(String(200), comment="物料名称快照")
+    supplier_id = Column(BigInteger, comment="供应商ID（来料场景）")
+    supplier_name = Column(String(200), comment="供应商名称快照")
+    work_order_id = Column(BigInteger, comment="工单ID（制程场景）")
+    batch_no = Column(String(100))
+
+    total_qty = Column(Numeric(18, 6), comment="检验/涉及总数, 用于计算不良率")
+    defect_qty = Column(Numeric(18, 6), comment="不合格数量")
+    defect_type = Column(String(100), comment="缺陷类型（字典）")
+    severity = Column(String(20), comment="minor/major/critical")
+    defect_desc = Column(Text)
+
+    # 处置结论
+    disposition = Column(String(20), comment="return退货/sorting挑选/concession让步接收/rework返工/scrap报废/claim索赔")
+    disposition_by = Column(BigInteger)
+    disposition_at = Column(DateTime(timezone=True))
+    disposition_remark = Column(Text)
+
+    # 状态机：open待评审 → reviewing评审中 → disposed已处置 → closed已关闭；cancelled作废
+    status = Column(String(20), nullable=False, server_default="open",
+                    comment="open/reviewing/disposed/closed/cancelled")
+    need_supplier_action = Column(Boolean, default=False, comment="是否需供方整改；M40 据此生成 SCAR")
+
+    raised_by = Column(BigInteger, comment="提出人")
+    raised_at = Column(DateTime(timezone=True), server_default=func.now())
+    closed_by = Column(BigInteger)
+    closed_at = Column(DateTime(timezone=True))
+    remark = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
