@@ -234,6 +234,8 @@
 | 7 | 试产转量产只翻状态位 | `a9f6411` | `trial_to_production_e2e.py` 45/45 |
 | 8 | 页内动作不受权限约束 | `76a877c` | `perm_button_gate_e2e.js` 19 PASS / 0 FAIL |
 | 9 | 成品无物料档案 → 完工入库一直 skipped | 本文档同期 | `material_sync_e2e.py` 17/17 |
+| 10 | 权限只记日志不阻断（影子模式） | `a20b2ef` | `permission_enforce_e2e.js` 9×46 全 PASS |
+| 11 | **参数化路由完全绕过权限**（见下节） | `a20b2ef` | `test_permission_enforce.py` 151 例 |
 
 ### 第 9 项的结论（推翻原 §六 之外的假设）
 
@@ -246,10 +248,50 @@
 ### 仍未闭的项（需拍板）
 
 - 角色增删改界面（当前只能给已有角色配权限）
-- 切强制模式三步（`PERMISSION_ENFORCE` 仍是 `false`，直调接口仍 200）
 - 子表组织归属：`work_reports` / `inspection_result` / `inventory_transactions` 无 `org_id`
+  （部门负责人看不到本部门报工，数据范围只对主表生效）
 
-### 已闭：结果反馈闭环（`b98c283`）
+### 已闭：强制模式 + 参数化路由越权（`a20b2ef`）
+
+切强制模式前的只读审计（`scripts/audit_permission_coverage.py`）顺带挖出一个比"模式松"严重得多的问题：
+
+**`_PERMISSION_MAP` 是 `(path, method) -> code` 的精确字典**，而带路径参数的路由注册进来的是模板串
+`/work-orders/{order_id}/release`，真实请求 `/work-orders/34/release` 查不到 → 返回 `None` →
+guard 当成"未登记的路由"记一条 debug 日志后 `return` 放行。
+
+对比很刺眼：
+
+| 请求 | 结果 |
+|---|---|
+| `POST /api/v1/work-orders` | 403（正确拦住） |
+| `POST /api/v1/work-orders/34/release` | **200（裸奔）** |
+| `POST /api/v1/inspection-orders/12/judge` | **200（裸奔）** |
+| `POST /api/v1/wms/receipt-order-items/88/store` | **200（裸奔）** |
+
+394 条路由里带 `{param}` 的几乎全是真正"动手"的动作（下达/报工/完工/判定/收料/上架/转产），
+即此前**约 91% 的写操作从未被检查过**。这不是"权限不够严"，是"以为有边界其实没有"。
+
+**修复**：`permissions.py` 新增 `_RouteMatcher`——无参路径进精确表 `O(1)`；带参路径编译为
+`^/work-orders/[^/]+/release$` 并按「静态段数降序、模板长度降序」排序（防止 `/a/{x}` 抢占 `/a/b/{y}`）；
+命中入缓存（上限 4096）；`build_permission_map()` 末尾 `invalidate()`。
+
+**佐证**：`perm_button_gate_e2e.js` 的 P15/P16 从 `WARN status=200` 变成 `PASS status=403`。
+
+**强制模式落地三步**（`PERMISSION_ENFORCE` 默认 `true`，一个 env 变量即可回退，不需回滚代码）：
+
+1. 只读审计——路由码 vs 字典 / 无人可用码 / 前端 perm vs 后端码 / 角色×模块矩阵
+2. 灰度 `PERMISSION_ENFORCE_MODULES=M01,M03`——实测 M01 建工单 403 / M04 建物料 200
+3. 全量——清空模块范围，启动横幅 `[INFO] 权限模式：强制（全量，394 条路由）`
+
+**顺带补掉的授权缺口**（都是"文档写了但脚本没发"）：`M00:*` / `M04:*` 写权、`M30:*`（NCR）、
+`M10:fmea*:*`（资源前缀此前被 `resolve_pattern` 静默丢弃，工艺工程师 FMEA 写权从未生效）、
+平台基线抽成 `PLATFORM_BASELINE` 统一叠加。
+
+**前端**：`menu-permissions.ts` 的 system 子菜单此前未声明、继承父级 `PLAT:user:read`，
+导致"能看用户列表"的人也看得见「系统配置」、点进去 403 空白页；`quality/ncr` 路由误用
+`M03:inspection_order:read`（真实接口要 `M30:ncr:read`）。
+
+### 先前已闭：结果反馈闭环（`b98c283`）
 
 改造前 `POST /work-orders` 不回 `data.id`、完工返回的 `production_receipt` 在 `src/`
 里一次都没出现 —— 用户"点了、提示成功、什么都不知道"。现在：
