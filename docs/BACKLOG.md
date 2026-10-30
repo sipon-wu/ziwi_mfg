@@ -17,7 +17,6 @@
 | # | 项 | 现象 | 影响 | 一行根因 | 验收方式 |
 |---|---|---|---|---|---|
 | B-8 | **9 个种子角色里只有 `admin` 带 `is_system=1`** | 其余 8 个（`department_head` / `inspector` / `quality_engineer` …）界面上「删除」按钮可点 | 客户可以把平台预置的角色删掉；`seed_permissions.py` 按 code 授权，删掉后重跑种子只会报 "unmatched_roles"，不会自动重建 | 早期 `roles` 表只有 admin 标了 `is_system`，后续加角色时没有统一约定 | 二选一：①把 8 个种子角色统一标 `is_system=1`；②在 `seed_permissions.py` 里补"角色不存在则按内置定义重建" |
-| B-9 | **收货不建批次记录 → 库存批次冻结无从下手**（X1-8） | `POST /wms/receipt-order-items/{id}/receive` 传了 `batch_no` 也只用它做字符串，`batches` 表里查不到这条批次；`inventory` 行的 `batch_id` 被显式置 NULL（`find_or_create_in_inspection_zone` 注释说"简化待检区行"） | 判 REJ 后即使想冻结也**没有可冻结的对象**；批次追溯 / 召回同样断掉（`batch_id` 为空，`batches.is_locked` 无处可锁） | 待检区入账只写 `batch_no` 字符串、不落 `batches` 记录，全链路没有"批次实体" | 收货时 `find_or_create` 到 `batches`（再取 `batch_id` 写入 inventory 行）；REJ 后自动 `lock` 该批次；E2E `quality_defect_loop_e2e.py` X1-8 由 GAP 转 OK |
 | B-10 | **NCR 处置（disposition）只写字段，无任何下游动作**（X1-11 / X8-5 / X8-6） | NCR 推进到 `disposed` 并给 `disposition=return / rework / scrap` 后：不生成退货单、不生成返工单、不生成再检检验单、不核销库存 | 「处置方案」在系统里等于一段文字，车间拿不到可执行的单据；质量闭环实际止于 NCR | `NcrService.advance` 只 `update` NCR 自身字段 + 写流水 | 先定单据形态：①复用出库单 `issue_type=return/rework`；②新建退货单/返工单资源。定了再实现；E2E X1-11/X8-5/X8-6 由 GAP 转 OK |
 | B-11 | **供应商主数据无任何 API，`supplier_id` 是预留字段** | `/suppliers`、`/basic/suppliers` 全部 404；但 `receipt_orders.supplier_id`、`ncr_records.supplier_id` 都有列 | NCR 的供应商永远为空 → 「按供应商分摊不良」做不了；来料 NCR 无法归到供应商 | 产品决策：供应商主数据归 M01 ERP / M09 SRM 生命周期管理，MES 不自建主数据 | **不自行新建**。等 ERP 集成回填；在此之前 NCR 供应商维度不可用属预期。若客户要求 MES 侧可见，再单独拍板 |
 
@@ -60,6 +59,7 @@
 | C-28 | **月度报表 500（SQLite）** | 本批 | `ProductionRepository.monthly_report` 用 `date_trunc('month', ...)`，PG 专有。本就只汇总单月 → 改区间 + 常量分组键 |
 | C-29 | **`factory_full_flow_e2e.py` 硬编码 staging 资源 + 三处断言口径错** | 本批 | ①`WH_RAW=41/WH_FG=43/MATERIAL_ID=115/PRODUCT_ID=34` 只有 staging 有 → 改 S0 靶场自举（含走真实收货+上架补原料库存）；②S3 打印"跳过出库验证"却照旧断言库存减少 → 无库存改真跳过；③S4 取消**出库**单断言"库存不变"（照抄收货单语义）→ 改为"回滚量 == 当初扣减量"；④成品上架没传 `location_id` 被 `WMS_404_LOCATION` 拒，只打 WARN 就放过 → 补库位并改为硬断言 |
 | C-30 | **`n5_posting_spec.py` 断言写死绝对值，复用物料必红** | 本批 | 脚本首跑 `FAIL 收货后现存量=100: actual=1500.0`。`ensure_material` 按编码复用已有物料（id=30，库里已有 1400 库存），而断言写的是"收货 100 后存量 == 100"。改为记录 `base_stock/base_tx/base_sum` 基线后全部用**增量**断言（`check_near(actual - base, delta)`）；同时把 cancel-11/cancel-12 的库存浮点等值判断换成 `check_near`。语义不变，只是不再假设基线为 0 —— 脚本因此可反复跑 |
+| C-31 | **收货不建批次记录 → 库存批次冻结无从下手**（原 B-9） | 本批 | 三处根因一起改：①`find_or_create_in_inspection_zone` 按 `batch_id IS NULL` 聚合成一行，同一物料不同批次全挤一起，收货传的 `batch_no` 只在第一次 INSERT 时写进去 → 改为**按批次聚合**（`find_one(..., batch_id)`）；②收货入账新增 `batches` 的 `find_or_create`，库存行与流水都带上 `batch_id`；③`judge_order` 判 REJ 后自动 `lock` 该批次，并把结果回在 `data.batch_locked`。配套：`find_available_rows` 从"只取 `batch_id IS NULL` 的物料级行"改为"任意可用行、排除锁定批次"（否则带批次的货会被漏拣）；`batches` 加 `(tenant_id, material_id, batch_no)` 唯一约束 + 迁移 `20261030_batches_unique.py`（回填存量批次、回填 `inventory.batch_id`、幂等）。E2E 新增 X1-12「按账面总量出库必须被拒」，证明冻结真的拦住了拣选而不只是写了个字段。`quality_defect_loop_e2e` 由 13 通/4 断转为 **15 通/3 断** |
 
 ### 方言依赖专项（C-26/C-28 共性）
 

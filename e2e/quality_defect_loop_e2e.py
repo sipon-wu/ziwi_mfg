@@ -154,6 +154,37 @@ def main():
         exists = any(p.endswith("=200") for p in probed)
         report("X1-11 存在采购退货单据资源", exists, " ".join(probed))
 
+    # ── X1-12 冻结必须真的拦住出库拣选 ──
+    # 只把 is_locked 置 1 不算数：出库拣选要跳过锁定批次，否则
+    # 「不合格品可出库」照旧成立 —— 这正是 B-9 要解决的问题。
+    #
+    # 判据刻意不手算「非锁定可用量」：库里可能还有别的历史锁定批次，
+    # 手算容易偏。改用账面总量去出库 —— 只要锁定真的生效，实际可用
+    # 必然小于账面总量，出库必被拒；锁定没生效则恰好通过，断言就会红。
+    r = c.get(f"{API}/wms/inventory",
+              params={"material_id": 1, "warehouse_id": 1, "page_size": 100})
+    inv_rows = ((r.json().get("data") or {}).get("items")
+                or (r.json().get("data") or {}).get("list") or []) if r.status_code == 200 else []
+    avail_all = sum(max(0.0, float(x.get("quantity") or 0) - float(x.get("locked_qty") or 0))
+                    for x in inv_rows)
+    print(f"  [INFO] 库存行 {len(inv_rows)} 条｜账面可用合计={avail_all}")
+    r = c.post(f"{API}/wms/issue-orders", json={
+        "issue_no": f"II-QD-{tag}", "issue_type": "production",
+        "warehouse_id": 1,
+        "items": [{"line_no": 1, "material_id": 1,
+                   "required_qty": avail_all, "unit": "根"}]})
+    issue_id = (r.json().get("data") or {}).get("id") if r.status_code == 200 else None
+    if issue_id:
+        it_i = (c.get(f"{API}/wms/issue-orders/{issue_id}").json()["data"]["items"])[0]
+        r = c.post(f"{API}/wms/issue-order-items/{it_i['id']}/issue",
+                   json={"issued_qty": avail_all})
+        report("X1-12 冻结批次被排除出拣选（按账面总量出库被拒）", r.status_code >= 400,
+               f"要出账面总量 {avail_all}（含锁定批次）→ HTTP {r.status_code} "
+               f"{r.text[:120]}")
+    else:
+        report("X1-12 冻结批次被排除出拣选（按账面总量出库被拒）", False,
+               f"建出库单失败 HTTP {r.status_code}")
+
     print(f"\n{'=' * 62}\nX8 不良再处理：报工报废 → NCR → 返工 → 再检\n{'=' * 62}")
 
     # ── X8-1 建工单 ──

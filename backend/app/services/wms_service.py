@@ -424,10 +424,22 @@ class ReceiptOrderService:
         batch_no = data.get("batch_no", item.get("batch_no"))
 
         async with posting_scope(self.inv_repo._session):
-            # ① 待检区入账
+            # ⓪ 批次实体：收货即落 batches 记录，库存行才能带上 batch_id。
+            #    改造前只把 batch_no 写成字符串，batches 表里没有对应行 →
+            #    批次冻结无对象可锁、批次追溯/召回同样断掉（台账 B-9）。
+            batch_id = None
+            if batch_no:
+                batch_repo = BatchRepository(self.inv_repo._session)
+                if self.inv_repo._tenant_id:
+                    batch_repo.set_tenant_id(self.inv_repo._tenant_id)
+                batch = await batch_repo.find_or_create(
+                    tenant_id, item["material_id"], batch_no)
+                batch_id = batch["id"] if batch else None
+
+            # ① 待检区入账（按批次聚合，不同批次的来料不再挤成一行）
             ins_row = await self.inv_repo.find_or_create_in_inspection_zone(
                 tenant_id, item["material_id"], order["warehouse_id"], delta, item["unit"],
-                batch_no=batch_no,
+                batch_no=batch_no, batch_id=batch_id,
             )
             # ② 流水
             await self.tx_repo.create({
@@ -438,7 +450,7 @@ class ReceiptOrderService:
                 "warehouse_id": order["warehouse_id"],
                 "from_location_id": None,
                 "to_location_id": ins_row.get("location_id"),
-                "batch_id": None,
+                "batch_id": batch_id,
                 "batch_no": batch_no,
                 "quantity": delta,
                 "unit": item["unit"],
@@ -501,9 +513,27 @@ class ReceiptOrderService:
             raise PostingError("WMS_404_LOCATION", "目标库位不存在")
 
         async with posting_scope(self.inv_repo._session):
-            # ① 待检区转出
+            # ⓪ 批次实体：收货时已建，这里取回 id 带到正式库位行上。
+            #    历史数据（改造前收货）没有批次记录，取不到则 batch_id 留空，
+            #    后面按物料级聚合行兜底，不至于让老单子上不了架。
+            batch_id = None
+            if batch_no:
+                batch_repo = BatchRepository(self.inv_repo._session)
+                if self.inv_repo._tenant_id:
+                    batch_repo.set_tenant_id(self.inv_repo._tenant_id)
+                batch = await batch_repo.find_or_create(
+                    tenant_id, item["material_id"], batch_no)
+                batch_id = batch["id"] if batch else None
+
+            # ① 待检区转出（优先按批次行扣，退回物料级聚合行兼容历史数据）
             ins_loc_id = await self.inv_repo.resolve_inspection_location(tenant_id, order["warehouse_id"])
-            ins_row = await self.inv_repo.find_one(item["material_id"], order["warehouse_id"], ins_loc_id, None)
+            ins_row = None
+            if batch_id:
+                ins_row = await self.inv_repo.find_one(
+                    item["material_id"], order["warehouse_id"], ins_loc_id, batch_id)
+            if not ins_row:
+                ins_row = await self.inv_repo.find_one(
+                    item["material_id"], order["warehouse_id"], ins_loc_id, None)
             if ins_row:
                 await self.inv_repo.stock_out(ins_row["id"], qty)
 
@@ -515,6 +545,7 @@ class ReceiptOrderService:
                 location_id=location_id,
                 quantity=qty,
                 unit=item["unit"],
+                batch_id=batch_id,
                 batch_no=batch_no,
             )
 
@@ -527,7 +558,7 @@ class ReceiptOrderService:
                 "warehouse_id": order["warehouse_id"],
                 "from_location_id": ins_loc_id,
                 "to_location_id": location_id,
-                "batch_id": None,
+                "batch_id": batch_id,
                 "batch_no": batch_no,
                 "quantity": qty,
                 "unit": item["unit"],

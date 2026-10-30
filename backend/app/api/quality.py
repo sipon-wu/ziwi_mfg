@@ -320,6 +320,7 @@ async def judge_order(
     # 此前 REJ 只改一个状态字段、无任何处置载体（评审报告 P0-2/P0-3 指出的缺口）。
     # 幂等：同一检验单只开一张 NCR，重复判定不重复开单。
     ncr_id = None
+    batch_locked = None
     if req.result == "REJ":
         # ★ 定位依据三件套：批次号 / 不合格数量 / 供应商。
         # 此前一律为 NULL —— 收货明明带了 batch_no，但开单处没去取，
@@ -340,6 +341,28 @@ async def judge_order(
                 receipt_order = await ro_repo.get(ro_id)
                 if receipt_order:
                     supplier_id = receipt_order.get("supplier_id")
+
+        # ★ 判不合格即冻结批次：这批货既不能上架（上架闸门已拦），
+        # 也不能被出库拣选挑走（find_available_rows 排除锁定批次）。
+        # 改造前 REJ 只改一个状态字段，货还在库里、账面上还能被领用 ——
+        # "不合格品可出库"就是这么来的。冻结失败不阻断判定（判定是既成事实），
+        # 但要把结果回给调用方，别让前端以为锁上了。
+        if batch_no and order.get("material_id"):
+            from app.repositories.wms_repo import BatchRepository
+            batch_repo = BatchRepository(repo._session)
+            if repo.tenant_id:
+                batch_repo.set_tenant_id(repo.tenant_id)
+            batch = await batch_repo.get_by_batch_no(order.get("material_id"), batch_no)
+            if batch:
+                if not batch.get("is_locked"):
+                    await batch_repo.lock(
+                        batch["id"],
+                        f"IQC 判定不合格（检验单 {order.get('order_no')}）")
+                batch_locked = True
+            else:
+                # 批次记录不存在（改造前收货的历史数据）—— 无处可锁，
+                # 如实返回 False，由 useE2E/界面提示人工处理。
+                batch_locked = False
 
         ncr_repo = NcrRepository(repo._session)
         ncr_repo.set_tenant_id(repo.tenant_id)
@@ -376,7 +399,8 @@ async def judge_order(
 
     return {"code": 0, "message": f"判定为 {req.result}",
             "data": {"ncr_id": ncr_id, "receipt_item_id": order.get("receipt_item_id"),
-                     "receipt_inspection_status": receipt_status}}
+                     "receipt_inspection_status": receipt_status,
+                     "batch_locked": batch_locked}}
 
 
 # ============================================================

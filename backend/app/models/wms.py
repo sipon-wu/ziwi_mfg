@@ -109,6 +109,14 @@ class Batch(Base):
     lock_reason      = Column(String(256), comment="锁定原因")
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
 
+    # 收货入账时按 (物料, 批次号) find_or_create，必须靠唯一约束兜住并发重复。
+    # 没有它，同一批货可能建出两条批次记录 → inventory.batch_id 指向不同行，
+    # 冻结只锁住其中一条，另一条照样能被拣走（台账 B-9）。
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "material_id", "batch_no",
+                         name="uq_batches_tenant_material_no"),
+    )
+
 
 # ============================================
 # 库存台账

@@ -45,8 +45,16 @@ def _common_patches(order=INSPECTION_ORDER, item=RECEIPT_ITEM, receipt=RECEIPT_O
 
 
 async def _judge(async_client, payload, *, order=INSPECTION_ORDER,
-                 item=RECEIPT_ITEM, receipt=RECEIPT_ORDER, existing_ncr=None):
-    """跑一次判定请求，返回 (response, NcrService.create_ncr 的调用参数)。"""
+                 item=RECEIPT_ITEM, receipt=RECEIPT_ORDER, existing_ncr=None,
+                 batch=None, capture=None):
+    """跑一次判定请求，返回 (response, NcrService.create_ncr 的调用参数)。
+
+    ``batch`` 传 ``False`` 表示"批次记录不存在"（历史数据），
+    传 ``None`` 走默认（存在且未锁定）。``capture`` 是 list，
+    传了就追加 ``BatchRepository.lock`` 的调用参数，供断言用。
+    """
+    if batch is None:
+        batch = {"id": 21, "batch_no": RECEIPT_ITEM["batch_no"], "is_locked": False}
     with patch(
         "app.repositories.quality_repo.InspectionOrderRepository.get_inspection_order",
         new_callable=AsyncMock, return_value=order,
@@ -63,6 +71,12 @@ async def _judge(async_client, payload, *, order=INSPECTION_ORDER,
         "app.repositories.wms_repo.ReceiptOrderRepository.get",
         new_callable=AsyncMock, return_value=receipt,
     ), patch(
+        "app.repositories.wms_repo.BatchRepository.get_by_batch_no",
+        new_callable=AsyncMock, return_value=batch,
+    ), patch(
+        "app.repositories.wms_repo.BatchRepository.lock",
+        new_callable=AsyncMock, return_value=1,
+    ) as mock_lock, patch(
         "app.repositories.ncr_repo.NcrRepository.get_by_source",
         new_callable=AsyncMock, return_value=existing_ncr,
     ), patch(
@@ -75,6 +89,8 @@ async def _judge(async_client, payload, *, order=INSPECTION_ORDER,
     ) as mock_create:
         resp = await async_client.put(
             "/api/v1/inspection-orders/44/judge", json=payload)
+        if capture is not None and mock_lock.await_args is not None:
+            capture.append(mock_lock.await_args)
         return resp, (mock_create.await_args.args[0] if mock_create.await_args else None)
 
 
@@ -142,3 +158,35 @@ async def test_rej_existing_ncr_not_duplicated(async_client):
     assert resp.status_code == 200
     assert resp.json()["data"]["ncr_id"] == 55
     assert payload is None, "已存在 NCR 时不应再次开单"
+
+
+# ============================================================
+# 判 REJ 自动冻结批次（台账 B-9）
+# ============================================================
+
+async def test_rej_locks_the_batch(async_client):
+    """★ 判不合格要真的把批次锁上 —— 否则货还在库里能被领走。"""
+    cap = []
+    resp, _ = await _judge(async_client, {"result": "REJ"}, capture=cap)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["batch_locked"] is True
+    assert cap, "未调用 BatchRepository.lock"
+    assert cap[0].args[0] == 21, f"锁错了批次：{cap[0].args}"
+
+
+async def test_acc_does_not_lock_batch(async_client):
+    """判定合格不能锁批次 —— 冻结只在 REJ 分支内。"""
+    cap = []
+    resp, _ = await _judge(async_client, {"result": "ACC"}, capture=cap)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["batch_locked"] is None
+    assert not cap, "ACC 不应调用 lock"
+
+
+async def test_rej_without_batch_record_reports_false(async_client):
+    """历史数据（收货时不建批次）无处可锁时如实返回 False，不假装锁上了。"""
+    cap = []
+    resp, _ = await _judge(async_client, {"result": "REJ"}, batch=False, capture=cap)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["batch_locked"] is False
+    assert not cap

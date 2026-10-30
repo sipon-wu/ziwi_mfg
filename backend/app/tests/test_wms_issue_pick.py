@@ -36,17 +36,25 @@ async def inv_repo():
             " quantity NUMERIC, locked_qty NUMERIC DEFAULT 0,"
             " last_transaction_at TEXT)"
         ))
-        # 同一物料同一仓库的 4 条库存行：
+        # find_available_rows 会子查询排除锁定批次，内存库必须有这张表
+        await conn.execute(text(
+            "CREATE TABLE batches (id INTEGER PRIMARY KEY, is_locked BOOLEAN)"
+        ))
+        # 同一物料同一仓库的 5 条库存行：
         #   id=1 待检区，已被取消清空 → 可用 0
-        #   id=2 正式库位 → 可用 100
-        #   id=3 另一库位 → 可用 30
-        #   id=4 另一仓库 → 不应被本仓库拣选看到
+        #   id=2 正式库位（批次 10 未锁） → 可用 100
+        #   id=3 另一库位（无批次）     → 可用 30
+        #   id=4 另一仓库               → 不应被本仓库拣选看到
+        #   id=5 批次 11 已锁定         → 有货也不能被拣走（台账 B-9）
         rows = [
             (1, "t", 30, 5, 901, None, 0, 0),
-            (2, "t", 30, 5, 902, None, 100, 0),
+            (2, "t", 30, 5, 902, 10, 100, 0),
             (3, "t", 30, 5, 903, None, 40, 10),
             (4, "t", 30, 6, 904, None, 999, 0),
+            (5, "t", 30, 5, 905, 11, 50, 0),
         ]
+        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (10, 0)"))
+        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (11, 1)"))
         for r in rows:
             await conn.execute(text(
                 "INSERT INTO inventory (id, tenant_id, material_id, warehouse_id,"
@@ -65,8 +73,18 @@ class TestIssueAutoPick:
     async def test_skips_zero_rows_and_other_warehouses(self, inv_repo):
         rows = await inv_repo.find_available_rows(30, 5)
         assert [r["id"] for r in rows] == [2, 3], (
-            f"应只返回本仓库内可用量>0 的物料级库存行，实际 {[r['id'] for r in rows]}"
+            f"应只返回本仓库内可用量>0 且批次未锁的库存行，"
+            f"实际 {[r['id'] for r in rows]}"
         )
+
+    async def test_excludes_locked_batch(self, inv_repo):
+        """★ 台账 B-9：判 REJ 冻结的批次，有货也不能被拣走。
+
+        id=5 数量 50、批次 11 已锁定。它不该出现在任何出库拣选结果里 ——
+        否则「不合格品可出库」照旧成立，冻结就只是台账上的一个字段。
+        """
+        rows = await inv_repo.find_available_rows(30, 5)
+        assert 5 not in [r["id"] for r in rows], "锁定批次的库存行混进了拣选结果"
 
     async def test_ordered_by_available_desc(self, inv_repo):
         rows = await inv_repo.find_available_rows(30, 5)

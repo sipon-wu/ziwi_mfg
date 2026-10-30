@@ -242,6 +242,35 @@ class BatchRepository(MultiTenantRepository):
         sets = self._build_set_clause(data)
         return await self.execute(f"UPDATE batches SET {sets} WHERE id = :id", {**data, "id": id})
 
+    async def find_or_create(self, tenant_id: str, material_id: int,
+                             batch_no: str, supplier_batch_no: str = None) -> Optional[Dict]:
+        """按 (物料, 批次号) 查批次，没有则建一条 —— 收货入账时调用。
+
+        改造前收货只把 ``batch_no`` 写成入库明细和库存行上的字符串，``batches``
+        表里没有对应记录，于是 ``inventory.batch_id`` 只能为 NULL：批次冻结没有
+        可锁的对象、批次追溯与召回同样断掉（台账 B-9）。
+
+        幂等：查到即复用；``batch_no`` 为空时返回 None（不建空批次）。
+        """
+        if not batch_no:
+            return None
+        existing = await self.get_by_batch_no(material_id, batch_no)
+        if existing:
+            return existing
+        new_id = await self.create({
+            "tenant_id": tenant_id,
+            "batch_no": batch_no,
+            "material_id": material_id,
+            "supplier_batch_no": supplier_batch_no,
+            "manufacture_date": None,
+            "expiry_date": None,
+            "status": "active",
+            "is_locked": False,
+            "lock_reason": None,
+        })
+        return {"id": new_id, "batch_no": batch_no, "material_id": material_id,
+                "status": "active", "is_locked": False}
+
     async def lock(self, id: int, reason: str) -> int:
         return await self.execute(
             "UPDATE batches SET is_locked = 1, lock_reason = :reason, status = 'locked' WHERE id = :id",
@@ -359,17 +388,24 @@ class InventoryRepository(MultiTenantRepository):
         )
 
     async def find_available_rows(self, material_id: int, warehouse_id: int) -> list:
-        """物料级（``batch_id IS NULL``）**所有**可用库存行，按可用量降序。
+        """该物料在该仓库的**所有**可用库存行，按可用量降序（已排除锁定批次）。
 
         为什么不能只用 ``find_one``：同一物料在同一仓库会有多条库位级库存行 ——
         待检区一行、正式库位一行；每次收货/上架/取消都会留下数量为 0 的行。
         ``find_one`` 不带 ``location_id`` 时只 ``first()`` 取一条，可能刚好取到
         0 那行 → **明明有货却报"可用库存不足：现有 0.0"**，而且怎么查都对不上。
+
+        语义变更（台账 B-9）：原先是 ``batch_id IS NULL`` 的"物料级行"，
+        现在库存行会带 ``batch_id``，若继续只取 NULL 行会把带批次的货全漏掉。
+        改为"任意可用行，但排除已锁定批次"——历史 NULL 行照样取得到。
+        ``WHERE is_locked`` 不带字面量：PG 的 boolean 与 SQLite 的 0/1 都合法。
         """
         return await self.query(
             "SELECT * FROM inventory "
-            "WHERE material_id = :mid AND warehouse_id = :wid AND batch_id IS NULL "
+            "WHERE material_id = :mid AND warehouse_id = :wid "
             "AND (quantity - locked_qty) > 0 "
+            "AND (batch_id IS NULL OR batch_id NOT IN "
+            "     (SELECT id FROM batches WHERE is_locked)) "
             "ORDER BY (quantity - locked_qty) DESC",
             {"mid": material_id, "wid": warehouse_id},
         )
@@ -428,31 +464,40 @@ class InventoryRepository(MultiTenantRepository):
 
     async def find_or_create_in_inspection_zone(self, tenant_id: str, material_id: int,
                                                 warehouse_id: int, qty: float, unit: str,
-                                                batch_no: str = None) -> dict:
+                                                batch_no: str = None,
+                                                batch_id: int = None) -> dict:
         """待检区入账（UPSERT 到 zone_type='待检' 的独立库位行），返回该行 dict。
 
         - 待检区 ``quantity`` 计入现存量（决策#6）；
-        - 按 (物料, 仓库, 待检库位) 聚合，``batch_id`` 置空以简化待检区行；
+        - **按批次聚合**：同一 ``(物料, 仓库, 待检库位, 批次)`` 一行。改造前无条件按
+          ``batch_id IS NULL`` 聚合，同一物料不同批次的来料全挤进一行 —— 收货传的
+          ``batch_no`` 只在第一次 INSERT 时写进去，之后永远停在第一批；判 REJ 时
+          连"该锁哪一批"都无从下手（台账 B-9）。
         - 写入 ``last_transaction_at``，与 stock_in/stock_out 两条路径保持一致。
         """
         loc_id = await self.resolve_inspection_location(tenant_id, warehouse_id)
-        existing = await self.find_one(material_id, warehouse_id, loc_id, None)
+        existing = await self.find_one(material_id, warehouse_id, loc_id, batch_id)
         if existing:
             new_qty = existing["quantity"] + qty
+            # COALESCE：历史行的 batch_no 为空时补上，已有值不覆盖
             await self.execute(
-                "UPDATE inventory SET quantity = :qty, last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
-                {"qty": new_qty, "id": existing["id"]},
+                "UPDATE inventory SET quantity = :qty, "
+                "batch_no = COALESCE(batch_no, :batch_no), "
+                "last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
+                {"qty": new_qty, "batch_no": batch_no, "id": existing["id"]},
             )
             existing["quantity"] = new_qty
             existing["location_id"] = loc_id
             return existing
         new_id = await self.execute(
             """INSERT INTO inventory (tenant_id, material_id, warehouse_id, location_id, batch_id, batch_no, quantity, locked_qty, unit, last_transaction_at)
-               VALUES (:tenant_id, :material_id, :warehouse_id, :location_id, NULL, :batch_no, :quantity, 0, :unit, CURRENT_TIMESTAMP)""",
+               VALUES (:tenant_id, :material_id, :warehouse_id, :location_id, :batch_id, :batch_no, :quantity, 0, :unit, CURRENT_TIMESTAMP)""",
             {"tenant_id": tenant_id, "material_id": material_id, "warehouse_id": warehouse_id,
-             "location_id": loc_id, "batch_no": batch_no, "quantity": qty, "unit": unit},
+             "location_id": loc_id, "batch_id": batch_id, "batch_no": batch_no,
+             "quantity": qty, "unit": unit},
         )
-        return {"id": new_id, "location_id": loc_id, "quantity": qty}
+        return {"id": new_id, "location_id": loc_id, "quantity": qty,
+                "batch_id": batch_id, "batch_no": batch_no}
 
 
 class InventoryTransactionRepository(MultiTenantRepository):

@@ -260,11 +260,20 @@ async def test_judge_writes_back_receipt_item_status(judge, expected):
     fake_ro_repo = MagicMock()
     fake_ro_repo.get = AsyncMock(return_value={"id": 3, "supplier_id": 9})
 
+    # REJ 会冻结批次（台账 B-9），这里给一个未锁定的批次让它锁
+    fake_batch_repo = MagicMock()
+    fake_batch_repo.set_tenant_id = MagicMock()
+    fake_batch_repo.get_by_batch_no = AsyncMock(
+        return_value={"id": 21, "batch_no": "B-TEST", "is_locked": False})
+    fake_batch_repo.lock = AsyncMock(return_value=1)
+
     with (
         patch("app.repositories.wms_repo.ReceiptOrderItemRepository",
               return_value=fake_item_repo),
         patch("app.repositories.wms_repo.ReceiptOrderRepository",
               return_value=fake_ro_repo),
+        patch("app.repositories.wms_repo.BatchRepository",
+              return_value=fake_batch_repo),
         patch("app.api.quality.NcrRepository", return_value=fake_qc_repo),
         patch("app.api.quality.NcrService", return_value=fake_ncr_svc),
     ):
