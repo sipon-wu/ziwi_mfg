@@ -38,9 +38,14 @@ class TrialService:
         self.route_repo = TrialRouteRepository(repo._session)
         self.bom_repo = TrialBomRepository(repo._session)
         self.review_repo = TrialReviewRepository(repo._session)
-        if repo.tenant_id:
-            for r in [self.order_repo, self.route_repo, self.bom_repo, self.review_repo]:
+        # 除了 tenant_id，还要继承**写入归属**（org_id），否则转量产生成的
+        # 试产 BOM/路线 org_id 为 NULL，部门负责人自己看不见
+        write_org_id = getattr(repo, "_write_org_id", None)
+        for r in [self.order_repo, self.route_repo, self.bom_repo, self.review_repo]:
+            if repo.tenant_id:
                 r.set_tenant_id(repo.tenant_id)
+            if write_org_id:
+                r.set_write_org_id(write_org_id)
 
     def _set_tenant(self, tenant_id: str):
         for r in [self.order_repo, self.route_repo, self.bom_repo, self.review_repo]:
@@ -202,7 +207,20 @@ class TrialService:
         return {"message": f"评审结论已更新为 {conclusion}"}
 
     async def convert_to_production(self, order_id: int, user_id: int = None) -> Dict:
-        """一键转量产"""
+        """一键转量产：**真正写出正式 BOM 与工艺路线**。
+
+        改造前这里只翻一个状态位（``status='production'``）就返回"转量产成功"，
+        用户去 BOM 管理页找不到任何正式数据 —— 端点存在但等于空转
+        （scenario-verification §二 P0-4 / G-S3）。
+
+        现在按顺序做三件事，任何一步数据缺失都**不阻断**转产，只在 warnings 里说明：
+
+        1. 试产 BOM（``trial_bom.bom_json``）→ 正式 ``product_bom`` 新版本，
+           旧版本 ``is_active`` 置 false（版本继承，避免同一产品两套有效 BOM）
+        2. 试产路线（``trial_routes.route_json``）→ ``process_routes`` + ``route_steps``
+           （状态置 ``draft``：量产路线要工程师确认后再发布，不自动 published）
+        3. 试产工单状态 → production
+        """
         order = await self.order_repo.get_order(order_id)
         if not order:
             return {"error": "试产工单不存在"}
@@ -219,6 +237,11 @@ class TrialService:
         if concl not in ("approved", "conditional_approve"):
             return {"error": f"评审未通过(结论={concl})，不能转量产"}
 
+        warnings: List[str] = []
+
+        bom_result = await self._write_formal_bom(order, warnings)
+        route_result = await self._write_formal_route(order, warnings)
+
         now = datetime.now().isoformat()
         await self.order_repo.update_order(order_id, {
             "status": "production",
@@ -226,11 +249,190 @@ class TrialService:
         })
 
         return {
-            "message": "转量产成功",
+            "message": "转量产完成",
             "trial_order_id": order_id,
             "product_id": order["product_id"],
             "product_name": order["product_name"],
+            "bom": bom_result,
+            "route": route_result,
+            "warnings": warnings,
         }
+
+    # ------------------------------------------------------------------
+    # 转量产的落库细节
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _as_list(raw) -> List[Dict]:
+        """``bom_json`` / ``route_json`` 可能是字符串、也可能是已解析的 list。"""
+        if not raw:
+            return []
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                return []
+        if isinstance(raw, dict):
+            for key in ("items", "bom", "steps", "routes", "step_list"):
+                if isinstance(raw.get(key), list):
+                    return [x for x in raw[key] if isinstance(x, dict)]
+            return []
+        if isinstance(raw, list):
+            return [x for x in raw if isinstance(x, dict)]
+        return []
+
+    async def _write_formal_bom(self, order: Dict, warnings: List[str]) -> Dict:
+        product_id = order.get("product_id")
+        if not product_id:
+            warnings.append("试产工单无 product_id，无法生成正式 BOM")
+            return {"written": 0, "version": None}
+
+        trial_bom = await self.bom_repo.get_by_order(order["id"])
+        items = self._as_list(trial_bom.get("bom_json") if trial_bom else None)
+        if not items:
+            warnings.append("试产 BOM 为空，未生成正式 BOM")
+            return {"written": 0, "version": None}
+
+        row = await self.order_repo.query_one(
+            "SELECT MAX(version) AS v FROM product_bom WHERE product_id = :p",
+            {"p": product_id},
+        )
+        next_version = int((row or {}).get("v") or 0) + 1
+
+        written = 0
+        skipped = 0
+        for it in items:
+            code = it.get("material_code") or it.get("code")
+            if not code:
+                skipped += 1
+                continue
+            await self.order_repo.execute(
+                "INSERT INTO product_bom (tenant_id, product_id, material_code, material_name, "
+                "qty_per_unit, unit, material_type, scrap_rate, issue_operation_seq, "
+                "is_key_material, version, is_active, remark) "
+                "VALUES (:tid, :pid, :code, :name, :qty, :unit, :mtype, :scrap, :ios, "
+                ":key_mat, :ver, :active, :remark)",
+                {
+                    "tid": self.order_repo.tenant_id,
+                    "pid": product_id,
+                    "code": code,
+                    "name": it.get("material_name") or it.get("name") or "",
+                    "qty": it.get("qty_per_unit") or it.get("qty") or 0,
+                    "unit": it.get("unit") or "",
+                    "mtype": it.get("material_type") or "raw",
+                    "scrap": it.get("scrap_rate") or 0,
+                    "ios": it.get("issue_operation_seq"),
+                    "key_mat": bool(it.get("is_key_material")),
+                    "ver": next_version,
+                    "active": True,
+                    "remark": f"由试产工单 {order.get('order_no')} 转量产生成",
+                },
+            )
+            written += 1
+
+        if not written:
+            warnings.append("试产 BOM 中没有任何可用物料行（缺 material_code），未生成正式 BOM")
+            return {"written": 0, "version": None, "skipped": skipped}
+
+        # 版本继承：新版本生效，旧版本停用（放在写入成功之后，失败则旧版仍有效）
+        # 必须带 ``version IS NULL``：历史 BOM 行的 version 是 NULL，
+        # 而 SQL 里 ``NULL <> 1`` 结果是 NULL（不成立），只写 ``version <> :ver``
+        # 会让老数据一直保持 is_active=1 —— 同一产品出现两套有效 BOM。
+        await self.order_repo.execute(
+            "UPDATE product_bom SET is_active = :f WHERE product_id = :p "
+            "AND (version IS NULL OR version <> :ver)",
+            {"f": False, "p": product_id, "ver": next_version},
+        )
+        if skipped:
+            warnings.append(f"试产 BOM 有 {skipped} 行缺 material_code，已跳过")
+        return {"written": written, "version": next_version, "skipped": skipped}
+
+    async def _write_formal_route(self, order: Dict, warnings: List[str]) -> Dict:
+        trial_route = await self.route_repo.get_by_order(order["id"])
+        if not trial_route:
+            warnings.append("试产工单无工艺路线，未生成正式路线")
+            return {"written": 0, "route_id": None}
+
+        steps = self._as_list(trial_route.get("route_json"))
+        if not steps:
+            warnings.append("试产工艺路线为空，未生成正式路线")
+            return {"written": 0, "route_id": None}
+
+        # 缺 operation_id 的工序无法落 route_steps（该列 NOT NULL）
+        usable = [s for s in steps if s.get("operation_id")]
+        missing = len(steps) - len(usable)
+        if not usable:
+            warnings.append(
+                f"试产路线 {len(steps)} 道工序均缺 operation_id，未生成正式路线"
+                "（请先维护工序主数据）")
+            return {"written": 0, "route_id": None, "missing_operation": missing}
+
+        product = None
+        if order.get("product_id"):
+            product = await self.order_repo.query_one(
+                "SELECT code, name FROM products WHERE id = :p", {"p": order["product_id"]}
+            )
+        base_code = f"RTE-{(product or {}).get('code') or order.get('product_id')}"
+        code = base_code
+        row = await self.order_repo.query_one(
+            "SELECT code FROM process_routes WHERE code = :c", {"c": code}
+        )
+        if row:
+            # 同产品再次转产 → 版本后缀，不覆盖既有路线
+            n = 2
+            while True:
+                code = f"{base_code}-V{n}"
+                exists = await self.order_repo.query_one(
+                    "SELECT code FROM process_routes WHERE code = :c", {"c": code})
+                if not exists:
+                    break
+                n += 1
+                if n > 50:
+                    warnings.append("路线编码冲突过多，未生成正式路线")
+                    return {"written": 0, "route_id": None}
+
+        route_id = await self.order_repo.execute(
+            "INSERT INTO process_routes (tenant_id, code, name, version, status, "
+            "route_type, description, created_by) "
+            "VALUES (:tid, :code, :name, :ver, :status, :rtype, :desc, :by)",
+            {
+                "tid": self.order_repo.tenant_id,
+                "code": code,
+                "name": f"{(product or {}).get('name') or order.get('product_name')} 量产路线",
+                # draft：量产路线要工艺工程师确认后再发布，不自动 published
+                "ver": None,
+                "status": "draft",
+                "rtype": "production",
+                "desc": f"由试产工单 {order.get('order_no')} 转量产生成，待发布",
+                "by": None,
+            },
+        )
+
+        written = 0
+        for idx, step in enumerate(usable, start=1):
+            await self.order_repo.execute(
+                "INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, "
+                "step_seq, step_type, wc_id, is_outsource, remark) "
+                "VALUES (:tid, :rid, :op, :name, :seq, :stype, :wc, :outs, :remark)",
+                {
+                    "tid": self.order_repo.tenant_id,
+                    "rid": route_id,
+                    "op": step["operation_id"],
+                    "name": step.get("step_name") or step.get("name") or f"工序{idx}",
+                    "seq": step.get("step_seq") or step.get("seq") or idx,
+                    "stype": step.get("step_type") or "normal",
+                    "wc": step.get("wc_id"),
+                    "outs": bool(step.get("is_outsource")),
+                    "remark": step.get("remark"),
+                },
+            )
+            written += 1
+
+        if missing:
+            warnings.append(f"试产路线有 {missing} 道工序缺 operation_id，已跳过")
+        warnings.append("正式路线已生成但状态为 draft，需工艺工程师确认后发布")
+        return {"written": written, "route_id": route_id, "code": code,
+                "status": "draft", "missing_operation": missing}
 
     async def terminate_trial(self, order_id: int, reason: str = None) -> Dict:
         """终止试产"""
@@ -249,11 +451,115 @@ class TrialService:
 
         return {"message": "试产已终止", "terminated_reason": reason}
 
-    async def import_bom_from_formal(self, order_id: int, source_bom_id: int) -> Dict:
-        """从正式BOM载入（模拟，实际需查正式BOM表）"""
-        # 模拟：从正式BOM查询（简化处理）
-        return {"message": "BOM已从正式BOM载入", "bom": []}
+    async def import_bom_from_formal(self, order_id: int, source_bom_id: int = None) -> Dict:
+        """从正式 BOM 载入到试产 BOM。
 
-    async def import_route_from_formal(self, order_id: int, source_route_id: int) -> Dict:
-        """从正式路线载入（模拟）"""
-        return {"message": "路线已从正式路线载入", "route": {}}
+        改造前是桩函数：``return {"message": "BOM已从正式BOM载入", "bom": []}`` ——
+        接口回"已载入"，但一条数据都没动。现在真读 ``product_bom``
+        （取该产品最新有效版本）并写入 ``trial_bom.bom_json``。
+
+        ``source_bom_id`` 保留兼容：传入时按 product_id 反查该行所属产品，
+        不传则用试产工单自身的 product_id。
+        """
+        order = await self.order_repo.get_order(order_id)
+        if not order:
+            return {"error": "试产工单不存在"}
+
+        product_id = order.get("product_id")
+        if source_bom_id:
+            row = await self.order_repo.query_one(
+                "SELECT product_id FROM product_bom WHERE id = :i", {"i": source_bom_id})
+            if row and row.get("product_id"):
+                product_id = row["product_id"]
+        if not product_id:
+            return {"message": "试产工单无 product_id，无法载入正式 BOM",
+                    "bom": [], "warning": True}
+
+        rows = await self.order_repo.query(
+            "SELECT material_code, material_name, qty_per_unit, unit, material_type, "
+            "scrap_rate, issue_operation_seq, is_key_material, version, is_active "
+            "FROM product_bom WHERE product_id = :p ORDER BY version DESC, id ASC",
+            {"p": product_id},
+        )
+        # is_active 可能是 NULL/0/1，方言间布尔比较写法不同 → 在 Python 侧筛
+        active = [r for r in rows if r.get("is_active") in (None, True, 1)]
+        if not active:
+            return {"message": f"产品 {product_id} 没有有效正式 BOM，未载入",
+                    "bom": [], "warning": True}
+
+        latest_ver = max((r.get("version") or 0) for r in active)
+        chosen = [r for r in active if (r.get("version") or 0) == latest_ver]
+        for r in chosen:
+            r.pop("version", None)
+            r.pop("is_active", None)
+
+        bom_json = json.dumps(chosen, ensure_ascii=False, default=str)
+        existing = await self.bom_repo.get_by_order(order_id)
+        payload = {
+            "tenant_id": self.order_repo.tenant_id,
+            "trial_order_id": order_id,
+            "bom_json": bom_json,
+            "source_type": "formal",
+            "source_bom_id": source_bom_id,
+        }
+        if existing:
+            await self.bom_repo.update_bom(existing["id"], {"bom_json": bom_json,
+                                                            "source_type": "formal",
+                                                            "source_bom_id": source_bom_id})
+        else:
+            await self.bom_repo.create_bom(payload)
+        return {"message": f"已从正式 BOM（v{latest_ver}）载入 {len(chosen)} 行",
+                "bom": chosen, "version": latest_ver}
+
+    async def import_route_from_formal(self, order_id: int, source_route_id: int = None) -> Dict:
+        """从正式工艺路线载入到试产路线。
+
+        改造前同样只返回 ``{"route": {}}`` 的空壳。现在读 ``route_steps``
+        并按试产路线结构（``route_json``）落库。
+        """
+        order = await self.order_repo.get_order(order_id)
+        if not order:
+            return {"error": "试产工单不存在"}
+
+        route_id = source_route_id or order.get("source_route_id")
+        if not route_id:
+            return {"message": "未指定正式路线，也未在试产工单上登记来源路线",
+                    "route": {}, "warning": True}
+
+        route = await self.order_repo.query_one(
+            "SELECT id, code, name, version, status FROM process_routes WHERE id = :i",
+            {"i": route_id},
+        )
+        if not route:
+            return {"message": f"正式路线 {route_id} 不存在", "route": {}, "warning": True}
+
+        steps = await self.order_repo.query(
+            "SELECT operation_id, step_name, step_seq, step_type, wc_id, is_outsource, remark "
+            "FROM route_steps WHERE route_id = :r ORDER BY step_seq ASC",
+            {"r": route_id},
+        )
+        if not steps:
+            return {"message": f"正式路线 {route.get('code')} 没有工序，未载入",
+                    "route": {}, "warning": True}
+
+        route_json = json.dumps(steps, ensure_ascii=False, default=str)
+        existing = await self.route_repo.get_by_order(order_id)
+        if existing:
+            await self.route_repo.update_route(existing["id"], {
+                "route_json": route_json, "source_type": "formal",
+                "source_route_id": route_id,
+            })
+        else:
+            await self.route_repo.create_route({
+                "tenant_id": self.order_repo.tenant_id,
+                "trial_order_id": order_id,
+                "route_json": route_json,
+                "source_type": "formal",
+                "source_route_id": route_id,
+                "name": route.get("name"),
+                "description": f"由正式路线 {route.get('code')} 载入",
+                "change_notes": None,
+                "is_active": True,
+            })
+        return {"message": f"已从正式路线 {route.get('code')} 载入 {len(steps)} 道工序",
+                "route": {"id": route_id, "code": route.get("code"), "steps": steps}}

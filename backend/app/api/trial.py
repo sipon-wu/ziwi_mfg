@@ -307,7 +307,19 @@ async def convert_to_production(
     result = await svc.convert_to_production(order_id, current_user.get("id"))
     if result.get("error"):
         raise HTTPException(400, detail={"code": "400-0000", "message": result["error"]})
-    return {"code": 0, "message": result["message"]}
+    # 把落库结果与告警一起返回：前端要展示"生成了几行 BOM、路线什么状态、
+    # 哪些东西因为缺主数据没生成"，只回一句"转量产完成"等于让用户去猜。
+    return {
+        "code": 0,
+        "message": result["message"],
+        "data": {
+            "trial_order_id": result.get("trial_order_id"),
+            "product_id": result.get("product_id"),
+            "bom": result.get("bom"),
+            "route": result.get("route"),
+            "warnings": result.get("warnings", []),
+        },
+    }
 
 
 @router.post("/{order_id}/terminate")

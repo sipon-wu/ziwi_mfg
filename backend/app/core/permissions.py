@@ -70,7 +70,7 @@ EXECUTE_SUFFIXES: Set[str] = {
     "unlock", "resolve", "acknowledge", "execute", "generate", "import",
     "export", "move", "check", "sync", "ack", "calculate", "rollback",
     "reverse", "red-flush", "submit", "publish", "start", "stop", "reset",
-    "reassign", "assign", "pause", "resume",
+    "reassign", "assign", "pause", "resume", "submit-inspection",
 }
 
 

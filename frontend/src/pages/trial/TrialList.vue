@@ -117,10 +117,25 @@ async function handleTerminate(order: TrialOrder) {
 async function handleConvert(order: TrialOrder) {
   try {
     await showConfirmDialog({ title: '转量产', message: `确定将 ${order.order_no} 转量产？` })
-    await convertToProduction(order.id)
-    showToast('转量产成功')
+  } catch { return /* 用户取消 */ }
+  try {
+    const d: any = (await convertToProduction(order.id)) || {}
+    const lines: string[] = []
+    lines.push(d.bom?.written
+      ? `正式 BOM：${d.bom.written} 行（v${d.bom.version ?? '-'}）`
+      : '正式 BOM：未写入')
+    lines.push(d.route?.written
+      ? `工艺路线：${d.route.code}，${d.route.written} 道工序（draft）`
+      : '工艺路线：未生成')
+    if (d.warnings?.length) {
+      lines.push('')
+      d.warnings.forEach((w: string) => lines.push(`· ${w}`))
+    }
+    showDialog({ title: '转量产完成', message: lines.join('\n'), messageAlign: 'left' })
     fetch()
-  } catch { /* cancelled */ }
+  } catch (e: any) {
+    showToast(e?.message || '转量产失败')
+  }
 }
 
 function formatStageActions(status: string): string[] {

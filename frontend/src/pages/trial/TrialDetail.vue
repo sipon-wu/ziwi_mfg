@@ -128,11 +128,37 @@ async function handleReviewDecision(reviewId: number, conclusion: string) {
 async function handleConvert() {
   if (!order.value) return
   try {
-    await showConfirmDialog({ title: '转量产', message: '确定一键转量产？此操作将创建正式数据' })
-    await convertToProduction(order.value.id)
-    showToast('转量产成功')
+    await showConfirmDialog({
+      title: '转量产',
+      message: '确定一键转量产？将按试产 BOM / 试产路线生成正式 BOM 与工艺路线',
+    })
+  } catch { return /* 用户取消 */ }
+  try {
+    // 转产现在会真正写 product_bom / process_routes，
+    // 必须把"写了多少、哪些因缺主数据没写"回报给用户，
+    // 否则用户只能自己去 BOM 页翻，看不出到底成没成功。
+    const d: any = (await convertToProduction(order.value.id)) || {}
+    const lines: string[] = []
+    if (d.bom?.written) {
+      lines.push(`正式 BOM：写入 ${d.bom.written} 行，版本 v${d.bom.version ?? '-'}`)
+    } else {
+      lines.push('正式 BOM：未写入（来源为空或缺物料编码）')
+    }
+    if (d.route?.written) {
+      lines.push(`工艺路线：${d.route.code} 共 ${d.route.written} 道工序，状态 draft（需发布后生效）`)
+    } else {
+      lines.push('工艺路线：未生成')
+    }
+    if (d.warnings?.length) {
+      lines.push('')
+      lines.push('需要注意：')
+      d.warnings.forEach((w: string) => lines.push(`· ${w}`))
+    }
+    showDialog({ title: '转量产完成', message: lines.join('\n'), messageAlign: 'left' })
     fetchAll()
-  } catch { /* cancelled */ }
+  } catch (e: any) {
+    showToast(e?.message || '转量产失败')
+  }
 }
 
 async function handleTerminate() {

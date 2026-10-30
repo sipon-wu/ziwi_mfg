@@ -353,28 +353,60 @@ class TestM16Trial:
     # ── 从正式数据载入 ───────────────────────────────────────
 
     async def test_import_bom_from_formal(self, async_client):
-        """从正式BOM载入"""
-        with patch("app.repositories.trial_repo.TrialOrderRepository.get_order") as mock:
-            # import_bom_from_formal 不检查订单是否存在（简化实现），但需要 mock get_order
-            # 因为 TrialService 构造函数会创建子 repo，避免内部调用出错
-            mock.return_value = {"id": 1}
+        """从正式BOM载入：真读 product_bom 最新有效版本并落 trial_bom"""
+        with (
+            patch("app.repositories.trial_repo.TrialOrderRepository.get_order") as mock_order,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query_one") as mock_one,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query") as mock_query,
+            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order") as mock_bom,
+            patch("app.repositories.trial_repo.TrialBomRepository.create_bom") as mock_create,
+        ):
+            mock_order.return_value = {"id": 1, "product_id": 9}
+            # source_id=5 → 先按 id 反查所属 product_id（这里让它返回 None，走工单自带 product_id）
+            mock_one.return_value = None
+            mock_query.return_value = [
+                {"material_code": "M-001", "material_name": "冷轧钢板",
+                 "qty_per_unit": 2, "version": 2, "is_active": True},
+                {"material_code": "M-009", "material_name": "旧料",
+                 "qty_per_unit": 1, "version": 1, "is_active": False},
+            ]
+            mock_bom.return_value = None
+            mock_create.return_value = 11
             resp = await async_client.post("/api/v1/trials/1/import-bom", json={
                 "source_id": 5,
             })
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
-        assert "正式BOM" in resp.json()["message"]
+        assert "正式 BOM" in resp.json()["message"]
+        # 只载入最新有效版本（v2），已停用的 v1 不许混进来
+        assert [r["material_code"] for r in resp.json()["data"]] == ["M-001"]
+        assert mock_create.await_count == 1
 
     async def test_import_route_from_formal(self, async_client):
-        """从正式路线载入"""
-        with patch("app.repositories.trial_repo.TrialOrderRepository.get_order") as mock:
-            mock.return_value = {"id": 1}
+        """从正式路线载入：真读 route_steps 并落 trial_routes"""
+        with (
+            patch("app.repositories.trial_repo.TrialOrderRepository.get_order") as mock_order,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query_one") as mock_one,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query") as mock_query,
+            patch("app.repositories.trial_repo.TrialRouteRepository.get_by_order") as mock_route,
+            patch("app.repositories.trial_repo.TrialRouteRepository.create_route") as mock_create,
+        ):
+            mock_order.return_value = {"id": 1, "product_id": 9, "source_route_id": None}
+            mock_one.return_value = {"id": 3, "code": "RTE-PRO-001", "name": "量产路线"}
+            mock_query.return_value = [
+                {"operation_id": 11, "step_name": "下料", "step_seq": 10},
+                {"operation_id": 12, "step_name": "机加工", "step_seq": 20},
+            ]
+            mock_route.return_value = None
+            mock_create.return_value = 21
             resp = await async_client.post("/api/v1/trials/1/import-route", json={
                 "source_id": 3,
             })
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
         assert "正式路线" in resp.json()["message"]
+        assert len(resp.json()["data"]["steps"]) == 2
+        assert mock_create.await_count == 1
 
     # ── 评审流程 ─────────────────────────────────────────────
 
@@ -462,24 +494,46 @@ class TestM16Trial:
     # ── 转量产 & 终止 ────────────────────────────────────────
 
     async def test_convert_to_production(self, async_client):
-        """M16-08: 评审通过后一键转量产"""
+        """M16-08: 评审通过后一键转量产 —— 必须真写 BOM 与工艺路线"""
         with (
             patch("app.repositories.trial_repo.TrialOrderRepository.get_order") as mock_order,
             patch("app.repositories.trial_repo.TrialReviewRepository.list_by_order") as mock_reviews,
             patch("app.repositories.trial_repo.TrialOrderRepository.update_order") as mock_upd,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query_one") as mock_one,
+            patch("app.repositories.trial_repo.TrialOrderRepository.execute") as mock_exec,
+            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order") as mock_bom,
+            patch("app.repositories.trial_repo.TrialRouteRepository.get_by_order") as mock_route,
         ):
             mock_order.return_value = {
                 "id": 1, "status": "review", "product_id": 1,
-                "product_name": "产品A",
+                "product_name": "产品A", "order_no": "NP-202610-0001",
             }
             mock_reviews.return_value = [
                 {"id": 100, "conclusion": "approved", "reviewed_at": "2026-06-20T10:00:00"},
             ]
             mock_upd.return_value = 1
+            mock_exec.return_value = 1
+            mock_one.return_value = None
+            import json as _json
+            mock_bom.return_value = {"id": 1, "bom_json": _json.dumps([
+                {"material_code": "M-001", "material_name": "冷轧钢板", "qty_per_unit": 2},
+            ])}
+            mock_route.return_value = {"id": 1, "route_json": _json.dumps([
+                {"operation_id": 11, "step_name": "下料", "step_seq": 10},
+            ])}
             resp = await async_client.post("/api/v1/trials/1/convert")
         assert resp.status_code == 200
-        assert resp.json()["code"] == 0
-        assert "转量产" in resp.json()["message"]
+        body = resp.json()
+        assert body["code"] == 0
+        assert "转量产" in body["message"]
+        # 落库结果要如实回报，不能只回一句"成功"
+        assert body["data"]["bom"]["written"] == 1
+        assert body["data"]["route"]["written"] == 1
+        assert body["data"]["route"]["status"] == "draft"
+        sqls = [c.args[0] for c in mock_exec.await_args_list]
+        assert any(s.startswith("INSERT INTO product_bom") for s in sqls)
+        assert any(s.startswith("INSERT INTO process_routes") for s in sqls)
+        assert any(s.startswith("INSERT INTO route_steps") for s in sqls)
 
     async def test_convert_to_production_not_review(self, async_client):
         """非评审阶段不能转量产"""
