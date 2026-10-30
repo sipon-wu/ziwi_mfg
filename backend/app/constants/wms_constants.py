@@ -53,6 +53,28 @@ INSPECTION_PENDING: str = "待检"
 INSPECTION_QUALIFIED: str = "qualified"
 INSPECTION_DISQUALIFIED: str = "disqualified"
 
+# 历史遗留同义值：create() 曾写 "pending"，旧数据里还有 NULL。
+# 三种写法表达同一个状态，判定前必须先归一，否则闸门只看 disqualified 时
+# 会把这些明细当"未检验"一律放行。
+_INSPECTION_PENDING_ALIASES = frozenset({"", "pending", "待检", "waiting", "PENDING"})
+
+
+def normalize_inspection_status(value) -> str:
+    """把 inspection_status 归一为 ``待检`` / ``qualified`` / ``disqualified``。
+
+    未知取值原样返回（不猜），以便闸门把它当"无法确认合格"处理。
+    """
+    if value is None:
+        return INSPECTION_PENDING
+    text = str(value).strip()
+    if text in _INSPECTION_PENDING_ALIASES:
+        return INSPECTION_PENDING
+    if text.lower() == INSPECTION_QUALIFIED:
+        return INSPECTION_QUALIFIED
+    if text.lower() == INSPECTION_DISQUALIFIED:
+        return INSPECTION_DISQUALIFIED
+    return text
+
 # ============================================
 # 凭证号规则：MM{yyyymmdd}{seq:04d}（由 repo 在 create 时生成；凭证不可改删）
 # ============================================

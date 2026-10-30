@@ -447,6 +447,33 @@ async def receive_item(item_id: int, req: ReceiptOrderItemUpdate, current_user: 
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 
+@router.post("/receipt-order-items/{item_id}/submit-inspection")
+async def submit_inspection(item_id: int, current_user: dict = Depends(get_current_user),
+    repo: ReceiptOrderRepository = Depends(get_tenant_repo(ReceiptOrderRepository, require_auth=True)),
+    item_repo: ReceiptOrderItemRepository = Depends(get_tenant_repo(ReceiptOrderItemRepository, require_auth=True)),
+    inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+    tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+):
+    """来料送检：开 IQC 检验单并回写明细的 inspection_id（幂等）。
+
+    送检后该明细在判定为 qualified 之前**不可上架**（见 store_item 闸门）。
+    """
+    svc = ReceiptOrderService(repo, item_repo, inv_repo, tx_repo)
+    try:
+        result = await svc.submit_inspection(
+            item_id, current_user.get("tenant_id", "default"),
+            created_by=current_user.get("id"),
+        )
+        return {
+            "code": 0,
+            "message": "检验单已创建" if result["created"] else "该明细已送检，返回既有检验单",
+            "data": result,
+        }
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
 @router.post("/receipt-order-items/{item_id}/store")
 async def store_item(item_id: int, req: ReceiptOrderItemUpdate, current_user: dict = Depends(get_current_user),
     repo: ReceiptOrderRepository = Depends(get_tenant_repo(ReceiptOrderRepository, require_auth=True)),

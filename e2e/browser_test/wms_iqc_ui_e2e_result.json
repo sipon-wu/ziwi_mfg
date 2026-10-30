@@ -1,0 +1,84 @@
+{
+  "ts": "282221",
+  "results": [
+    {
+      "id": "W1",
+      "name": "登录",
+      "status": "PASS",
+      "detail": "http://127.0.0.1:5173/#/cockpit"
+    },
+    {
+      "id": "W2",
+      "name": "预置入库单",
+      "status": "PASS",
+      "detail": "HTTP 200 id=7"
+    },
+    {
+      "id": "W3",
+      "name": "明细页加载",
+      "status": "PASS",
+      "detail": "知微制造 首页 驾驶舱 车间大屏 基础数据 生产管理 设备管理 安灯管理 品质管理 能碳管理 数据采集 试产管理 实验室"
+    },
+    {
+      "id": "W4",
+      "name": "未收货时显示「收货登记」按钮",
+      "status": "PASS",
+      "detail": "buttons=1"
+    },
+    {
+      "id": "W5",
+      "name": "未送检标记为「未送检」",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W6",
+      "name": "未收货时不显示「送检」",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W7",
+      "name": "收货弹窗弹出",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W8",
+      "name": "收货登记成功",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W9",
+      "name": "收货后出现「送检」按钮",
+      "status": "PASS",
+      "detail": "count=1"
+    },
+    {
+      "id": "W10",
+      "name": "送检成功（生成 IQC 单）",
+      "status": "PASS",
+      "detail": "页面显示检验单 ID"
+    },
+    {
+      "id": "W11",
+      "name": "检验状态变为「待检」",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W12",
+      "name": "已送检未判定 → 上架被拒（前端提示后端文案）",
+      "status": "PASS",
+      "detail": "提示已展示"
+    },
+    {
+      "id": "W13",
+      "name": "无 JS 运行时错误",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "consoleErrors": []
+}

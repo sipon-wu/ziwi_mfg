@@ -169,10 +169,18 @@ class InspectionOrderRepository(MultiTenantRepository):
     async def create_inspection_order(self, data: dict) -> int:
         return await self.execute(
             "INSERT INTO inspection_order (tenant_id, order_no, order_type, work_order_id, "
-            "process_id, material_id, qc_point_id, inspector_id, remark) "
+            "process_id, material_id, receipt_item_id, qc_point_id, inspector_id, remark) "
             "VALUES (:tenant_id, :order_no, :order_type, :work_order_id, "
-            ":process_id, :material_id, :qc_point_id, :inspector_id, :remark)",
-            data,
+            ":process_id, :material_id, :receipt_item_id, :qc_point_id, :inspector_id, :remark)",
+            {"receipt_item_id": None, **data},
+        )
+
+    async def get_by_receipt_item(self, receipt_item_id: int) -> Optional[Dict]:
+        """按入库明细查来料检验单（用于幂等：一条入库明细只开一张 IQC 单）。"""
+        return await self.query_one(
+            "SELECT * FROM inspection_order WHERE receipt_item_id = :rid "
+            "ORDER BY id DESC LIMIT 1",
+            {"rid": receipt_item_id},
         )
 
     async def update_inspection_order(self, id: int, data: dict) -> int:

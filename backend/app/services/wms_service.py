@@ -7,7 +7,8 @@ from app.constants.wms_constants import (
     RECEIPT_CANCELLED, RECEIPT_TRANSITION,
     ISSUE_PENDING, ISSUE_APPROVED, ISSUE_PICKING, ISSUE_PARTIALLY_ISSUED, ISSUE_ISSUED,
     ISSUE_CANCELLED, ISSUE_TRANSITION,
-    INSPECTION_QUALIFIED, INSPECTION_DISQUALIFIED,
+    INSPECTION_PENDING, INSPECTION_QUALIFIED, INSPECTION_DISQUALIFIED,
+    normalize_inspection_status,
     ZONE_TYPE_INSPECTION,
 )
 from app.repositories.wms_repo import (
@@ -20,6 +21,34 @@ from app.repositories.wms_repo import (
     InventoryAlertRepository,
     MaterialRequestRepository, MaterialRequestItemRepository,
 )
+
+
+# ============================================
+# IQC 上架闸门（独立成函数，便于单测与复用）
+# ============================================
+
+def assert_inspection_allows_storage(item: dict) -> None:
+    """判断入库明细是否允许上架确认，不允许则抛 ``PostingError``。
+
+    三种情况必须分开，改造前只拦了第一种（注释还写着"None/待检 视为可上架"）：
+
+    ① 明确判不合格（disqualified）        → 拒绝（原有）
+    ② 已送检但还没判定合格                → 拒绝（新增）
+    ③ 从未送检（``inspection_id`` 为空）  → 仍放行
+
+    ③ 保持放行是刻意兼容：库里存量的入库明细 ``inspection_id`` 全为 NULL，
+    若一刀切 fail-closed，所有未启用来料检验的租户立刻上不了架。
+    收紧的开关是"是否送检"，而不是"是否有检验模块"。
+    """
+    insp = normalize_inspection_status(item.get("inspection_status"))
+    if insp == INSPECTION_DISQUALIFIED:
+        raise PostingError("WMS_409_INSPECTION", "IQC 判定不合格，禁止上架确认")
+    if item.get("inspection_id") and insp != INSPECTION_QUALIFIED:
+        raise PostingError(
+            "WMS_409_INSPECTION",
+            f"该明细已送 IQC 检验（检验单 ID {item['inspection_id']}）但尚未判定合格，"
+            f"禁止上架确认",
+        )
 
 
 # ============================================
@@ -458,10 +487,8 @@ class ReceiptOrderService:
         if order["status"] not in (RECEIPT_INSPECTING, RECEIPT_PARTIALLY_STORED):
             raise PostingError("WMS_409_STATUS", "仅 inspecting/partially_stored 状态可上架确认")
 
-        # IQC 前置校验
-        insp = item.get("inspection_status")
-        if insp == INSPECTION_DISQUALIFIED:
-            raise PostingError("WMS_409_INSPECTION", "IQC 判定不合格，禁止上架确认")
+        # IQC 前置校验（见 assert_inspection_allows_storage 的三种情况说明）
+        assert_inspection_allows_storage(item)
 
         qty = data.get("stored_qty", item["received_qty"] or item["expected_qty"])
         location_id = data.get("location_id", item.get("location_id"))
@@ -529,6 +556,94 @@ class ReceiptOrderService:
                 "stored_qty": total_stored, "status": new_status,
             })
         return {"item_id": item_id, "qty": qty, "order_status": new_status}
+
+    async def submit_inspection(self, item_id: int, tenant_id: str,
+                                created_by: int = None,
+                                inspector_id: int = None) -> dict:
+        """来料送检：为入库明细开一张 IQC 检验单，并把检验单 ID 回写到明细。
+
+        这是 IQC 闭环的**入口**。此前这条链路完全断开：``receipt_order_items``
+        有 ``inspection_id`` 字段，但全库没有一行被写入过；``inspection_order``
+        也没有任何字段能指回入库明细 —— 于是质检员判完 REJ，
+        ``judge_order`` 只写一张 NCR 就结束，谁也拦不住这批货上架。
+
+        幂等：一条明细只开一张单；重复调用返回既有检验单。
+        已判定的结果不会被一次误点抹掉（重复送检不重置 inspection_status）。
+        """
+        item = await self.item_repo.get(item_id)
+        if not item:
+            raise ValueError(f"入库明细不存在: {item_id}")
+        order = await self.repo.get(item["receipt_id"])
+        if not order:
+            raise ValueError(f"入库单不存在: {item['receipt_id']}")
+        if order["status"] == RECEIPT_CANCELLED:
+            raise PostingError("WMS_409_STATUS", "入库单已取消，无法送检")
+
+        tenant_id = tenant_id or self.item_repo._tenant_id or "default"
+
+        from app.repositories.quality_repo import InspectionOrderRepository
+
+        qc_repo = InspectionOrderRepository(self.item_repo._session)
+        qc_repo.set_tenant_id(tenant_id)
+        # 继承写入归属，否则检验员按"本部门"过滤时看不到自己该检的单
+        write_org_id = getattr(self.item_repo, "_write_org_id", None) or order.get("org_id")
+        if write_org_id:
+            qc_repo.set_write_org_id(write_org_id)
+
+        existing = await qc_repo.get_by_receipt_item(item_id)
+        if existing:
+            # 明细上的 inspection_id 可能因历史原因为空，这里顺手补齐
+            if not item.get("inspection_id"):
+                await self.item_repo.update(item_id, {"inspection_id": existing["id"]})
+            return {
+                "item_id": item_id, "inspection_id": existing["id"],
+                "inspection_no": existing.get("order_no"),
+                "created": False, "inspection_status": item.get("inspection_status"),
+            }
+
+        order_no = await self._next_iqc_no(qc_repo)
+        inspection_id = await qc_repo.create_inspection_order({
+            "tenant_id": tenant_id,
+            "order_no": order_no,
+            "order_type": "iqc",
+            "work_order_id": None,
+            "process_id": None,
+            "material_id": item["material_id"],
+            "receipt_item_id": item_id,
+            "qc_point_id": None,
+            "inspector_id": inspector_id,
+            "remark": f"来料检验：入库单 {order.get('receipt_no')} 第 {item.get('line_no')} 行",
+        })
+        await self.item_repo.update(item_id, {
+            "inspection_id": inspection_id,
+            "inspection_status": INSPECTION_PENDING,
+        })
+        return {
+            "item_id": item_id, "inspection_id": inspection_id,
+            "inspection_no": order_no, "created": True,
+            "inspection_status": INSPECTION_PENDING,
+        }
+
+    @staticmethod
+    async def _next_iqc_no(qc_repo) -> str:
+        """生成 IQC 单号 IQC-YYYYMMDD-NNNN。
+
+        与质检模块的 QC- 前缀区分：来料检验要能在列表里一眼认出，
+        混用同一前缀会让"今天检了几批来料"查不出来。
+        """
+        prefix = f"IQC-{date.today().strftime('%Y%m%d')}-"
+        row = await qc_repo.query_one(
+            "SELECT order_no FROM inspection_order WHERE order_no LIKE :p "
+            "ORDER BY order_no DESC LIMIT 1",
+            {"p": f"{prefix}%"},
+        )
+        if row and len(row["order_no"]) > len(prefix):
+            try:
+                seq = int(row["order_no"][len(prefix):])
+            except ValueError:
+                seq = 0
+            return f"{prefix}{seq + 1:04d}"
+        return f"{prefix}0001"
 
     async def complete(self, id: int) -> dict:
         """完成入库单"""

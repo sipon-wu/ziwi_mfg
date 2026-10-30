@@ -537,12 +537,18 @@ class ReceiptOrderItemRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM receipt_order_items WHERE id = :id", {"id": id})
 
     async def create(self, data: dict) -> int:
-        cols = [c for c in ("receipt_id", "line_no", "material_id", "expected_qty", "received_qty",
-                            "stored_qty", "unit", "batch_no", "location_id",
-                            "inspection_status", "remark") if c in data]
+        # tenant_id 必须显式进列清单：基类 execute() 只给 UPDATE/DELETE 注入
+        # tenant_id 条件，INSERT 一向由应用层自己写。此前这里漏了该列，
+        # 而 receipt_order_items.tenant_id 是 NOT NULL ——
+        # "带明细建入库单"必然 500（2026-10-30 E2E 实测，非本表首次踩）
+        payload = {"tenant_id": self._tenant_id, **data}
+        cols = [c for c in ("tenant_id", "receipt_id", "line_no", "material_id",
+                            "expected_qty", "received_qty", "stored_qty", "unit",
+                            "batch_no", "location_id", "inspection_status", "remark")
+                if c in payload and payload[c] is not None]
         sql = "INSERT INTO receipt_order_items ({}) VALUES ({})".format(
             ", ".join(cols), ", ".join(f":{c}" for c in cols))
-        return await self.execute(sql, data)
+        return await self.execute(sql, payload)
 
     async def batch_create(self, items: list) -> int:
         count = 0
@@ -623,11 +629,16 @@ class IssueOrderItemRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM issue_order_items WHERE id = :id", {"id": id})
 
     async def create(self, data: dict) -> int:
-        cols = [c for c in ("issue_id", "line_no", "material_id", "required_qty", "issued_qty",
-                            "unit", "batch_no", "from_location_id", "pick_status", "remark") if c in data]
+        # 同 ReceiptOrderItemRepository.create：issue_order_items.tenant_id 是
+        # NOT NULL，而基类 execute() 不负责 INSERT 的 tenant_id 注入
+        payload = {"tenant_id": self._tenant_id, **data}
+        cols = [c for c in ("tenant_id", "issue_id", "line_no", "material_id",
+                            "required_qty", "issued_qty", "unit", "batch_no",
+                            "from_location_id", "pick_status", "remark")
+                if c in payload and payload[c] is not None]
         sql = "INSERT INTO issue_order_items ({}) VALUES ({})".format(
             ", ".join(cols), ", ".join(f":{c}" for c in cols))
-        return await self.execute(sql, data)
+        return await self.execute(sql, payload)
 
     async def batch_create(self, items: list) -> int:
         count = 0

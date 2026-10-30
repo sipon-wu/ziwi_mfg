@@ -62,6 +62,10 @@ class InspectionOrder(Base):
     work_order_id = Column(BigInteger)
     process_id = Column(BigInteger)
     material_id = Column(BigInteger)
+    # ★ 来料检验（IQC）来源：指向 receipt_order_items.id。
+    # 加这一列之前，检验单只有 work_order_id/process_id/material_id，
+    # 判定结果无处回写 → "判定不合格却仍可上架"（scenario-verification P0-1）。
+    receipt_item_id = Column(BigInteger, comment="来料检验来源：receipt_order_items.id")
     qc_point_id = Column(BigInteger, comment="FK to qc_point_config.id")
     org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     inspector_id = Column(BigInteger)

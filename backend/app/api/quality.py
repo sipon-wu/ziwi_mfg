@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
@@ -290,7 +290,25 @@ async def judge_order(
     updates = {"result": req.result}
     if req.remark:
         updates["remark"] = req.remark
+    if user.get("id"):
+        updates["inspector_id"] = user["id"]
+        updates["judge_at"] = datetime.now(timezone.utc)
     await repo.update_inspection_order(order_id, updates)
+
+    # ── IQC 回写：把判定结果写回入库明细，让 WMS 上架闸门真正生效 ──
+    # 改造前判定只落在检验单上（外加 REJ 开一张 NCR），入库明细的
+    # inspection_status 靠人工维护 → "判定不合格却仍可上架"（P0-1）。
+    receipt_status = None
+    if order.get("receipt_item_id"):
+        from app.repositories.wms_repo import ReceiptOrderItemRepository
+        item_repo = ReceiptOrderItemRepository(repo._session)
+        if repo.tenant_id:
+            item_repo.set_tenant_id(repo.tenant_id)
+        # ACC → qualified；REJ → disqualified；UAI（让步接收）→ qualified
+        # UAI 是"不合格但特采放行"，业务上允许上架，因此按放行处理。
+        receipt_status = "disqualified" if req.result == "REJ" else "qualified"
+        await item_repo.update(order["receipt_item_id"],
+                               {"inspection_status": receipt_status})
 
     # S-2：判定不合格（REJ）→ 自动发起不合格品评审（NCR）
     # 此前 REJ 只改一个状态字段、无任何处置载体（评审报告 P0-2/P0-3 指出的缺口）。
@@ -326,7 +344,9 @@ async def judge_order(
             )
             ncr_id = created["id"]
 
-    return {"code": 0, "message": f"判定为 {req.result}", "data": {"ncr_id": ncr_id}}
+    return {"code": 0, "message": f"判定为 {req.result}",
+            "data": {"ncr_id": ncr_id, "receipt_item_id": order.get("receipt_item_id"),
+                     "receipt_inspection_status": receipt_status}}
 
 
 # ============================================================
