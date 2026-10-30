@@ -123,20 +123,28 @@ class ProductionRepository(MultiTenantRepository):
         return await self.query(sql, params)
 
     async def monthly_report(self, year: int, month: int, tenant_id: str = None) -> List[Dict]:
-        sql = """SELECT date_trunc('month', wr.report_date) as month,
+        """月度报工汇总。
+
+        ⚠️ 不能用 ``date_trunc('month', wr.report_date)`` —— PostgreSQL 专有，
+        SQLite 下直接语法错误（本地/单测点开报表就 500）。
+        这里本来就只汇总一个月，改用 ``[月初, 下月初)`` 区间过滤，
+        分组键直接用月初这个常量，语义等价且两种方言都吃。
+        """
+        start = date(year, month, 1)
+        end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        sql = """SELECT :month_start as month,
                  COUNT(DISTINCT wr.work_order_id) as order_count,
                  SUM(wr.output_qty) as total_output,
                  SUM(wr.scrap_qty) as total_scrap,
                  SUM(wr.labor_hours) as total_hours,
                  SUM(wr.machine_hours) as total_machine_hours
                  FROM work_reports wr
-                 WHERE date_trunc('month', wr.report_date) = :month_start AND wr.status = 'submitted'"""
-        import datetime
-        params = {"month_start": datetime.date(year, month, 1)}
+                 WHERE wr.report_date >= :month_start AND wr.report_date < :month_end
+                   AND wr.status = 'submitted'"""
+        params = {"month_start": start, "month_end": end}
         if tenant_id:
             sql += " AND wr.tenant_id = :tid"
             params["tid"] = tenant_id
-        sql += " GROUP BY date_trunc('month', wr.report_date)"
         return await self.query(sql, params)
 
 

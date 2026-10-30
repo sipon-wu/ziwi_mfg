@@ -28,13 +28,20 @@ TENANT   = os.environ.get("TENANT", "mfg_demo")
 
 API = f"{BASE_URL}/api/v1"
 
-# ── 已知资源（预发布环境） ──────────────────────────────────────────
-WH_RAW      = 41       # 原材料仓
-WH_FG       = 43       # 成品仓
-MATERIAL_ID = 115      # 已知物料（可能用于 BOM）
-PRODUCT_ID  = 34       # 产品 PRO-001
-PRODUCT_CODE = "PRO-001"
-PRODUCT_NAME = "精密轴承座"
+# ── 靶场资源（自举后填，不再假设 staging 上的既有 id）────────────────
+# 原脚本硬编码 WH_RAW=41 / WH_FG=43 / MATERIAL_ID=115 / PRODUCT_ID=34，
+# 只有 staging 那套数据能跑；指向本地或其他环境时 `GET /products/34` 直接 404，
+# 后面整条链路连带失败，看起来像"工单/BOM 有问题"，实际是靶场根本不存在。
+# 现在改为按**编码**自举：查不到就建，查得到就复用。
+WH_RAW       = None     # 原材料仓 id（bootstrap 填）
+WH_FG        = None     # 成品仓 id（bootstrap 填）
+MATERIAL_ID  = None     # 原材料 id（bootstrap 填）
+PRODUCT_ID   = None     # 产品 id（bootstrap 填）
+WH_RAW_CODE  = "E2E-WH-RAW"
+WH_FG_CODE   = "E2E-WH-FG"
+MATERIAL_CODE = "E2E-MAT"
+PRODUCT_CODE = "E2E-FG-001"
+PRODUCT_NAME = "E2E 精密轴承座"
 
 # ── 拟真单据前缀 ───────────────────────────────────────────────────
 TODAY = datetime.now().strftime("%Y%m%d")
@@ -144,6 +151,127 @@ async def get_tx_count(client: httpx.AsyncClient, material_id: int,
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 靶场自举
+# ═══════════════════════════════════════════════════════════════════
+
+async def _first(client: httpx.AsyncClient, path: str, params: dict) -> list:
+    return items_of(await get_json(client, path, params=params))
+
+
+async def _ensure(client, list_path, create_path, code, body, label) -> int:
+    """按 code 查；查不到就建；返回 id。"""
+    for row in await _first(client, list_path, {"keyword": code, "page_size": 100}):
+        if row.get("code") == code:
+            print(f"  [REUSE] {label} {code} id={row['id']}")
+            return row["id"]
+    new_id = first_id(await post_json(client, create_path, body))
+    if new_id is None:
+        raise SpecError(f"创建 {label} {code} 后未拿到 id")
+    print(f"  [CREATE] {label} {code} id={new_id}")
+    return new_id
+
+
+async def ensure_location(client: httpx.AsyncClient, warehouse_id: int) -> int:
+    """仓库下取一个库位；没有就建一个（上架必须有库位）。"""
+    body = await get_json(client, f"/wms/warehouses/{warehouse_id}/locations",
+                          params={"page_size": 100})
+    items = items_of(body)
+    if items:
+        return items[0]["id"]
+    new_id = first_id(await post_json(client, "/wms/locations", {
+        "warehouse_id": warehouse_id, "location_code": "E2E-L01",
+        "location_type": "shelf",
+    }))
+    print(f"  [CREATE] 库位 E2E-L01 id={new_id}")
+    return new_id
+
+
+async def ensure_stock(client: httpx.AsyncClient, material_id: int,
+                       warehouse_id: int, need: float) -> float:
+    """保证某物料在某仓有 ``need`` 以上的库存，不足就**走真实入链路**补齐。
+
+    走「收货 → 上架」而不是直接写 inventory 表：这两步本身就是全流程的一部分，
+    而且这样补出来的库存行与业务产生的完全同构（含待检区/库位），
+    不会掩盖"库存行结构不同导致出库拣选失败"这类问题。
+    """
+    have = await get_inventory_sum(client, material_id, warehouse_id)
+    if have >= need:
+        print(f"  [REUSE] 库存 material={material_id} wh={warehouse_id} = {have}")
+        return have
+
+    qty = max(need, 1000.0) - have
+    loc_id = await ensure_location(client, warehouse_id)
+    body = await post_json(client, "/wms/receipt-orders", {
+        "receipt_no": f"RCV-BOOT-{SEQ}",
+        "receipt_type": "purchase",
+        "warehouse_id": warehouse_id,
+        "items": [{"line_no": 1, "material_id": material_id,
+                   "expected_qty": qty, "unit": "PCS"}],
+    })
+    ro_id = first_id(body)
+    detail = await get_json(client, f"/wms/receipt-orders/{ro_id}")
+    ro_items = (detail.get("data") or {}).get("items") or []
+    if not ro_items:
+        raise SpecError(f"补库存失败：收货单 {ro_id} 没有明细")
+    item_id = ro_items[0]["id"]
+
+    for path, payload, label in (
+        (f"/wms/receipt-order-items/{item_id}/receive", {"received_qty": qty}, "收货"),
+        (f"/wms/receipt-order-items/{item_id}/store",
+         {"location_id": loc_id, "stored_qty": qty}, "上架"),
+    ):
+        r = await client.post(f"{API}{path}", json=payload)
+        if r.status_code != 200:
+            raise SpecError(f"补库存-{label} 失败 {r.status_code}: {r.text[:200]}")
+
+    after = await get_inventory_sum(client, material_id, warehouse_id)
+    print(f"  [CREATE] 补库存 material={material_id} {have} → {after}")
+    return after
+
+
+async def bootstrap(client: httpx.AsyncClient) -> None:
+    """把 WH_RAW / WH_FG / MATERIAL_ID / PRODUCT_ID 自举出来，并确保 BOM 与原料库存就绪。"""
+    global WH_RAW, WH_FG, MATERIAL_ID, PRODUCT_ID
+    print("\n" + "=" * 60)
+    print("S0: 靶场自举")
+    print("=" * 60)
+
+    WH_RAW = await _ensure(
+        client, "/wms/warehouses", "/wms/warehouses", WH_RAW_CODE,
+        {"code": WH_RAW_CODE, "name": "E2E 原材料仓", "type": "raw_material"}, "仓库")
+    WH_FG = await _ensure(
+        client, "/wms/warehouses", "/wms/warehouses", WH_FG_CODE,
+        {"code": WH_FG_CODE, "name": "E2E 成品仓", "type": "finished_goods"}, "仓库")
+    MATERIAL_ID = await _ensure(
+        client, "/wms/materials", "/wms/materials", MATERIAL_CODE,
+        {"code": MATERIAL_CODE, "name": "E2E 原料", "unit": "PCS", "material_type": "raw"},
+        "物料")
+    PRODUCT_ID = await _ensure(
+        client, "/products", "/products", PRODUCT_CODE,
+        {"code": PRODUCT_CODE, "name": PRODUCT_NAME, "unit": "PCS",
+         "product_type": "finished"}, "产品")
+
+    # BOM 必须非空，否则 S2「可查询原材料」无从验证
+    bom = await _first(client, "/boms", {"product_id": PRODUCT_ID, "page_size": 100})
+    if bom:
+        print(f"  [REUSE] BOM 已有 {len(bom)} 行")
+    else:
+        await post_json(client, "/boms", {
+            "product_id": PRODUCT_ID,
+            "material_code": MATERIAL_CODE,
+            "material_name": "E2E 原料",
+            "qty_per_unit": 2,
+            "unit": "PCS",
+            "material_type": "raw",
+        })
+        print("  [CREATE] BOM 1 行（原料 x2）")
+
+    # 原料仓要有货，S3 的「领料出库」才有意义（否则只能跳过断言，等于没验）
+    await ensure_stock(client, MATERIAL_ID, WH_RAW, need=1000.0)
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # S1: 工厂日历验证
 # ═══════════════════════════════════════════════════════════════════
 
@@ -222,10 +350,10 @@ async def scenario_s2(client: httpx.AsyncClient, results: list) -> dict:
     print("S2: BOM + 工单完整流程")
     print("=" * 60)
 
-    # ① 验证产品 PRO-001 (id=34) 存在
+    # ① 验证产品存在（id 由 S0 自举得到）
     prod = await get_json(client, f"/products/{PRODUCT_ID}")
     prod_data = prod.get("data", {}) if isinstance(prod.get("data"), dict) else {}
-    print(f"  [INFO] 产品 PRO-001: code={prod_data.get('code')} name={prod_data.get('name')}")
+    print(f"  [INFO] 产品 {PRODUCT_CODE}: code={prod_data.get('code')} name={prod_data.get('name')}")
     check("S2-product 存在", bool(prod_data), True)
 
     # ② 验证 BOM 存在
@@ -433,8 +561,13 @@ async def scenario_s3(client: httpx.AsyncClient, ctx: dict, results: list) -> di
             print(f"  [WARN] 出库确认 item_id={item_id} → {issue_resp.status_code}")
 
     # 验证库存减少（仅验证有库存的物料）
+    # ⚠️ 无库存时必须**跳过**而不是照旧断言：原脚本打印了"跳过出库验证"，
+    # 接着还是断言"库存减少 20" → 靶场没货就必然 FAIL，看起来像业务缺陷。
     for im in available_materials:
         mid = im["material_id"]
+        if pre_stocks.get(mid, 0) <= 0:
+            print(f"  [SKIP] material_id={mid} 基线库存为 0，跳过出库断言（靶场未备货）")
+            continue
         post_stock = await get_inventory_sum(client, mid, WH_RAW)
         expected = pre_stocks[mid] - (im["qty_per_unit"] * issue_qty_factor)
         print(f"  [INFO] material_id={mid} stock: {pre_stocks[mid]} → {post_stock} (预期={expected})")
@@ -549,6 +682,10 @@ async def scenario_s3(client: httpx.AsyncClient, ctx: dict, results: list) -> di
     if isinstance(ro_data, list):
         ro_items = ro_data
 
+    # 上架必须带目标库位（后端会以 WMS_404_LOCATION 拒绝），
+    # 原脚本不传库位 → 上架这步其实一直没跑通，只打印 WARN 就放过了
+    fg_loc_id = await ensure_location(client, WH_FG)
+
     for ro_item in ro_items:
         ri_id = ro_item["id"]
         # 收货登记
@@ -560,14 +697,14 @@ async def scenario_s3(client: httpx.AsyncClient, ctx: dict, results: list) -> di
         if rcv.status_code != 200:
             print(f"  [WARN] 收货登记可能失败: {rcv.text[:300]}")
 
-        # 上架
+        # 上架（需指定库位）
         store = await client.post(
             f"{API}/wms/receipt-order-items/{ri_id}/store",
-            json={"stored_qty": float(planned_qty)},
+            json={"location_id": fg_loc_id, "stored_qty": float(planned_qty)},
         )
-        print(f"  [INFO] 上架确认 item_id={ri_id} qty={planned_qty} → status={store.status_code}")
-        if store.status_code != 200:
-            print(f"  [WARN] 上架可能失败: {store.text[:300]}")
+        print(f"  [INFO] 上架确认 item_id={ri_id} qty={planned_qty} "
+              f"location={fg_loc_id} → status={store.status_code}")
+        check("S3-成品上架成功", store.status_code, 200)
 
     # 验证成品库存增加
     fg_post_stock = await get_inventory_sum(client, fg_material_id, WH_FG)
@@ -672,13 +809,18 @@ async def scenario_s4(client: httpx.AsyncClient, s3_ctx: dict, results: list):
         check("S4-cancel-出库单状态=cancelled", io_status2, "cancelled")
 
         # 验证原料库存回滚
+        # ⚠️ 取消**出库**单的语义是"把扣掉的量还回来"，不是"库存不变"：
+        # S3 出库扣了 qty_per_unit × planned_qty，取消后应当加回同样的量。
+        # 原断言写成 `post - pre ≈ 0`（照抄收货单取消的语义），每跑必红。
         for im in s3_ctx["issue_materials"]:
             mid = im["material_id"]
             post_s = await get_inventory_sum(client, mid, WH_RAW)
-            print(f"  [INFO] material_id={mid} cancel前={im_stocks_pre.get(mid,'?')} cancel后={post_s}")
-            check_approx(f"S4-cancel-原料{mid}库存回滚",
-                         post_s - im_stocks_pre.get(mid, 0),
-                         0, tolerance=0.1)
+            rollback = post_s - im_stocks_pre.get(mid, 0)
+            expect_rollback = im["qty_per_unit"] * s3_ctx.get("planned_qty", 0)
+            print(f"  [INFO] material_id={mid} cancel前={im_stocks_pre.get(mid,'?')} "
+                  f"cancel后={post_s}（应回滚 {expect_rollback}）")
+            check_approx(f"S4-cancel-原料{mid}库存回滚", rollback,
+                         expect_rollback, tolerance=0.1)
 
         # 4d: 重复 cancel 出库单 → 409
         c4 = await client.post(f"{API}/wms/issue-orders/{io_id}/cancel", json={
@@ -816,9 +958,6 @@ async def main():
     print(f"   BASE_URL: {BASE_URL}")
     print(f"   USERNAME: {USERNAME}")
     print(f"   TENANT:   {TENANT}")
-    print(f"   WH_RAW:   {WH_RAW}")
-    print(f"   WH_FG:    {WH_FG}")
-    print(f"   PRODUCT:  {PRODUCT_CODE}(id={PRODUCT_ID})")
 
     results: list[tuple[str, str]] = []
 
@@ -830,6 +969,13 @@ async def main():
             "X-Tenant-Id": TENANT,
         })
         print(f"  [INFO] 登录成功\n")
+
+        # 靶场自举（必须在任何场景之前：S1 之后的场景都要用这些 id）
+        await bootstrap(client)
+        print(f"   WH_RAW:   {WH_RAW} ({WH_RAW_CODE})")
+        print(f"   WH_FG:    {WH_FG} ({WH_FG_CODE})")
+        print(f"   MATERIAL: {MATERIAL_ID} ({MATERIAL_CODE})")
+        print(f"   PRODUCT:  {PRODUCT_CODE} (id={PRODUCT_ID})\n")
 
         ctx: dict = {}
         s3_ctx: dict = {}

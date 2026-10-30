@@ -1,4 +1,5 @@
 """M20 仓储管理（WMS）模块 — API 路由"""
+from datetime import datetime
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -984,11 +985,17 @@ async def report_slow_moving(
     warehouse_id: Optional[int] = Query(None),
     repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
 ):
-    """呆滞料分析"""
-    sql = """SELECT m.id as material_id, m.code as material_code, m.name as material_name, m.spec, m.unit,
+    """呆滞料分析。
+
+    ``idle_days``（无交易天数）在 **Python 侧**算，不写在 SQL 里：
+    原先用 ``EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - EXTRACT(EPOCH FROM ...)``
+    和 ``TIMESTAMP '1970-01-01'`` —— 全是 PostgreSQL 语法，SQLite 下这条接口
+    直接 500（本地/单测环境点开就炸）。
+    """
+    sql = """SELECT m.id as material_id, m.code as material_code, m.name as material_name,
+             m.spec, m.unit,
              COALESCE(SUM(i.quantity), 0) as total_qty,
-             MAX(i.last_transaction_at) as last_transaction_date,
-             CAST((EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) - EXTRACT(EPOCH FROM COALESCE(MAX(i.last_transaction_at), i.updated_at, TIMESTAMP '1970-01-01'))) / 86400.0 AS INTEGER) as idle_days
+             MAX(COALESCE(i.last_transaction_at, i.updated_at)) as last_transaction_date
              FROM materials m
              JOIN inventory i ON i.material_id = m.id
              WHERE m.is_active = true AND i.quantity > 0"""
@@ -996,9 +1003,23 @@ async def report_slow_moving(
     if warehouse_id:
         sql += " AND i.warehouse_id = :wid"
         params["wid"] = warehouse_id
-    sql += """ GROUP BY m.id
-               HAVING idle_days >= :days
-               ORDER BY idle_days DESC"""
-    params["days"] = days
-    data = await repo.query(sql, params)
-    return {"code": 0, "message": "success", "data": data}
+    sql += " GROUP BY m.id"
+    rows = await repo.query(sql, params)
+
+    now = datetime.now()
+    out = []
+    for r in rows:
+        last = r.get("last_transaction_date")
+        if isinstance(last, str):
+            try:
+                last = datetime.fromisoformat(last.replace(" ", "T"))
+            except ValueError:
+                last = None
+        # 从未交易过：给一个足够大的值，等价于原来 COALESCE 到 1970-01-01 的语义
+        idle_days = (now - last).days if isinstance(last, datetime) else 36500
+        if idle_days < days:
+            continue
+        r["idle_days"] = idle_days
+        out.append(r)
+    out.sort(key=lambda x: x["idle_days"], reverse=True)
+    return {"code": 0, "message": "success", "data": out}

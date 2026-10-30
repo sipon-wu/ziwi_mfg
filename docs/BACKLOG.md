@@ -51,6 +51,19 @@
 | C-22 | **`GET /roles/{id}/users` 返回全租户用户** | 本批 | `JOIN user_roles ur ON ur.role_id = :role_id` 少了 `ur.user_id = u.id` → `users × user_roles` 笛卡尔积。1 名成员的临时角色在界面上显示 11 人（=全租户用户数），任意角色点开都是全员。补 JOIN 条件 + 一条跑生产 SQL 的回归测试 |
 | C-23 | **`wms_realistic_e2e.py` 硬编码 staging id**（原 B-7） | 本批 | 改为按编码自举：`ensure_warehouse` / `ensure_material` / `ensure_location` / `ensure_work_order` 查不到就建、查得到就复用；同一脚本可跑本地与 staging。另把 8 处**不看状态码**的 POST 换成 `act()`，失败立刻带后端原话退出（此前后端拒绝也继续跑，最后卡在库存断言上，看起来像"库存算错了"）。`TS` 从分钟精度改到秒，同分钟重跑不再撞单号唯一约束 |
 | C-24 | **WMS 出库自动拣选取到 0 库存行，明明有货报"库存不足"** | 本批 | `issue_item` 物料级回退用 `find_one(material_id, warehouse_id)`，不带 `location_id` 时只 `first()` 取一条；而同一物料同一仓库有多条库位级库存行（待检区 / 正式库位 / 取消后留下的 0 行）。改为 `find_available_rows()` 返回全部可用行（可用量降序）+ 服务层逐行扣减，与批次拣选分支同一思路 |
+| C-25 | **`POST /calendars/day` 100% 500** | 本批 | `CalendarService.initialize_year` 用 `date(year, month, day)`，但只 `from datetime import datetime` → `NameError: name 'date' is not defined` |
+| C-26 | **按月查日历 500（SQLite）** | 本批 | `EXTRACT(MONTH FROM cal_date)` 是 PG 专有语法，SQLite 直接 `near "FROM": syntax error`。3 处改「[月初, 下月初) 区间比较」（还能走索引） |
+| C-27 | **初始化一年日历报「共 66795 天」** | 本批 | `batch_upsert` 累加 `upsert()` 返回值 —— `upsert()` 走 INSERT 返自增主键、走 UPDATE 返 rowcount，两种口径混加。实际只有 365 行。改为按行数计数 |
+| C-28 | **月度报表 500（SQLite）** | 本批 | `ProductionRepository.monthly_report` 用 `date_trunc('month', ...)`，PG 专有。本就只汇总单月 → 改区间 + 常量分组键 |
+| C-29 | **`factory_full_flow_e2e.py` 硬编码 staging 资源 + 三处断言口径错** | 本批 | ①`WH_RAW=41/WH_FG=43/MATERIAL_ID=115/PRODUCT_ID=34` 只有 staging 有 → 改 S0 靶场自举（含走真实收货+上架补原料库存）；②S3 打印"跳过出库验证"却照旧断言库存减少 → 无库存改真跳过；③S4 取消**出库**单断言"库存不变"（照抄收货单语义）→ 改为"回滚量 == 当初扣减量"；④成品上架没传 `location_id` 被 `WMS_404_LOCATION` 拒，只打 WARN 就放过 → 补库位并改为硬断言 |
+
+### 方言依赖专项（C-26/C-28 共性）
+
+生产是 PostgreSQL、本地与单测是 SQLite，**任何 PG 专有 SQL 都会在本地炸而在生产正常**，
+而且报的是 `near "FROM": syntax error`，与业务毫无关系、极难定位。
+已加静态闸 `test_calendar_dialect.py::TestNoDialectSpecificSql`：
+扫描 `EXTRACT(` / `DATE_TRUNC(` / `TIMESTAMP '` / `ILIKE`，只扫含 SQL 动词的行
+（注释里解释"为什么不能用"不算违规）。**新增 SQL 前先过这道闸。**
 
 ---
 

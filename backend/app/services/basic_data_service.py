@@ -1,7 +1,7 @@
 # ── 基础数据模块 — Operation Service ─────────────────────────────
 from typing import Optional, Dict, List
 
-from datetime import datetime
+from datetime import date, datetime
 from app.repositories.basic_data_repo import (
     OperationRepository, WorkCenterRepository,
     RouteRepository, RouteStepRepository,

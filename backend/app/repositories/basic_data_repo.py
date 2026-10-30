@@ -1,7 +1,15 @@
 # ── 基础数据模块 — Operation Repository ──────────────────────────
 from typing import Optional, Dict, List
+from datetime import date
 from sqlalchemy import text
 from app.repositories.base import MultiTenantRepository
+
+
+def _month_range(year: int, month: int):
+    """返回 ``[月初, 下月初)`` 的日期区间，用于跨方言按月过滤。"""
+    start = date(year, month, 1)
+    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return start, end
 
 
 class OperationRepository(MultiTenantRepository):
@@ -308,16 +316,25 @@ class CalendarRepository(MultiTenantRepository):
         )
 
     async def list_by_month(self, year: int, month: int) -> List[Dict]:
+        """按月取日历。
+
+        ⚠️ 不能用 ``EXTRACT(MONTH FROM cal_date)`` —— 那是 PostgreSQL 语法，
+        SQLite 直接抛 ``near "FROM": syntax error``（本地/单测环境 100% 500）。
+        改用 ``[月初, 下月初)`` 区间比较：两种方言都吃，而且能走 ``cal_date`` 索引
+        （对列套函数会让索引失效）。
+        """
+        start, end = _month_range(year, month)
         return await self.query(
-            "SELECT * FROM factory_calendars WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month ORDER BY cal_date ASC",
-            {"year": year, "month": f"{month:02d}"},
+            "SELECT * FROM factory_calendars "
+            "WHERE year = :year AND cal_date >= :start AND cal_date < :end "
+            "ORDER BY cal_date ASC",
+            {"year": year, "start": start, "end": end},
         )
 
     async def get_by_date(self, year: int, month: int, day: int) -> Optional[Dict]:
         return await self.query_one(
-            """SELECT * FROM factory_calendars
-               WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month AND EXTRACT(DAY FROM cal_date) = :day""",
-            {"year": year, "month": f"{month:02d}", "day": f"{day:02d}"},
+            "SELECT * FROM factory_calendars WHERE year = :year AND cal_date = :d",
+            {"year": year, "d": date(year, month, day)},
         )
 
     async def upsert(self, data: dict) -> int:
@@ -336,17 +353,26 @@ class CalendarRepository(MultiTenantRepository):
             )
 
     async def batch_upsert(self, records: List[Dict]) -> int:
-        """批量写入"""
+        """批量写入，返回**写入行数**。
+
+        ⚠️ 不能累加 ``upsert()`` 的返回值：``upsert()`` 走 INSERT 时返回自增主键
+        （``execute`` 对 INSERT 一律返回 id），走 UPDATE 时返回 rowcount —— 两种
+        口径混在一起累加，"初始化一年日历"就会报出 `共 66795 天`（实际 365 行）。
+        接口里这个数字是直接给用户看的（"初始化完成, 共 N 天"），错得很有欺骗性。
+        """
         total = 0
         for rec in records:
-            total += await self.upsert(rec)
+            await self.upsert(rec)
+            total += 1
         return total
 
     async def delete_range(self, year: int, month: int = None) -> int:
         if month:
+            start, end = _month_range(year, month)
             return await self.execute(
-                "DELETE FROM factory_calendars WHERE year = :year AND EXTRACT(MONTH FROM cal_date) = :month",
-                {"year": year, "month": f"{month:02d}"},
+                "DELETE FROM factory_calendars "
+                "WHERE year = :year AND cal_date >= :start AND cal_date < :end",
+                {"year": year, "start": start, "end": end},
             )
         return await self.execute(
             "DELETE FROM factory_calendars WHERE year = :year", {"year": year}
