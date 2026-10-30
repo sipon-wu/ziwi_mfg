@@ -1,3 +1,12 @@
+from app.constants.work_order_states import (
+    REPORT_BLOCKED_STATUSES,
+    action_of,
+    allowed_targets,
+    available_actions,
+    can_transition,
+    format_allowed,
+    status_label,
+)
 from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
 from app.repositories.inventory_repo import InventoryRepository
@@ -6,6 +15,10 @@ from app.services.material_check_service import MaterialCheckService
 from typing import Optional
 from datetime import date, datetime
 from fastapi import HTTPException
+
+
+def _bad_request(message: str, code: str = "400-0000") -> HTTPException:
+    return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
 class ProductionService:
@@ -21,6 +34,9 @@ class ProductionService:
         order = await self.repo.get_work_order(id)
         if not order:
             raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "工单不存在"})
+        # 附带给前端渲染按钮用，省一次往返；详情页据此渲染而不是自己 v-if 状态
+        order["status_label"] = status_label(order.get("wo_status"))
+        order["available_actions"] = list(available_actions(order.get("wo_status")))
         return order
 
     async def create_work_order(self, data: dict, tenant_id: str) -> dict:
@@ -32,14 +48,149 @@ class ProductionService:
         await self.repo.update_work_order(id, data)
         return {"message": "更新成功"}
 
-    async def change_status(self, id: int, new_status: str, operator_id: int) -> dict:
+    async def change_status(self, id: int, new_status: str, operator_id: int,
+                            remark: str = None,
+                            extra_update: dict = None) -> dict:
+        """带状态机校验的状态变更（所有流转的唯一入口）。
+
+        改造前这里只校验"工单是否存在"，任意状态可改任意状态。现在非法流转
+        直接 400 并列出允许的目标状态 —— 报错本身即文档。
+
+        ``extra_update`` 供内部调用方一并写入时间戳（如完工写 ``actual_end_at``）。
+        """
         order = await self.repo.get_work_order(id)
         if not order:
-            raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "工单不存在"})
-        old_status = order["wo_status"]
-        await self.repo.change_status(id, new_status)
-        await self.repo.add_status_log(id, old_status, new_status, operator_id)
-        return {"message": f"工单状态已变更: {old_status} → {new_status}"}
+            raise HTTPException(status_code=404,
+                                detail={"code": "404-0000", "message": "工单不存在"})
+        old_status = order.get("wo_status")
+        if old_status == new_status:
+            raise _bad_request(
+                f"工单当前已是 {status_label(new_status)} 状态，无需重复操作",
+                "400-0001",
+            )
+        if not can_transition(old_status, new_status):
+            raise _bad_request(
+                f"非法状态流转：{status_label(old_status)}({old_status}) → "
+                f"{status_label(new_status)}({new_status})；"
+                f"允许的目标状态：{format_allowed(old_status)}",
+                "400-0002",
+            )
+
+        payload = {"wo_status": new_status, **(extra_update or {})}
+        await self.repo.update_work_order(id, payload)
+        await self.repo.add_status_log(
+            id, old_status, new_status, operator_id,
+            remark=remark or f"action={action_of(old_status, new_status)}",
+        )
+        return {
+            "message": f"工单状态已变更: {status_label(old_status)} → {status_label(new_status)}",
+            "from_status": old_status,
+            "to_status": new_status,
+            "action": action_of(old_status, new_status),
+        }
+
+    async def _require_order(self, id: int) -> dict:
+        order = await self.repo.get_work_order(id)
+        if not order:
+            raise HTTPException(status_code=404,
+                                detail={"code": "404-0000", "message": "工单不存在"})
+        return order
+
+    async def start_work_order(self, id: int, operator_id: int) -> dict:
+        """开工：released → in_progress，记录实际开工时间。"""
+        order = await self._require_order(id)
+        extra = {}
+        if not order.get("actual_start_at"):
+            extra["actual_start_at"] = datetime.now()
+        return await self.change_status(
+            id, "in_progress", operator_id,
+            remark="action=start" + ("" if extra else "（沿用首次开工时间）"),
+            extra_update=extra or None,
+        )
+
+    async def pause_work_order(self, id: int, operator_id: int,
+                               reason: str = None) -> dict:
+        """暂停：in_progress → paused。原因写进状态流水，便于追溯停机损失。"""
+        return await self.change_status(
+            id, "paused", operator_id,
+            remark="action=pause" + (f"；原因：{reason}" if reason else ""),
+        )
+
+    async def resume_work_order(self, id: int, operator_id: int) -> dict:
+        """恢复：paused → in_progress。不覆盖 actual_start_at（累计口径不重置）。"""
+        return await self.change_status(
+            id, "in_progress", operator_id, remark="action=resume",
+        )
+
+    async def complete_work_order(self, id: int, operator_id: int,
+                                  force: bool = False,
+                                  force_reason: str = None) -> dict:
+        """完工：in_progress → completed，记录实际完工时间。
+
+        完工数量为 0 时默认拒绝（``force=True`` 可强制），
+        否则会出现"零产出完工"，日报里凭空多一张已完工工单。
+        """
+        order = await self._require_order(id)
+        completed = order.get("completed_qty") or 0
+        scrap = order.get("scrap_qty") or 0
+        planned = order.get("planned_qty") or 0
+
+        if completed + scrap <= 0 and not force:
+            raise _bad_request(
+                "工单尚无任何报工产出，不能完工；如确需收尾请传 force=true 并填写原因",
+                "400-0003",
+            )
+
+        warnings = []
+        if planned > 0 and completed + scrap > planned:
+            warnings.append(
+                f"累计产出 {completed + scrap} 已超计划 {planned}"
+                f"（超产 {completed + scrap - planned}）"
+            )
+        if planned > 0 and completed < planned and not force:
+            warnings.append(
+                f"已完成 {completed} 少于计划 {planned}，按完工收尾将按欠产记录"
+            )
+
+        remark = "action=complete"
+        if force and force_reason:
+            remark += f"；强制完工原因：{force_reason}"
+
+        result = await self.change_status(
+            id, "completed", operator_id, remark=remark,
+            extra_update={"actual_end_at": order.get("actual_end_at") or datetime.now()},
+        )
+        result["warnings"] = warnings
+        return result
+
+    async def close_work_order(self, id: int, operator_id: int,
+                               remark: str = None) -> dict:
+        """关闭：completed → closed。
+
+        **行为变更**：改造前 ``released`` 状态可直接关闭（等于工单凭空消失）。
+        现在必须走过完工；中途终止请用 ``cancel_work_order``（作废）。
+        """
+        return await self.change_status(id, "closed", operator_id, remark=remark)
+
+    async def cancel_work_order(self, id: int, operator_id: int,
+                                reason: str = None) -> dict:
+        """作废：草稿/已下达/生产中/暂停 → cancelled。终态不可再流转。"""
+        if not reason:
+            raise _bad_request("作废工单必须填写原因", "400-0004")
+        return await self.change_status(
+            id, "cancelled", operator_id, remark=f"action=cancel；原因：{reason}",
+        )
+
+    async def get_available_actions(self, id: int) -> dict:
+        """当前状态下可执行的动作（供前端渲染按钮，避免前端各写一份判断）。"""
+        order = await self._require_order(id)
+        current = order.get("wo_status")
+        return {
+            "wo_status": current,
+            "status_label": status_label(current),
+            "allowed_targets": sorted(allowed_targets(current)),
+            "available_actions": list(available_actions(current)),
+        }
 
     async def release_work_order(self, id: int, operator_id: int,
                                   force_release: bool = False,
@@ -60,10 +211,11 @@ class ProductionService:
             raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "工单不存在"})
 
         old_status = order["wo_status"]
-        if old_status != "draft":
+        if not can_transition(old_status, "released"):
             raise HTTPException(status_code=400, detail={
                 "code": "400-0000",
-                "message": f"工单当前状态为 {old_status}，只有草稿状态的工单可以下达",
+                "message": (f"工单当前状态为 {status_label(old_status)}，只有草稿状态的工单可以下达；"
+                            f"允许的目标状态：{format_allowed(old_status)}"),
             })
 
         tenant_id = order.get("tenant_id", "")
@@ -100,11 +252,13 @@ class ProductionService:
         except Exception as e:
             result["material_check"] = {"error": str(e), "check_status": "failed"}
 
-        # 3. 变更工单状态
-        await self.repo.change_status(id, "released")
-        await self.repo.add_status_log(id, old_status, "released", operator_id,
-                                       remark=f"齐套状态: {result.get('material_check', {}).get('material_check_status', 'unknown')}")
-        result["status_change"] = {"from": old_status, "to": "released"}
+        # 3. 变更工单状态（走统一状态机，保证流水 remark 格式一致）
+        change = await self.change_status(
+            id, "released", operator_id,
+            remark=(f"action=release；齐套状态: "
+                    f"{result.get('material_check', {}).get('material_check_status', 'unknown')}"),
+        )
+        result["status_change"] = {"from": change["from_status"], "to": change["to_status"]}
 
         return result
 
@@ -123,17 +277,148 @@ class ProductionService:
         return report
 
     async def create_report(self, data: dict, tenant_id: str) -> dict:
+        """报工并联动工单产出/不良。
+
+        改造前这里只做两件事：插入报工行、把 ``output_qty``/``scrap_qty``
+        累加到工单上。四个缺口因此一直存在（见 scenario-verification §三 C 区）：
+
+        - **C-E2 报工数量为 0** —— 无断言，可插入空报工，日报被稀释
+        - **C-B2 报错工单也能报工** —— 草稿/已关闭/已作废工单照样接受报工
+        - **C-E1 报工超计划** —— 无告警，超产永远只能事后发现
+        - **P0-5 不良无闭环** —— ``scrap_qty > 0`` 不触发任何动作，报废品凭空消失
+
+        现在的行为：数量为 0 直接 400；草稿/终态工单直接 400；已下达工单
+        **首次报工自动开工**（避免"忘记点开工"导致 ``actual_start_at`` 永远为空）；
+        超产只 warning 不阻断（现场确实会超产，硬拦会逼人做假数）；
+        有报废则自动开一张制程 NCR 进质量闭环。
+        """
+        order_id = data.get("work_order_id")
+        output_qty = int(data.get("output_qty") or 0)
+        scrap_qty = int(data.get("scrap_qty") or 0)
+
+        if output_qty < 0 or scrap_qty < 0:
+            raise _bad_request("报工数量不能为负数", "400-0005")
+        if output_qty + scrap_qty <= 0:
+            raise _bad_request(
+                "报工数量合计必须大于 0（产出数与报废数不能同时为 0）", "400-0006"
+            )
+
+        order = await self.repo.get_work_order(order_id) if order_id else None
+        if not order:
+            raise HTTPException(status_code=404,
+                                detail={"code": "404-0000", "message": "工单不存在"})
+
+        wo_status = order.get("wo_status")
+        if wo_status in REPORT_BLOCKED_STATUSES:
+            raise _bad_request(
+                f"工单当前状态为 {status_label(wo_status)}，不允许报工；"
+                f"请先下达工单（草稿）或该工单已收口（已关闭/已作废）",
+                "400-0007",
+            )
+
         data["tenant_id"] = tenant_id
         report_id = await self.repo.create_report(data)
-        # 回写工单已完成数量
-        order = await self.repo.get_work_order(data["work_order_id"])
-        if order:
-            new_completed = (order.get("completed_qty") or 0) + (data.get("output_qty") or 0)
-            new_scrap = (order.get("scrap_qty") or 0) + (data.get("scrap_qty") or 0)
-            await self.repo.update_work_order(data["work_order_id"], {
-                "completed_qty": new_completed, "scrap_qty": new_scrap
-            })
-        return {"message": "报工提交成功", "report_id": report_id}
+
+        # 已下达但未开工 → 首次报工即视为开工（现场不会先点开工再报工）
+        started = False
+        if wo_status == "released":
+            await self.change_status(
+                order_id, "in_progress", data.get("reporter_id"),
+                remark="action=start；来源：首次报工自动开工",
+                extra_update=({"actual_start_at": datetime.now()}
+                              if not order.get("actual_start_at") else None),
+            )
+            started = True
+
+        planned = order.get("planned_qty") or 0
+        new_completed = (order.get("completed_qty") or 0) + output_qty
+        new_scrap = (order.get("scrap_qty") or 0) + scrap_qty
+        await self.repo.update_work_order(order_id, {
+            "completed_qty": new_completed, "scrap_qty": new_scrap,
+        })
+
+        warnings = []
+        if planned > 0 and new_completed > planned:
+            warnings.append(
+                f"累计完成 {new_completed} 已超计划 {planned}"
+                f"（超产 {new_completed - planned}）"
+            )
+        if planned > 0 and new_scrap > 0:
+            scrap_rate = new_scrap / (new_completed + new_scrap) * 100
+            warnings.append(f"当前报废率 {scrap_rate:.1f}%（{new_scrap}/{new_completed + new_scrap}）")
+
+        ncr_id = None
+        if scrap_qty > 0:
+            ncr_id = await self._raise_scrap_ncr(
+                order=order, report_id=report_id, scrap_qty=scrap_qty,
+                output_qty=output_qty, defect_reason=data.get("defect_reason"),
+                reporter_id=data.get("reporter_id"), tenant_id=tenant_id,
+            )
+
+        return {
+            "message": "报工提交成功",
+            "report_id": report_id,
+            "started": started,
+            "completed_qty": new_completed,
+            "scrap_qty": new_scrap,
+            "ncr_id": ncr_id,
+            "warnings": warnings,
+        }
+
+    async def _raise_scrap_ncr(self, order: dict, report_id: int, scrap_qty: int,
+                               output_qty: int, defect_reason: str,
+                               reporter_id: int, tenant_id: str) -> Optional[int]:
+        """报废报工 → 自动开制程 NCR（幂等：一张报工单只开一张 NCR）。
+
+        ``source_type="process"`` 与既有数据口径一致（库里已有 process 来源），
+        与来料 NCR（``iqc``）区分，便于质量看板按来源分摊。
+        """
+        try:
+            from app.repositories.ncr_repo import NcrRepository
+            from app.services.ncr_service import NcrService
+
+            ncr_repo = NcrRepository(self.repo._session)
+            if tenant_id:
+                ncr_repo.set_tenant_id(tenant_id)
+            # 继承写入归属，否则自动开的 NCR org_id 为 NULL，部门负责人看不见
+            write_org_id = getattr(self.repo, "_write_org_id", None) or order.get("org_id")
+            if write_org_id:
+                ncr_repo.set_write_org_id(write_org_id)
+
+            existing = await ncr_repo.get_by_source("process", report_id)
+            if existing:
+                return existing["id"]
+
+            svc = NcrService(self.repo._session, tenant_id, repo=ncr_repo)
+            created = await svc.create_ncr(
+                {
+                    "tenant_id": tenant_id,
+                    "ncr_no": f"NC-WR{report_id}",
+                    "source_type": "process",
+                    "source_id": report_id,
+                    "source_no": order.get("wo_no"),
+                    "material_name": order.get("product_name"),
+                    "work_order_id": order.get("id"),
+                    "total_qty": output_qty + scrap_qty,
+                    "defect_qty": scrap_qty,
+                    "defect_type": defect_reason or "制程报废",
+                    "defect_desc": (
+                        f"工单 {order.get('wo_no')} 报工报废 {scrap_qty} 件"
+                        + (f"；原因：{defect_reason}" if defect_reason else "")
+                    ),
+                    "raised_by": reporter_id,
+                },
+                actor_id=reporter_id,
+            )
+            return created["id"]
+        except Exception:  # noqa: BLE001
+            # NCR 开单失败不能回滚已成功的报工 —— 报工是事实，评审单是后续动作。
+            # 但要留下痕迹，否则"报废了却没评审单"又变成静默缺口。
+            import logging
+            logging.getLogger(__name__).exception(
+                "报工报废自动开 NCR 失败: report_id=%s scrap=%s", report_id, scrap_qty
+            )
+            return None
 
     # ==================== 报表 ====================
     async def daily_report(self, report_date: date) -> dict:

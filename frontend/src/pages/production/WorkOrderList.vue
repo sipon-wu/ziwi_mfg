@@ -40,7 +40,16 @@ function condText(c: SearchCondition) {
 }
 
 const statusMap: Record<string, string> = {
-  draft: '草稿', released: '已下达', in_progress: '生产中', completed: '已完成', closed: '已关闭'
+  draft: '草稿', released: '已下达', in_progress: '生产中',
+  paused: '已暂停', completed: '已完工', closed: '已关闭', cancelled: '已作废',
+}
+
+// 状态标签配色：与工单详情页保持同一套语义
+function statusTagType(s: string) {
+  if (s === 'completed' || s === 'closed') return 'success'
+  if (s === 'cancelled') return 'default'
+  if (s === 'paused') return 'warning'
+  return 'primary'
 }
 
 async function fetch() {
@@ -82,7 +91,7 @@ function goCreate() { router.push('/work-orders/create') }
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #value>
-          <van-tag :type="item.wo_status === 'completed' ? 'success' : 'primary'">{{ statusMap[item.wo_status] || item.wo_status }}</van-tag>
+          <van-tag :type="statusTagType(item.wo_status)">{{ statusMap[item.wo_status] || item.wo_status }}</van-tag>
           <div style="text-align:right;margin-top:4px">
             <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
           </div>

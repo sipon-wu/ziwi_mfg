@@ -196,3 +196,27 @@ class MaterialCheckResult(BaseModel):
 class ReleaseWorkOrderRequest(BaseModel):
     force_release: bool = False
     force_reason: Optional[str] = None
+
+
+# ==================== 工单状态流转请求 ====================
+
+class PauseWorkOrderRequest(BaseModel):
+    """暂停工单。原因进状态流水，用于追溯停机损失。"""
+    reason: Optional[str] = None
+
+
+class CompleteWorkOrderRequest(BaseModel):
+    """完工。无产出时需 force=true 并说明原因。"""
+    force: bool = False
+    force_reason: Optional[str] = None
+
+
+class CancelWorkOrderRequest(BaseModel):
+    """作废工单。原因必填 —— 作废会让工单一动不动地消失，必须留痕。"""
+    reason: str
+
+
+class WorkOrderActionItem(BaseModel):
+    action: str
+    label: str
+

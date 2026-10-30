@@ -35,6 +35,13 @@ const form = ref({
 const orders = ref<WorkOrder[]>([])
 const submitting = ref(false)
 
+// 可报工的工单状态：草稿未下达、已关闭/已作废均已收口（后端会 400，这里先过滤）
+const REPORTABLE_STATUS = ['released', 'in_progress', 'paused']
+const reportableOrders = computed(() => orders.value.filter(o => REPORTABLE_STATUS.includes(o.wo_status)))
+const orderColumns = computed(() =>
+  reportableOrders.value.map(o => ({ text: `${o.wo_no} - ${o.product_name}`, value: o.id }))
+)
+
 // 工价自动计算（前端计算展示；有工价接口时再对接）
 const total_price = computed(() => {
   const qty = Number(form.value.output_qty) || 0
@@ -67,8 +74,10 @@ async function handleSubmit() {
     await post('/work-reports', payload)
     showToast('报工提交成功')
     router.push('/work-reports')
-  } catch {
-    showToast('提交失败')
+  } catch (e: any) {
+    // 后端对"数量为 0 / 工单未下达"等给了明确文案，直接展示，不要吞成"提交失败"
+    const d = e?.response?.data?.detail
+    showToast(typeof d === 'object' && d?.message ? d.message : '提交失败')
   } finally {
     submitting.value = false
   }
@@ -94,9 +103,11 @@ async function handleSubmit() {
       <van-cell-group title="报工明细" style="margin-top:12px;">
         <van-field v-model="form.work_order_id" label="工单" placeholder="选择工单" :rules="[{required:true}]">
           <template #input>
+            <!-- Vant4 confirm 回传 {selectedValues, selectedOptions}，不是 {value}；
+                 旧写法 v.value 恒为 undefined → 选了工单也提交不了（实测踩过） -->
             <van-picker
-              :columns="orders.map(o => ({ text: `${o.wo_no} - ${o.product_name}`, value: o.id }))"
-              @confirm="(v:any) => form.work_order_id = v.value"
+              :columns="orderColumns"
+              @confirm="(v:any) => form.work_order_id = v.selectedOptions?.[0]?.value ?? v.selectedValues?.[0]"
             />
           </template>
         </van-field>

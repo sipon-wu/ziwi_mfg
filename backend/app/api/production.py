@@ -2,7 +2,15 @@ from fastapi import APIRouter, Depends, Query, Path
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.production_repo import ProductionRepository
 from app.services.production_service import ProductionService
-from app.schemas.production import CreateWorkOrderRequest, UpdateWorkOrderRequest, CreateWorkReportRequest, ReleaseWorkOrderRequest
+from app.schemas.production import (
+    CancelWorkOrderRequest,
+    CompleteWorkOrderRequest,
+    CreateWorkOrderRequest,
+    CreateWorkReportRequest,
+    PauseWorkOrderRequest,
+    ReleaseWorkOrderRequest,
+    UpdateWorkOrderRequest,
+)
 from datetime import date
 
 router = APIRouter(prefix="/api/v1", tags=["M01-生产管理"])
@@ -70,14 +78,87 @@ async def release_work_order(
     )
     return {"code": 0, "message": "工单下达处理完成", "data": result}
 
+@router.post("/work-orders/{order_id}/start")
+async def start_work_order(
+    order_id: int, current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """开工：已下达 → 生产中，写入实际开工时间。"""
+    result = await ProductionService(repo).start_work_order(order_id, current_user["id"])
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/pause")
+async def pause_work_order(
+    order_id: int, req: PauseWorkOrderRequest = None,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """暂停：生产中 → 已暂停。"""
+    req = req or PauseWorkOrderRequest()
+    result = await ProductionService(repo).pause_work_order(
+        order_id, current_user["id"], reason=req.reason,
+    )
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/resume")
+async def resume_work_order(
+    order_id: int, current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """恢复：已暂停 → 生产中（不重置实际开工时间）。"""
+    result = await ProductionService(repo).resume_work_order(order_id, current_user["id"])
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/complete")
+async def complete_work_order(
+    order_id: int, req: CompleteWorkOrderRequest = None,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """完工：生产中 → 已完工，写入实际完工时间。
+
+    - 无任何报工产出时默认 400，需 ``force=true`` + ``force_reason``
+    - 超产/欠产不阻断，放在 ``warnings`` 里返回
+    """
+    req = req or CompleteWorkOrderRequest()
+    result = await ProductionService(repo).complete_work_order(
+        order_id, current_user["id"], force=req.force, force_reason=req.force_reason,
+    )
+    return {"code": 0, "message": result["message"], "data": result}
+
 @router.post("/work-orders/{order_id}/close")
 async def close_work_order(
     order_id: int, current_user: dict = Depends(get_current_user),
     repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
 ):
-    svc = ProductionService(repo)
-    result = await svc.change_status(order_id, "closed", current_user["id"])
-    return {"code": 0, "message": result["message"]}
+    """关闭工单：已完工 → 已关闭（终态）。
+
+    **行为变更**：改造前「已下达」可直接关闭，等于工单凭空消失。
+    现在必须走过完工；中途终止请用 ``/cancel``（作废）。
+    """
+    result = await ProductionService(repo).close_work_order(order_id, current_user["id"])
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/cancel")
+async def cancel_work_order(
+    order_id: int, req: CancelWorkOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """作废工单：草稿/已下达/生产中/已暂停 → 已作废（终态）。原因必填。"""
+    result = await ProductionService(repo).cancel_work_order(
+        order_id, current_user["id"], reason=req.reason,
+    )
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.get("/work-orders/{order_id}/actions")
+async def get_work_order_actions(
+    order_id: int,
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository, require_auth=True)),
+):
+    """当前状态下可执行的动作（前端按钮渲染的单一真相源）。"""
+    data = await ProductionService(repo).get_available_actions(order_id)
+    return {"code": 0, "message": "success", "data": data}
 
 @router.get("/work-orders/{order_id}/status-log")
 async def get_status_log(

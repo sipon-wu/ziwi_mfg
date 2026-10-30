@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
-import { showToast, showDialog } from 'vant'
+import { showToast } from 'vant'
 import type { WorkOrder } from '@/types'
 
 interface MaterialShortItem {
@@ -23,96 +23,172 @@ interface MaterialCheckResult {
   short_materials: number
   kitting_rate: number
   details: MaterialShortItem[]
-  force_release: boolean
-  force_reason: string | null
+}
+
+interface WorkOrderAction {
+  action: string
+  label: string
+}
+
+/** 后端 /release 的返回结构：三段结果并列，齐套明细在第二层 */
+interface ReleaseResult {
+  status_change?: { from: string; to: string }
+  bom_snapshot?: { id?: number; bom_version?: number; error?: string }
+  material_check?: {
+    material_check_status?: string
+    material_check_result?: MaterialCheckResult
+    error?: string
+  }
 }
 
 const route = useRoute()
 const router = useRouter()
 const order = ref<WorkOrder | null>(null)
+const actions = ref<WorkOrderAction[]>([])
 const statusLogs = ref<any[]>([])
 const loading = ref(false)
+const busy = ref('')
+
+// 齐套缺料 / 强制下发
 const showCheckDialog = ref(false)
 const materialCheckResult = ref<MaterialCheckResult | null>(null)
 const forceReason = ref('')
-const releasing = ref(false)
+
+// 通用"原因输入"弹窗：暂停 / 强制完工 / 作废 共用
+const showReasonDialog = ref(false)
+const reasonTitle = ref('')
+const reasonLabel = ref('')
+const reasonValue = ref('')
+const reasonRequired = ref(false)
+let reasonIntent: 'pause' | 'force_complete' | 'cancel' | null = null
 
 async function fetch() {
   loading.value = true
   try {
-    order.value = await get(`/work-orders/${route.params.id}`)
+    const data = await get<WorkOrder & { available_actions?: WorkOrderAction[] }>(
+      `/work-orders/${route.params.id}`,
+    )
+    order.value = data
+    // 按钮由后端状态机给出，前端不再自己 v-if 状态 —— 避免两处判断漂移
+    actions.value = (data as any).available_actions || []
     statusLogs.value = await get(`/work-orders/${route.params.id}/status-log`)
   } finally { loading.value = false }
 }
 
-async function handleRelease() {
-  releasing.value = true
-  try {
-    // 先调用 release 接口（后端会做齐套检查）
-    const result = await post<MaterialCheckResult>(`/work-orders/${route.params.id}/release`)
-    materialCheckResult.value = result
+function errMessage(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (d && typeof d === 'object' && d.message) return d.message
+  return fallback
+}
 
-    // 检查返回结果中是否有缺料信息
-    if (result.short_materials > 0) {
+// ==================== 下达（带齐套检查） ====================
+async function handleRelease(force = false) {
+  busy.value = 'release'
+  try {
+    const body = force ? { force_release: true, force_reason: forceReason.value } : {}
+    const result = await post<ReleaseResult>(`/work-orders/${route.params.id}/release`, body)
+    const check = result?.material_check?.material_check_result
+    if (!force && check && check.short_materials > 0) {
+      // 缺料：弹窗列明细，让用户决定强制下发还是取消
+      materialCheckResult.value = check
       showCheckDialog.value = true
-    } else {
-      showToast('工单下达成功')
-      fetch()
+      return
     }
+    const bomErr = result?.bom_snapshot?.error
+    showToast(bomErr ? '已下达（BOM 快照失败，请检查 BOM）' : '工单下达成功')
+    showCheckDialog.value = false
+    fetch()
   } catch (e: any) {
-    // 尝试解析错误响应中的缺料明细
-    const errData = e?.response?.data?.detail || e?.response?.data
-    if (errData && typeof errData === 'object' && errData.short_materials) {
-      materialCheckResult.value = errData
-      showCheckDialog.value = true
-    } else {
-      showToast('下达失败，请检查齐套性')
-    }
+    showToast(errMessage(e, '下达失败，请检查齐套性'))
   } finally {
-    releasing.value = false
+    busy.value = ''
   }
 }
 
 async function handleForceRelease() {
-  if (!forceReason.value) {
+  if (!forceReason.value.trim()) {
     showToast('请填写强制下发原因')
     return
   }
-  releasing.value = true
-  try {
-    await post(`/work-orders/${route.params.id}/release`, {
-      force_release: true,
-      force_reason: forceReason.value,
-    })
-    showToast('工单已强制下达')
-    showCheckDialog.value = false
-    fetch()
-  } catch {
-    showToast('强制下达失败')
-  } finally {
-    releasing.value = false
+  await handleRelease(true)
+}
+
+// ==================== 通用原因弹窗 ====================
+function openReason(intent: 'pause' | 'force_complete' | 'cancel') {
+  reasonIntent = intent
+  reasonValue.value = ''
+  if (intent === 'pause') {
+    reasonTitle.value = '暂停工单'; reasonLabel.value = '暂停原因'; reasonRequired.value = false
+  } else if (intent === 'force_complete') {
+    reasonTitle.value = '无产出强制完工'; reasonLabel.value = '强制完工原因'; reasonRequired.value = true
+  } else {
+    reasonTitle.value = '作废工单'; reasonLabel.value = '作废原因'; reasonRequired.value = true
+  }
+  showReasonDialog.value = true
+}
+
+async function confirmReason() {
+  if (reasonRequired.value && !reasonValue.value.trim()) {
+    showToast(`请填写${reasonLabel.value}`)
+    return
+  }
+  const intent = reasonIntent
+  showReasonDialog.value = false
+  const id = route.params.id
+  if (intent === 'pause') {
+    await call(id, 'pause', { reason: reasonValue.value || undefined })
+  } else if (intent === 'force_complete') {
+    await call(id, 'complete', { force: true, force_reason: reasonValue.value })
+  } else if (intent === 'cancel') {
+    await call(id, 'cancel', { reason: reasonValue.value })
   }
 }
 
-async function changeStatus(newStatus: string) {
+// ==================== 动作分发 ====================
+async function runAction(action: string) {
+  if (action === 'release') return handleRelease(false)
+  if (action === 'pause' || action === 'cancel') return openReason(action as any)
+  await call(route.params.id, action)
+}
+
+async function call(id: any, action: string, body?: any) {
+  busy.value = action
   try {
-    const action = newStatus === 'released' ? 'release' : 'close'
-    if (action === 'release') {
-      await handleRelease()
-      return
-    }
-    await post(`/work-orders/${route.params.id}/${action}`)
-    showToast('操作成功')
+    const res = await post<any>(`/work-orders/${id}/${action}`, body)
+    const warns: string[] = res?.warnings || []
+    showToast(warns.length ? `已完成：${warns[0]}` : '操作成功')
     fetch()
-  } catch (e) {
-    showToast('操作失败，请重试')
-    console.warn('[WorkOrderDetail] 状态变更失败', e)
+  } catch (e: any) {
+    // 完工被"零产出"拦下 → 引导走强制完工，而不是让用户对着红字发呆
+    if (e?.response?.data?.detail?.code === '400-0003') {
+      openReason('force_complete')
+    } else {
+      showToast(errMessage(e, '操作失败，请重试'))
+    }
+  } finally {
+    busy.value = ''
   }
 }
 
 onMounted(fetch)
 
-const statusMap: Record<string, string> = { draft: '草稿', released: '已下达', in_progress: '生产中', completed: '已完成', closed: '已关闭' }
+const statusMap: Record<string, string> = {
+  draft: '草稿', released: '已下达', in_progress: '生产中',
+  paused: '已暂停', completed: '已完工', closed: '已关闭', cancelled: '已作废',
+}
+
+const statusTagType = computed(() => {
+  const s = order.value?.wo_status
+  if (s === 'completed' || s === 'closed') return 'success'
+  if (s === 'cancelled') return 'default'
+  if (s === 'paused') return 'warning'
+  return 'primary'
+})
+
+function fmtTime(v?: string | null) {
+  return v ? String(v).replace('T', ' ').slice(0, 19) : '—'
+}
 </script>
 
 <template>
@@ -122,18 +198,36 @@ const statusMap: Record<string, string> = { draft: '草稿', released: '已下�
     <div v-else-if="order">
       <van-cell-group title="基本信息">
         <van-cell title="工单号" :value="order.wo_no" />
-        <van-cell title="状态"><van-tag>{{ statusMap[order.wo_status] }}</van-tag></van-cell>
+        <van-cell title="状态">
+          <van-tag :type="statusTagType">{{ statusMap[order.wo_status] || order.wo_status }}</van-tag>
+        </van-cell>
         <van-cell title="产品" :value="`${order.product_code} - ${order.product_name}`" />
-        <van-cell title="计划数量" :value="`${order.planned_qty}`" />
-        <van-cell title="已完成" :value="`${order.completed_qty}`" />
-        <van-cell title="报废数" :value="`${order.scrap_qty}`" />
+        <van-cell title="计划 / 完成 / 报废"
+          :value="`${order.planned_qty} / ${order.completed_qty} / ${order.scrap_qty}`" />
+        <van-cell title="实际开工" :value="fmtTime(order.actual_start_at)" />
+        <van-cell title="实际完工" :value="fmtTime(order.actual_end_at)" />
       </van-cell-group>
-      <div style="margin:16px;display:flex;gap:8px">
-        <van-button v-if="order.wo_status === 'draft'" block type="primary" :loading="releasing" @click="changeStatus('released')">下达工单</van-button>
-        <van-button v-if="order.wo_status === 'released'" block type="success" @click="changeStatus('closed')">关闭工单</van-button>
+
+      <div style="margin:16px;display:flex;flex-wrap:wrap;gap:8px">
+        <van-button
+          v-for="a in actions" :key="a.action"
+          :type="a.action === 'cancel' ? 'default' : (a.action === 'complete' ? 'success' : 'primary')"
+          :plain="a.action === 'cancel' || a.action === 'pause'"
+          :loading="busy === a.action"
+          style="flex:1 1 45%"
+          @click="runAction(a.action)">
+          {{ a.label }}
+        </van-button>
+        <div v-if="!actions.length" style="color:#969799;font-size:13px">
+          当前状态无可执行操作
+        </div>
       </div>
+
       <van-cell-group title="状态日志">
-        <van-cell v-for="log in statusLogs" :key="log.id" :title="`${statusMap[log.from_status]||log.from_status} → ${statusMap[log.to_status]||log.to_status}`" :label="log.created_at" />
+        <van-cell
+          v-for="log in statusLogs" :key="log.id"
+          :title="`${statusMap[log.from_status] || log.from_status} → ${statusMap[log.to_status] || log.to_status}`"
+          :label="`${log.created_at}${log.remark ? ' · ' + log.remark : ''}`" />
         <van-cell v-if="!statusLogs.length" title="暂无记录" />
       </van-cell-group>
     </div>
@@ -146,11 +240,12 @@ const statusMap: Record<string, string> = { draft: '草稿', released: '已下�
         <div v-if="materialCheckResult" style="margin-bottom:12px">
           <div style="display:flex; justify-content:space-between; margin-bottom:8px">
             <van-tag type="warning">齐套率 {{ materialCheckResult.kitting_rate }}%</van-tag>
-            <span style="font-size:13px;color:var(--van-text-color-2)">缺料 {{ materialCheckResult.short_materials }}/{{ materialCheckResult.total_materials }}</span>
+            <span style="font-size:13px;color:var(--van-text-color-2)">
+              缺料 {{ materialCheckResult.short_materials }}/{{ materialCheckResult.total_materials }}
+            </span>
           </div>
           <van-cell v-for="m in materialCheckResult.details" :key="m.material_code"
-            :title="m.material_name"
-            :label="`编码: ${m.material_code}`">
+            :title="m.material_name" :label="`编码: ${m.material_code}`">
             <template #value>
               <div style="text-align:right;font-size:12px">
                 <div>需求: {{ m.required_qty }} {{ m.unit }}</div>
@@ -160,7 +255,17 @@ const statusMap: Record<string, string> = { draft: '草稿', released: '已下�
             </template>
           </van-cell>
         </div>
-        <van-field v-model="forceReason" label="强制下发原因" type="textarea" placeholder="请填写强制下发的原因" rows="2" />
+        <van-field v-model="forceReason" label="强制下发原因" type="textarea"
+          placeholder="请填写强制下发的原因" rows="2" />
+      </div>
+    </van-dialog>
+
+    <!-- 通用原因输入（暂停 / 强制完工 / 作废） -->
+    <van-dialog v-model:show="showReasonDialog" :title="reasonTitle" show-cancel-button
+      @confirm="confirmReason">
+      <div style="padding:12px">
+        <van-field v-model="reasonValue" :label="reasonLabel" type="textarea"
+          :placeholder="reasonRequired ? '必填' : '选填'" rows="2" />
       </div>
     </van-dialog>
   </div>
