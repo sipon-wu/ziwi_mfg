@@ -8,7 +8,7 @@ import uuid
 from app.core.config import get_settings
 from app.core.database import init_db, ensure_engine
 from app.core.permissions import (
-    assert_all_routes_declared, build_permission_map, permission_guard,
+    assert_all_routes_declared, build_permission_map, enforced_modules, permission_guard,
 )
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
@@ -132,6 +132,18 @@ if _PERM_PROBLEMS:
     print(f"[WARN] {_msg}")
 else:
     print(f"[INFO] 权限映射自检通过，共 {len(_PERM_MAP)} 条路由")
+
+# 启动横幅：让人一眼看出"现在到底拦不拦"，不用去翻 .env。
+# 灰度期间最怕的现象是"以为已经强制了其实还在影子模式"，所以这里必须显式打印。
+if not settings.PERMISSION_ENFORCE:
+    print("[INFO] 权限模式：影子模式（只记 [SHADOW] 日志，不阻断）")
+else:
+    _scope = enforced_modules()
+    if _scope is None:
+        print(f"[INFO] 权限模式：强制（全量，{len(_PERM_MAP)} 条路由）")
+    else:
+        print(f"[INFO] 权限模式：强制（灰度 {','.join(sorted(_scope))}；"
+              f"其余模块仍影子放行）")
 
 # 健康检查
 @app.get("/health")

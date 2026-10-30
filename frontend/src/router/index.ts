@@ -70,7 +70,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'quality', name: 'Quality', component: () => import('@/pages/quality/InspectionList.vue'), meta: { title: '品质管理', perm: 'M03:inspection_order:read' } },
       { path: 'quality/create', name: 'CreateInspection', component: () => import('@/pages/quality/InspectionCreate.vue'), meta: { title: '新建检验', perm: 'M03:inspection_order:read' } },
       { path: 'quality/:id', name: 'QualityDetail', component: () => import('@/pages/quality/InspectionDetail.vue'), meta: { title: '检验详情', perm: 'M03:inspection_order:read' } },
-      { path: 'quality/ncr', name: 'NcrList', component: () => import('@/pages/quality/NcrList.vue'), meta: { title: '不合格品评审', perm: 'M03:inspection_order:read' } },
+      // NCR 是独立模块码 M30（列表页调 /ncr），拿 M03 的检验单只读码代替会让
+      // "能看检验单但没 M30"的角色进去即 403（key_user 实测）。
+      { path: 'quality/ncr', name: 'NcrList', component: () => import('@/pages/quality/NcrList.vue'), meta: { title: '不合格品评审', perm: 'M30:ncr:read' } },
       // SPC 统计分析
       { path: 'quality/spc/control-limits', name: 'SpcControlLimits', component: () => import('@/pages/quality/spc/ControlLimitList.vue'), meta: { title: 'SPC控制限配置', perm: 'M10:spc_control_limit:read' } },
       { path: 'quality/spc/control-limits/:id/chart', name: 'SpcControlChart', component: () => import('@/pages/quality/spc/ControlChart.vue'), meta: { title: 'SPC控制图', perm: 'M10:spc_control_limit:read' } },
@@ -90,8 +92,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'energy/analysis', name: 'EnergyAnalysis', component: () => import('@/pages/energy/EnergyAnalysis.vue'), meta: { title: '能耗分析', perm: 'M11:energy_device:read' } },
       { path: 'energy/carbon', name: 'EnergyCarbon', component: () => import('@/pages/energy/EnergyCarbon.vue'), meta: { title: '碳管理', perm: 'M11:energy_device:read' } },
       { path: 'data-collection', name: 'DataCollection', component: () => import('@/pages/datacollection/CollectTaskList.vue'), meta: { title: '数据采集', perm: 'M12:collect_task:read' } },
-      { path: 'system/config', name: 'SystemConfig', component: () => import('@/pages/system/SystemConfig.vue'), meta: { title: '系统配置', perm: 'PLAT:user:read' } },
-      { path: 'system/license', name: 'LicenseInfo', component: () => import('@/pages/system/LicenseInfo.vue'), meta: { title: '许可证', perm: 'PLAT:user:read' } },
+      // perm 必须是"页面真正需要的接口权限"，不能拿一个更宽泛的码代替：
+      // 用 PLAT:user:read 会让所有能看用户列表的人都能进这两页，
+      // 而页面加载即调 /system/config、/system/license → 403（空白页）。
+      { path: 'system/config', name: 'SystemConfig', component: () => import('@/pages/system/SystemConfig.vue'), meta: { title: '系统配置', perm: 'PLAT:system_config:read' } },
+      { path: 'system/license', name: 'LicenseInfo', component: () => import('@/pages/system/LicenseInfo.vue'), meta: { title: '许可证', perm: 'PLAT:system_license:read' } },
       // 角色权限配置（S2 落地：权限码勾选 + 数据范围）
       { path: 'system/roles', name: 'RolePermissions', component: () => import('@/pages/system/RolePermissions.vue'), meta: { title: '角色权限', perm: 'PLAT:role_permission:read' } },
       // M20 - 仓储管理 (WMS)

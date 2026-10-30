@@ -31,9 +31,13 @@ class Settings(BaseSettings):
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     # ── 权限体系（S1/S2）──
-    # False = 影子模式：只记录"本该 403 但放行"，不阻断。用于切换前对齐初始权限。
-    # True  = 强制模式：无权限直接 403。
-    PERMISSION_ENFORCE: bool = False
+    # True  = 强制模式：无权限直接 403（当前默认）。
+    # False = 影子模式：只记录"本该 403 但放行"，用于排查"改了授权但不确定影响面"。
+    PERMISSION_ENFORCE: bool = True
+    # 灰度开关：逗号分隔的模块码（如 "M01,M03"）。非空时**只有这些模块**走强制模式，
+    # 其余模块仍按影子模式放行。空 = 全量生效。
+    # 用途：切全量前先灰度两三个模块，出问题把这一项一改即可回退，无需重启回滚代码。
+    PERMISSION_ENFORCE_MODULES: str = ""
     # True 时启动会校验"每个 /api/v1 路由都有权限声明"，缺失则启动失败（fail-closed）。
     PERMISSION_STRICT_STARTUP: bool = False
 

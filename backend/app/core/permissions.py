@@ -166,6 +166,79 @@ def derive_permission_code(path: str, method: str, endpoint_module: str) -> str:
 _PERMISSION_MAP: Dict[Tuple[str, str], str] = {}
 
 
+class _RouteMatcher:
+    """把「路由模板」变成能匹配真实请求路径的查找器。
+
+    分两层：**精确表**（无 ``{param}`` 的路由，O(1)）优先，
+    再退回**模板正则**（``/work-orders/{order_id}/release`` → ``/work-orders/[^/]+/release``）。
+
+    模板按「静态段数量降序」排列：同一条实际路径同时符合多个模板时
+    （如 ``/quality/{id}`` 与 ``/quality/create``），静态段多的更具体，先匹配。
+    另外维护一份结果缓存 —— 每次请求都跑一遍 394 条正则太浪费。
+    """
+
+    _CACHE_LIMIT = 4096
+
+    def __init__(self) -> None:
+        self._exact: Dict[Tuple[str, str], str] = {}
+        self._templated: List[Tuple["re.Pattern", str, str]] = []
+        self._cache: Dict[Tuple[str, str], Optional[str]] = {}
+        self._loaded = False
+
+    def invalidate(self) -> None:
+        self._exact = {}
+        self._templated = []
+        self._cache = {}
+        self._loaded = False
+
+    def _ensure(self) -> None:
+        if self._loaded:
+            return
+        self._exact = {}
+        self._templated = []
+        templates = []
+        for (path, method), code in _PERMISSION_MAP.items():
+            if "{" in path and "}" in path:
+                templates.append((path, method, code))
+            else:
+                self._exact[(path, method)] = code
+        # 静态段多者优先；同分时长路径优先（更具体的先匹配）
+        templates.sort(
+            key=lambda x: (-sum(1 for s in x[0].split("/") if s and "{" not in s), -len(x[0]))
+        )
+        for path, method, code in templates:
+            self._templated.append((self._compile(path), method, code))
+        self._loaded = True
+
+    @staticmethod
+    def _compile(template: str) -> "re.Pattern":
+        segs = []
+        for seg in template.split("/"):
+            if seg.startswith("{") and seg.endswith("}"):
+                segs.append("[^/]+")
+            else:
+                segs.append(re.escape(seg))
+        return re.compile("^" + "/".join(segs) + "$")
+
+    def lookup(self, path: str, method: str) -> Optional[str]:
+        self._ensure()
+        key = (path, method)
+        if key in self._cache:
+            return self._cache[key]
+        code = self._exact.get(key)
+        if code is None:
+            for regex, meth, c in self._templated:
+                if meth == method and regex.match(path):
+                    code = c
+                    break
+        if len(self._cache) < self._CACHE_LIMIT:
+            self._cache[key] = code
+        return code
+
+
+_ROUTE_MATCHER = _RouteMatcher()
+
+
 def build_permission_map(app) -> Dict[Tuple[str, str], str]:
     """遍历 FastAPI 全部路由，构建 ``(path, method) -> permission_code``。"""
     mapping: Dict[Tuple[str, str], str] = {}
@@ -186,6 +259,7 @@ def build_permission_map(app) -> Dict[Tuple[str, str], str]:
             )
     _PERMISSION_MAP.clear()
     _PERMISSION_MAP.update(mapping)
+    _ROUTE_MATCHER.invalidate()
     logger.info("权限映射构建完成：%d 条路由", len(mapping))
     return mapping
 
@@ -200,7 +274,17 @@ def all_permission_codes() -> List[str]:
 
 
 def lookup_permission(path: str, method: str) -> Optional[str]:
-    return _PERMISSION_MAP.get((path, method.upper()))
+    """按「方法 + 实际请求路径」查权限码。
+
+    ⚠️ 必须支持路径参数模板。早期实现是 ``_PERMISSION_MAP.get((path, method))``
+    的**精确字典查**，于是所有带 ``{id}`` 的路由永远查不到：
+    查不到 -> guard 认为"未登记" -> 直接放行。
+    后果是 ``POST /work-orders/{id}/release``、``POST /quality/{id}/judge``、
+    ``POST /wms/receipt-orders/{id}/receive`` 这些**真正动手的接口全部绕过权限**，
+    而 ``POST /work-orders`` 这种无参数接口拦得住 —— 影子模式下日志漂亮，
+    强制模式下等于半个系统没设防（2026-10-30 切强制模式时实测发现）。
+    """
+    return _ROUTE_MATCHER.lookup(path, method.upper())
 
 
 def assert_all_routes_declared(app) -> List[str]:
@@ -279,6 +363,33 @@ def has_permission(user_permissions: List[str], required: str) -> bool:
     return bool(candidates & perms)
 
 
+def enforced_modules() -> Optional[set]:
+    """灰度范围：返回需要真正拦的模块码集合；``None`` 表示全量生效。
+
+    ``PERMISSION_ENFORCE_MODULES="M01,M03"`` → ``{"M01","M03"}``（其余模块仍影子放行）
+    空字符串 → ``None``（全部模块都拦）
+    """
+    raw = (get_settings().PERMISSION_ENFORCE_MODULES or "").strip()
+    if not raw:
+        return None
+    return {m.strip().upper() for m in raw.split(",") if m.strip()}
+
+
+def is_enforced(required: str) -> bool:
+    """这个权限码当前是否真的会被拦。
+
+    三层判断：总开关 → 灰度范围 → 该码所属模块。抽成函数是为了让
+    「agent 判定的日志」「403 决策」「启动横幅」共用同一套逻辑，不各写一遍。
+    """
+    settings = get_settings()
+    if not settings.PERMISSION_ENFORCE:
+        return False
+    scope = enforced_modules()
+    if scope is None:
+        return True
+    return required.split(":")[0].upper() in scope
+
+
 async def permission_guard(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
@@ -296,10 +407,12 @@ async def permission_guard(
     | 无凭证 | 交给端点自身的认证依赖报 401（本依赖不负责认证） |
     | API-Key | 按 key 自带 permissions 判定 |
     | JWT 用户 | 按用户角色汇总 permissions 判定 |
-    | 影子模式（PERMISSION_ENFORCE=false） | 记日志后放行 |
     | 强制模式且无权限 | 403 |
+    | 影子模式 / 未被灰度覆盖的模块 | 记 ``[SHADOW]`` 日志后放行 |
+
+    强制与否由 ``is_enforced(required)`` 统一判定（总开关 + 灰度模块范围），
+    保证"启动横幅说的"和"这里拦的"是同一套逻辑。
     """
-    settings = get_settings()
     path = request.url.path
     if is_exempt(path):
         return
@@ -348,7 +461,7 @@ async def permission_guard(
     if has_permission(user_permissions, required):
         return
 
-    if settings.PERMISSION_ENFORCE:
+    if is_enforced(required):
         logger.info(
             "权限拒绝: user=%s %s %s 需要 %s",
             (request.state.user or {}).get("id") if hasattr(request, "state") else None,
@@ -360,7 +473,7 @@ async def permission_guard(
             "required": required,
         })
 
-    # 影子模式：只记录
+    # 影子模式（或被灰度范围排除的模块）：只记录
     logger.warning(
         "[SHADOW] 本该 403: %s %s 需要 %s（当前用户权限 %d 条）",
         request.method, path, required, len(user_permissions),

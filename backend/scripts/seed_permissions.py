@@ -46,6 +46,36 @@ if BACKEND_DIR not in sys.path:
 # 否则切换强制模式后"菜单还在、点进去 403"。
 OPEN_MODULE_READ = ["M00:*:read", "M04:*:read", "M05:*:read"]
 
+# ── 模块写权（上面文档表格的实现）──
+# 原文写"读全开；写给 X/Y/Z"，但早期版本只发了只读（`M00:*:read`），
+# 写操作实际只有 admin 能做 —— 文档与代码不一致。切强制模式前必须补齐，
+# 否则部门负责人连建个产品、收个货都会被 403。
+# 用 `M00:*` 而不是逐条列 create/update/delete：新增端点自动纳入，
+# 避免"加了接口忘了授权"这类只有在强制模式下才暴露的漏授。
+M00_WRITE = "M00:*"   # 基础数据维护
+M04_WRITE = "M04:*"   # 仓储收发存
+
+# ── 与岗位无关的平台基线能力 ──
+# 这些都是**前端全局入口**，不是某个模块的页面：
+#   顶栏「AI 助手」→ PLAT:copilot_*
+#   顶栏「站内信」→ PLAT:message:*
+#   登录后改密码 / 登出 → PLAT:auth_*
+#   各处下拉的字典项、组织与人员选择器 → PLAT:dictionary_code_item / organization_tree / user
+# 不给的话，切强制模式后这些按钮对非 admin 用户全部 403 —— 属于开局就撞墙。
+PLATFORM_BASELINE = [
+    "PLAT:auth_change_password:create",
+    "PLAT:auth_logout:create",
+    "PLAT:message*:*",
+    # 用资源前缀 'message*' 而不是 'PLAT:message:*'：
+    # 后者的前缀是 'PLAT:message:'，覆盖不到 message_read / message_unread_count
+    # （这两条从 /messages/{id}/read、/messages/unread-count 推导出来，资源名多了后缀）。
+    # 站内信铃铛要"未读数 + 标记已读"，少一条就会 403。
+    "PLAT:copilot*:*",       # AI 助手：ask / briefing / feedback / session 四个资源
+    "PLAT:dictionary_code_item:read",
+    "PLAT:organization_tree:read",
+    "PLAT:user:read",
+]
+
 # ── 角色 → 权限模式列表 ──
 # 支持四种写法：
 #   '*'                全部
@@ -60,36 +90,44 @@ ROLE_GRANTS = {
     #       + menu: andon.escalation_rules / trial / lab
     # PLAT:role_permission:read —— 角色权限配置页的**只读**查看（含权限目录），可看不可改
     "department_head": OPEN_MODULE_READ + [
+        M00_WRITE, M04_WRITE,
         "M01:*", "M02:*", "M03:*", "M06:*", "M10:*",
         "M11:*", "M12:*", "M15:*", "M16:*", "M30:*",
         "PLAT:organization:*", "PLAT:user:read", "PLAT:role:read",
         "PLAT:role_permission:read",
     ],
 
-    # 班组长：生产（工单/报工/排产）+ 设备 + 安灯处理
+    # 班组长：生产（工单/报工/排产）+ 设备 + 安灯处理 + 仓储收发
     # 依据：R_PROD R_EQUIP + 安灯主菜单全开
     "team_leader": OPEN_MODULE_READ + [
+        M04_WRITE,
         "M01:*", "M06:*", "M05:*",
     ],
 
-    # 生产调度员：工单 + 排产（不看 BOM / 品质 / 设备写操作）
+    # 生产调度员：工单 + 排产 + 仓储收发（不看 BOM / 品质 / 设备写操作）
     # 依据：R_PROD R_SCHEDULE
     "scheduler": OPEN_MODULE_READ + [
+        M04_WRITE,
         "M01:*", "M06:*:read",
     ],
 
-    # 工艺工程师：BOM + FMEA + 试产（生产只读，不排产）
+    # 工艺工程师：BOM + FMEA + 试产 + 基础数据维护（生产只读，不排产）
     # 依据：R_PROD R_BOMS R_FMEA R_TRIAL + menu: lab
     "process_engineer": OPEN_MODULE_READ + [
+        M00_WRITE,
         "M01:*:read", "M02:*", "M10:fmea*:*", "M16:*", "M15:*",
     ],
 
-    # 关键用户：生产 + 品质 + 能碳 + 采集 + 系统配置
+    # 关键用户：生产 + 品质 + 能碳 + 采集 + 系统配置 + 基础数据与仓储
     # 依据：R_PROD R_QUALITY R_ENERGY R_DC R_SYSTEM
     # PLAT:role_permission / role_scope / role_user —— 系统管理下的角色权限配置页三件套
     #   （`PLAT:role:*` 只覆盖 /roles 本身，不覆盖 /roles/{id}/permissions 这类子资源）
     "key_user": OPEN_MODULE_READ + [
-        "M01:*", "M03:*", "M05:*", "M11:*", "M12:*",
+        M00_WRITE, M04_WRITE,
+        # M30（NCR 不合格品评审）必须给：本角色已有 M03 品质全量，
+        # 品质处置闭环少了 NCR 就是半截 —— 前端会把「不合格品评审」菜单显示出来，
+        # 点进去列表页调 /ncr 直接 403（强制模式全角色回归实测）。
+        "M01:*", "M03:*", "M05:*", "M11:*", "M12:*", "M30:*",
         "PLAT:user:*", "PLAT:role:*",
         "PLAT:role_permission:*", "PLAT:role_scope:*", "PLAT:role_user:*",
         "PLAT:organization:*", "PLAT:dictionary:*",
@@ -117,6 +155,50 @@ ROLE_GRANTS = {
         "M03:*", "M10:*", "M30:*", "M15:*",
     ],
 }
+
+# 平台基线能力对所有非 admin 角色生效（顶栏入口 + 字典/组织/人员选择器）。
+# 放在这里统一叠加，避免 8 个角色的列表里各写一遍、漏一个就少一块功能。
+ROLE_GRANTS = {
+    code: (patterns if code == "admin" else PLATFORM_BASELINE + patterns)
+    for code, patterns in ROLE_GRANTS.items()
+}
+
+
+def resolve_pattern(pattern: str, codes) -> set:
+    """把授权模式展开成真实权限码集合。
+
+    返回**空集表示该模式没有命中任何权限码**，调用方必须当错误报出来 ——
+    静默忽略会在切强制模式后表现为"某个按钮 403"，而根因是授权写错了。
+    （2026-10-30 实际踩过两次：``PLAT:copilot_*`` 非法被静默丢弃；
+    ``M10:fmea*:*`` 也一直被丢弃，导致工艺工程师的 FMEA 写权从未生效。）
+    """
+    codes = set(codes)
+    if pattern == "*":
+        return codes
+    if pattern.startswith("*:"):
+        # '*:read' → 全平台该动作。
+        # 必须先于 endswith(':*') 判断，否则 '*:read' 会掉进前缀分支而解析失败。
+        act = pattern.split(":", 1)[1]
+        return {c for c in codes if c.endswith(f":{act}")}
+
+    # 'M10:fmea*:*' / 'M10:fmea*:read' → 资源名前缀。
+    # 必须排在 endswith(':*') 之前，否则会被当成"资源名就叫 fmea*"而命中 0 条。
+    m = re.match(r"^([A-Za-z0-9_]+):([A-Za-z0-9_]+)\*:([A-Za-z0-9_]+|\*)$", pattern)
+    if m:
+        mod, res_prefix, act = m.groups()
+        head = f"{mod}:{res_prefix}"
+        if act == "*":
+            return {c for c in codes if c.startswith(head)}
+        return {c for c in codes if c.startswith(head) and c.endswith(f":{act}")}
+
+    if pattern.endswith(":*"):
+        prefix = pattern[:-1]  # 'M01:' / 'M01:work_order:'
+        return {c for c in codes if c.startswith(prefix)}
+    if re.match(r"^[A-Za-z0-9_]+:\*:[a-z_]+$", pattern):
+        # 'M03:*:read' → 模块内某动作（该模块只读）
+        mod, _, act = pattern.split(":")
+        return {c for c in codes if c.startswith(f"{mod}:") and c.endswith(f":{act}")}
+    return {pattern} if pattern in codes else set()
 
 
 async def seed(only_tenant: str = None) -> dict:
@@ -201,33 +283,13 @@ async def seed(only_tenant: str = None) -> dict:
                 # 把模式展开成真实权限码集合
                 target_codes = set()
                 for pattern in patterns:
-                    if pattern == "*":
-                        target_codes.update(code_to_id.keys())
-                    elif pattern.startswith("*:"):
-                        # '*:read' → 全平台该动作（必须先于 endswith(':*') 判断，
-                        # 否则 '*:read' 会掉进精确匹配分支而解析失败）
-                        act = pattern.split(":", 1)[1]
-                        target_codes.update(
-                            c for c in code_to_id if c.endswith(f":{act}")
-                        )
-                    elif pattern.endswith(":*"):
-                        prefix = pattern[:-1]  # 'M01:' / 'M01:work_order:'
-                        target_codes.update(
-                            c for c in code_to_id if c.startswith(prefix)
-                        )
-                    elif re.match(r"^[A-Za-z0-9_]+:\*:[a-z_]+$", pattern):
-                        # 'M03:*:read' → 模块内某动作（该模块只读）
-                        mod, _, act = pattern.split(":")
-                        target_codes.update(
-                            c for c in code_to_id
-                            if c.startswith(f"{mod}:") and c.endswith(f":{act}")
-                        )
-                    else:
-                        if pattern in code_to_id:
-                            target_codes.add(pattern)
-                        else:
-                            # 精确码不存在：说明拼错或该端点已删除，记录下来
-                            stats["role_grants"].setdefault("_unresolved", []).append(pattern)
+                    resolved = resolve_pattern(pattern, set(code_to_id))
+                    if not resolved:
+                        # 精确码不存在 / 前缀没命中任何码：拼错或该端点已删除。
+                        # 这里必须报出来 —— 否则切强制模式后会表现为"某个按钮 403"，
+                        # 而根因是授权模式写错了（2026-10-30 就踩过：'PLAT:copilot_*'）。
+                        stats["role_grants"].setdefault("_unresolved", []).append(pattern)
+                    target_codes.update(resolved)
 
                 # 重置该角色的权限（幂等）
                 await conn.execute(

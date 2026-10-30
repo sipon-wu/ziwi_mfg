@@ -210,7 +210,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   await goto('/basics/routes');
   const peRoute = await btnCount('新建路线');
-  rec('P14', 'proc_eng 工艺路线：新建按钮已隐藏', peRoute === 0 ? 'PASS' : 'FAIL',
+  // 2026-10-30 起 process_engineer 拥有 M00 写权（基础数据维护归工艺），
+  // 所以「新建路线」应当**可见** —— 这条从"验证隐藏"改成"验证没被过度隐藏"。
+  rec('P14', 'proc_eng 工艺路线：有 M00 写权 → 新建按钮可见', peRoute >= 1 ? 'PASS' : 'FAIL',
     `count=${peRoute}`);
   await shot('P14_proceng_route');
 
@@ -244,7 +246,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   await goto('/quality/ncr');
   const kuNcr = await btnCount('新建');
-  rec('P19', 'key_user NCR 页：新建按钮已隐藏', kuNcr === 0 ? 'PASS' : 'FAIL',
+  // 同上：key_user 已有 M03 品质全量，NCR（M30）属于品质处置闭环，一并授予，
+  // 所以「新建」应可见。这里验证的是"授权到位后按钮没被误隐藏"。
+  rec('P19', 'key_user NCR 页：有 M30 权 → 新建按钮可见', kuNcr >= 1 ? 'PASS' : 'FAIL',
     `count=${kuNcr}`);
   const kuTxt = await bodyText();
   rec('P20', 'key_user NCR 页仍能正常浏览（页面没被整体挡掉）',
@@ -252,15 +256,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     kuTxt.slice(0, 60).replace(/\n/g, ' '));
   await shot('P19_keyuser_ncr');
 
+  // key_user 现在有 M30，直调应当放行 —— 但这条不再有验证价值。
+  // 换成**真正没有 M30** 的账号做反向对照，验"边界是真边界"。
+  await loginAs('test_maint_tech');
   r = await api('POST', '/ncr', {
     ncr_no: `NCR-PERM-${TS}`, source_type: 'manual', source_no: `PERM-${TS}`,
     defect_desc: '权限门验证', defect_qty: 1, severity: 'minor',
   });
   if (r.status === 403) {
-    rec('P21', 'key_user 直调「新建 NCR」→ 403', 'PASS', `status=${r.status}`);
+    const need = (r.data && r.data.detail && r.data.detail.required) || '';
+    rec('P21', 'maint_tech（无 M30）直调「新建 NCR」→ 403', 'PASS',
+      `status=403 需要 ${need}`);
   } else {
-    warn('P21', 'key_user 直调「新建 NCR」未被拦截',
-      `status=${r.status} —— 影子模式放行，与 P15/P16 同因`);
+    rec('P21', 'maint_tech（无 M30）直调「新建 NCR」→ 403', 'FAIL',
+      `status=${r.status} —— 强制模式下越权放行，边界失效`);
   }
 
   rec('P22', '无 JS 运行时错误', consoleErrors.length === 0 ? 'PASS' : 'FAIL',

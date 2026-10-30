@@ -84,7 +84,12 @@ export const menuPermissions: MenuPermission[] = [
     menuId: 'system',
     perm: 'PLAT:user:read',
     children: [
-      // 未列出的子菜单（系统配置 / 许可证）继承父级可见性
+      // 必须逐项声明：子菜单不声明时会继承父级的 PLAT:user:read，
+      // 于是"能看用户列表"的人也能看见系统配置/许可证 ——
+      // 点进去后端要 PLAT:system_config / system_license，直接 403。
+      // （强制模式全角色回归实测：9 个非 admin 账号里 8 个撞在这两页上。）
+      { childId: 'system_config', perm: 'PLAT:system_config:read' },
+      { childId: 'system_license', perm: 'PLAT:system_license:read' },
       { childId: 'system_roles', perm: 'PLAT:role_permission:read' },
     ],
   },
