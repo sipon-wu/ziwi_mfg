@@ -1,4 +1,7 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Boolean, Text, DateTime, Numeric
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Boolean, Text, DateTime, Numeric,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -74,6 +77,10 @@ class InspectionOrder(Base):
     remark = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "order_no", name="uq_inspection_order_tenant_no"),
+    )
 
 
 class InspectionResult(Base):
@@ -164,3 +171,9 @@ class NcrRecord(Base):
     remark = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # 单号在同租户内唯一：NCR 的 ncr_no 由调用方传入，
+        # 重复提交会产生两张同号不合格单，SCAR 追溯直接串号。
+        UniqueConstraint("tenant_id", "ncr_no", name="uq_ncr_record_tenant_no"),
+    )

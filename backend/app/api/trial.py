@@ -11,6 +11,7 @@ from app.repositories.trial_repo import (
     TrialReviewRepository,
 )
 from app.services.trial_service import TrialService
+from app.services.doc_no import guard_duplicate
 from app.schemas.trial import (
     CreateTrialOrderRequest,
     UpdateTrialOrderRequest,
@@ -57,11 +58,11 @@ async def create_trial(
     """M16-02: 创建试产工单"""
     svc = TrialService(repo)
     tenant_id = current_user.get("tenant_id", "default")
-    result = await svc.create_trial_order({
+    result = await guard_duplicate(svc.create_trial_order({
         **req.model_dump(),
         "tenant_id": tenant_id,
         "created_by": current_user.get("id"),
-    })
+    }), "试产单号")
     return {"code": 0, "message": "创建成功", "data": result}
 
 

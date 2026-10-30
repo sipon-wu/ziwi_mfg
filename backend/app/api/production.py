@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query, Path
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.production_repo import ProductionRepository
 from app.services.production_service import ProductionService
+from app.services.doc_no import assert_doc_no_available, guard_duplicate
 from app.schemas.production import (
     CancelWorkOrderRequest,
     CompleteWorkOrderRequest,
@@ -35,7 +36,11 @@ async def create_work_order(
 ):
     svc = ProductionService(repo)
     data = req.model_dump()
-    result = await svc.create_work_order(data, current_user.get("tenant_id", "default"))
+    # 工单号由前端/用户填写（非自增）→ 预检 + 兜住并发竞态
+    await assert_doc_no_available(repo, "work_orders", "wo_no", data.get("wo_no"), "工单号")
+    result = await guard_duplicate(
+        svc.create_work_order(data, current_user.get("tenant_id", "default")),
+        "工单号", data.get("wo_no"))
     return {"code": 0, "message": result["message"]}
 
 @router.get("/work-orders/{order_id}")

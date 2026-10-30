@@ -22,6 +22,7 @@ from app.services.wms_service import (
     InventoryCountService,
     InventoryAlertService, MaterialRequestService,
 )
+from app.services.doc_no import assert_doc_no_available, guard_duplicate
 from app.schemas.wms import (
     WarehouseCreate, WarehouseUpdate,
     ZoneCreate, ZoneUpdate,
@@ -391,8 +392,11 @@ async def create_receipt_order(req: ReceiptOrderCreate, current_user: dict = Dep
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     data["created_by"] = current_user.get("id")
+    # 单号由用户填写 → 预检 + 兜住并发竞态，避免 DB 唯一索引变成 500
+    await assert_doc_no_available(repo, "receipt_orders", "receipt_no",
+                                  data.get("receipt_no"), "入库单号")
     svc = ReceiptOrderService(repo, item_repo, inv_repo, tx_repo)
-    result = await svc.create(data)
+    result = await guard_duplicate(svc.create(data), "入库单号", data.get("receipt_no"))
     return {"code": 0, "message": "入库单创建成功", "data": result}
 
 @router.get("/receipt-orders/{ro_id}")
@@ -558,8 +562,10 @@ async def create_issue_order(req: IssueOrderCreate, current_user: dict = Depends
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     data["created_by"] = current_user.get("id")
+    await assert_doc_no_available(repo, "issue_orders", "issue_no",
+                                  data.get("issue_no"), "出库单号")
     svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
-    result = await svc.create(data)
+    result = await guard_duplicate(svc.create(data), "出库单号", data.get("issue_no"))
     return {"code": 0, "message": "出库单创建成功", "data": result}
 
 @router.get("/issue-orders/{io_id}")

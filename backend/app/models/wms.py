@@ -1,5 +1,8 @@
 """M20 仓储管理（WMS）模块 — ORM 模型（15 张表）"""
-from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -185,6 +188,12 @@ class ReceiptOrder(Base):
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     completed_at  = Column(DateTime(timezone=True), comment="完成时间")
 
+    __table_args__ = (
+        # 单号在同租户内唯一。改造前 receipt_no 无任何约束，重复提交/并发
+        # 会产出两张同号入库单，库存流水与对账都失去唯一锚点。
+        UniqueConstraint("tenant_id", "receipt_no", name="uq_receipt_order_tenant_no"),
+    )
+
 
 class ReceiptOrderItem(Base):
     """入库单明细"""
@@ -230,6 +239,10 @@ class IssueOrder(Base):
     issued_by     = Column(BigInteger, comment="出库确认人")
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     completed_at  = Column(DateTime(timezone=True), comment="完成时间")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "issue_no", name="uq_issue_order_tenant_no"),
+    )
 
 
 class IssueOrderItem(Base):

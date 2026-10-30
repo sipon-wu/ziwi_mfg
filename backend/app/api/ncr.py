@@ -13,6 +13,7 @@ from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.ncr_repo import NcrRepository
 from app.schemas.ncr import AdvanceNcrRequest, CreateNcrRequest
 from app.services.ncr_service import NcrService
+from app.services.doc_no import assert_doc_no_available, guard_duplicate
 
 router = APIRouter(prefix="/api/v1/ncr", tags=["M30-不合格评审NCR"])
 
@@ -51,8 +52,12 @@ async def create_ncr(
     data = req.model_dump()
     data["tenant_id"] = repo.tenant_id
     data["raised_by"] = actor_id
+    await assert_doc_no_available(repo, "ncr_records", "ncr_no",
+                                  data.get("ncr_no"), "不合格单号")
     try:
-        result = await _svc(repo).create_ncr(data, actor_id=actor_id, actor_name=actor_name)
+        result = await guard_duplicate(
+            _svc(repo).create_ncr(data, actor_id=actor_id, actor_name=actor_name),
+            "不合格单号", data.get("ncr_no"))
     except ValueError as exc:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
     return {"code": 0, "message": "创建成功", "data": result}

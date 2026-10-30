@@ -12,6 +12,7 @@ from app.repositories.quality_repo import (
     InspectionResultRepository,
     QualityReportRepository,
 )
+from app.services.doc_no import guard_duplicate
 from app.schemas.quality import (
     CreateQcPointConfigRequest,
     UpdateQcPointConfigRequest,
@@ -250,7 +251,9 @@ async def create_order(
         data["order_no"] = f"{today_prefix}{last_seq + 1:04d}"
     else:
         data["order_no"] = f"{today_prefix}0001"
-    result = await repo.create_inspection_order(data)
+    # 单号按 MAX+1 生成，并发下仍可能撞号 → 兜住唯一键冲突，别让它变成 500
+    result = await guard_duplicate(
+        repo.create_inspection_order(data), "检验单号", data.get("order_no"))
     return {"code": 0, "message": "创建成功", "data": {"id": result}}
 
 

@@ -42,7 +42,10 @@ async def test_list_ncrs_with_filters(mock_list, async_client):
 
 
 @patch("app.api.ncr.NcrService.create_ncr", new_callable=AsyncMock)
-async def test_create_ncr(mock_create, async_client):
+@patch("app.repositories.ncr_repo.NcrRepository.query_one", new_callable=AsyncMock)
+async def test_create_ncr(mock_query_one, mock_create, async_client):
+    # 创建前会做单号唯一性预检，这里让预检查不到（单号未被占用）
+    mock_query_one.return_value = None
     mock_create.return_value = {"id": 1, "status": "open"}
     resp = await async_client.post("/api/v1/ncr", json=CREATE_PAYLOAD)
     assert resp.status_code == 200

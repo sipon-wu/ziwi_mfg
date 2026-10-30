@@ -1,4 +1,7 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Float, Boolean, Text, DateTime,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -31,6 +34,10 @@ class TrialOrder(Base):
     created_by = Column(BigInteger, comment="创建人")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "order_no", name="uq_trial_order_tenant_no"),
+    )
 
 
 class TrialRoute(Base):

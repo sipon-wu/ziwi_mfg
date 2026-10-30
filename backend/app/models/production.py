@@ -1,4 +1,7 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -29,6 +32,12 @@ class WorkOrder(Base):
     # M07 齐套性检查字段
     material_check_status = Column(String(20), default="pending", comment="齐套状态: pending/passed/failed/force_passed")
     material_check_result = Column(Text, comment="缺料明细（JSON）")
+
+    __table_args__ = (
+        # 单号在同租户内唯一。改造前 wo_no 无任何约束：并发或前端重试会
+        # 静默产生两张同号工单，之后报工、入库、对账全部对不上。
+        UniqueConstraint("tenant_id", "wo_no", name="uq_work_order_tenant_no"),
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
