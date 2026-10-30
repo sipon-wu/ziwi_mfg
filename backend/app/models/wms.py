@@ -170,6 +170,9 @@ class ReceiptOrder(Base):
     status        = Column(String(32), default="pending", comment="pending/inspecting/partially_stored/stored/cancelled")
     source_type   = Column(String(32), comment="po/wo/return/transfer")
     source_doc_no = Column(String(64), comment="来源单据号")
+    # ★ 生产入库来源工单：加这一列之前，"生产入库"只能靠 source_doc_no 字符串
+    # 弱关联工单，SQL 层无法 JOIN 校验"入库量 ≤ 完工量"（scenario-verification P0-2）
+    work_order_id = Column(BigInteger, comment="生产入库来源工单ID")
     org_id        = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
     supplier_id   = Column(BigInteger, comment="供应商ID")

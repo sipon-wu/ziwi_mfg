@@ -508,8 +508,8 @@ class ReceiptOrderRepository(MultiTenantRepository):
 
     async def create(self, data: dict) -> int:
         cols = [c for c in ("tenant_id", "receipt_no", "receipt_type", "status", "source_type",
-                            "source_doc_no", "warehouse_id", "supplier_id", "total_qty",
-                            "received_qty", "stored_qty", "created_by") if c in data]
+                            "source_doc_no", "work_order_id", "warehouse_id", "supplier_id",
+                            "total_qty", "received_qty", "stored_qty", "created_by") if c in data]
         sql = "INSERT INTO receipt_orders ({}) VALUES ({})".format(
             ", ".join(cols), ", ".join(f":{c}" for c in cols))
         return await self.execute(sql, data)

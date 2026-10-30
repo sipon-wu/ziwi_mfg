@@ -161,6 +161,16 @@ class ProductionService:
             extra_update={"actual_end_at": order.get("actual_end_at") or datetime.now()},
         )
         result["warnings"] = warnings
+        # 完工 → 自动生成生产入库单（P0-2）。改造前 close 只改状态位，不写任何库存。
+        # 建单失败不回滚完工：完工是既成事实，入库单是后续动作（同报废开 NCR 的取舍）。
+        try:
+            result["production_receipt"] = await self._raise_production_receipt(order)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception(
+                "完工自动生成生产入库单失败: work_order_id=%s", order.get("id"))
+            result["production_receipt"] = {
+                "skipped": True, "reason": "生成生产入库单失败，详见服务端日志"}
         return result
 
     async def close_work_order(self, id: int, operator_id: int,
@@ -363,6 +373,112 @@ class ProductionService:
             "scrap_qty": new_scrap,
             "ncr_id": ncr_id,
             "warnings": warnings,
+        }
+
+    async def _raise_production_receipt(self, order: dict) -> dict:
+        """完工 → 自动生成一张「生产入库单」（pending，待收货上架）。
+
+        改造前 ``POST /work-orders/{id}/close`` 只改状态位，完工件数不会变成库存，
+        仓库得手工另建一张入库单，且与工单没有任何字段关联 ——
+        想校验"入库量 ≤ 完工量"连 JOIN 都做不到。
+
+        这里只建**待收货草稿**，不直接过账：收货与上架仍需仓库按流程确认
+        （含 IQC 送检），否则等于绕过仓库与品质两道关。
+
+        三种"建不出"的情况都**不阻断完工**，只在返回值里说明原因：
+        完工是既成事实，入库单建不出来是主数据/仓库配置的问题，
+        不该让车间因为仓库没配成品仓而完不了工。
+        """
+        qty = order.get("completed_qty") or 0
+        work_order_id = order.get("id")
+        if qty <= 0:
+            return {"skipped": True, "reason": "完工数量为 0，无需生成入库单"}
+
+        # 幂等：同一工单只挂一张未取消的生产入库单（重复完工本已被状态机拦住，
+        # 这里是二道保险，防止人工补数据后再次触发）
+        existing = await self.repo.query_one(
+            "SELECT id, receipt_no, status FROM receipt_orders "
+            "WHERE work_order_id = :w AND (status IS NULL OR status <> 'cancelled') "
+            "ORDER BY id DESC LIMIT 1",
+            {"w": work_order_id},
+        )
+        if existing:
+            return {"skipped": True, "reason": "该工单已有生产入库单",
+                    "receipt_id": existing["id"], "receipt_no": existing["receipt_no"]}
+
+        product_code = order.get("product_code")
+        material = await self.repo.query_one(
+            "SELECT id, code, name, unit FROM materials WHERE code = :c LIMIT 1",
+            {"c": product_code},
+        )
+        if not material:
+            return {"skipped": True,
+                    "reason": f"成品 {product_code} 未建物料档案，无法生成生产入库单"}
+
+        warehouse = await self.repo.query_one(
+            "SELECT id, name FROM warehouses WHERE type = 'finished' "
+            "ORDER BY id LIMIT 1"
+        )
+        if not warehouse:
+            return {"skipped": True, "reason": "未配置成品仓（type=finished），无法生成生产入库单"}
+
+        tenant_id = self.repo.tenant_id or order.get("tenant_id")
+        session = self.repo._session
+
+        from app.repositories.wms_repo import (
+            ReceiptOrderItemRepository,
+            ReceiptOrderRepository,
+        )
+
+        receipt_repo = ReceiptOrderRepository(session)
+        item_repo = ReceiptOrderItemRepository(session)
+        write_org_id = getattr(self.repo, "_write_org_id", None) or order.get("org_id")
+        for repo in (receipt_repo, item_repo):
+            if tenant_id:
+                repo.set_tenant_id(tenant_id)
+            if write_org_id:
+                repo.set_write_org_id(write_org_id)
+
+        prefix = f"PRD-{date.today().strftime('%Y%m%d')}-"
+        row = await self.repo.query_one(
+            "SELECT receipt_no FROM receipt_orders WHERE receipt_no LIKE :p "
+            "ORDER BY receipt_no DESC LIMIT 1",
+            {"p": f"{prefix}%"},
+        )
+        seq = 1
+        if row and len(row["receipt_no"]) > len(prefix):
+            try:
+                seq = int(row["receipt_no"][len(prefix):]) + 1
+            except ValueError:
+                seq = 1
+        receipt_no = f"{prefix}{seq:04d}"
+
+        receipt_id = await receipt_repo.create({
+            "tenant_id": tenant_id,
+            "receipt_no": receipt_no,
+            "receipt_type": "production",
+            "status": "pending",
+            "source_type": "production",
+            "source_doc_no": order.get("wo_no"),
+            "work_order_id": work_order_id,
+            "warehouse_id": warehouse["id"],
+            "total_qty": qty,
+        })
+        await item_repo.create({
+            "receipt_id": receipt_id,
+            "line_no": 1,
+            "material_id": material["id"],
+            "expected_qty": qty,
+            "received_qty": 0,
+            "stored_qty": 0,
+            "unit": material.get("unit") or "件",
+            "inspection_status": "pending",
+            "remark": f"工单 {order.get('wo_no')} 完工自动生成",
+        })
+        return {
+            "created": True, "receipt_id": receipt_id, "receipt_no": receipt_no,
+            "warehouse_id": warehouse["id"], "warehouse_name": warehouse.get("name"),
+            "material_id": material["id"], "qty": qty,
         }
 
     async def _raise_scrap_ncr(self, order: dict, report_id: int, scrap_qty: int,
