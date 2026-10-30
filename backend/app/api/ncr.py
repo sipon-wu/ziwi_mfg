@@ -97,7 +97,22 @@ async def advance_ncr(
         )
     except ValueError as exc:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
-    return {"code": 0, "message": "状态已更新", "data": result}
+    # 处置会顺带生成下游单据（退货出库单 / 返工工单 / 再检检验单），
+    # 把单号回在 message 里，前端不用再查一次就知道"单子建出来了"。
+    msg = "状态已更新"
+    spawned = result.get("spawned") or {}
+    parts = []
+    if spawned.get("issue_order"):
+        parts.append(f"退货出库单 {spawned['issue_order']['issue_no']}")
+    if spawned.get("rework_order"):
+        parts.append(f"返工工单 {spawned['rework_order']['wo_no']}")
+    if spawned.get("recheck_inspection"):
+        parts.append(f"再检检验单 {spawned['recheck_inspection']['order_no']}")
+    if parts:
+        msg += "，已生成 " + "、".join(parts)
+    if result.get("error"):
+        msg += f"（单据生成失败：{result['error']}）"
+    return {"code": 0, "message": msg, "data": result}
 
 
 @router.get("/{ncr_id}/trail")

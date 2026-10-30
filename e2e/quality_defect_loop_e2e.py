@@ -139,22 +139,30 @@ def main():
         r = c.put(f"{API}/ncr/{ncr_id}/status", json={
             "to_status": "disposed", "disposition": "return",
             "disposition_remark": "探测脚本：判退供应商"})
+        disp1 = (r.json().get("data") or {}) if r.status_code == 200 else {}
         report("X1-9 NCR 可推进到 disposed(return)", r.status_code == 200,
                f"HTTP {r.status_code} {r.text[:120]}")
         ncr2 = c.get(f"{API}/ncr/{ncr_id}").json().get("data") or {}
         report("X1-10 disposition 已落库", ncr2.get("disposition") == "return",
                f"disposition={ncr2.get('disposition')}")
 
-        # 探测是否存在采购退货资源（不存在即 404）
-        probed = []
-        for path in ("/wms/purchase-returns", "/wms/return-orders",
-                     "/purchase/returns", "/wms/returns"):
-            rr = c.get(f"{API}{path}")
-            probed.append(f"{path}={rr.status_code}")
-        exists = any(p.endswith("=200") for p in probed)
-        report("X1-11 存在采购退货单据资源", exists, " ".join(probed))
+        # 处置要落到单据上，不能只写一个字段（台账 B-10）
+        issue = (disp1.get("spawned") or {}).get("issue_order")
+        report("X1-11 判退 → 自动生成退货出库单", bool(issue),
+               f"spawned={disp1.get('spawned')} err={disp1.get('error')}")
+        if issue:
+            od = c.get(f"{API}/wms/issue-orders/{issue['id']}").json().get("data") or {}
+            items = od.get("items") or []
+            report("X1-12 退货单类型/来源正确",
+                   od.get("issue_type") == "return" and od.get("source_type") == "ncr",
+                   f"issue_type={od.get('issue_type')} source_type={od.get('source_type')} "
+                   f"source_doc_no={od.get('source_doc_no')}")
+            report("X1-13 退货明细带批次与数量",
+                   bool(items) and items[0].get("batch_no") == batch_no
+                   and float(items[0].get("required_qty") or 0) > 0,
+                   f"items={[(i.get('batch_no'), i.get('required_qty')) for i in items]}")
 
-    # ── X1-12 冻结必须真的拦住出库拣选 ──
+    # ── X1-14 冻结必须真的拦住出库拣选 ──
     # 只把 is_locked 置 1 不算数：出库拣选要跳过锁定批次，否则
     # 「不合格品可出库」照旧成立 —— 这正是 B-9 要解决的问题。
     #
@@ -178,11 +186,11 @@ def main():
         it_i = (c.get(f"{API}/wms/issue-orders/{issue_id}").json()["data"]["items"])[0]
         r = c.post(f"{API}/wms/issue-order-items/{it_i['id']}/issue",
                    json={"issued_qty": avail_all})
-        report("X1-12 冻结批次被排除出拣选（按账面总量出库被拒）", r.status_code >= 400,
+        report("X1-14 冻结批次被排除出拣选（按账面总量出库被拒）", r.status_code >= 400,
                f"要出账面总量 {avail_all}（含锁定批次）→ HTTP {r.status_code} "
                f"{r.text[:120]}")
     else:
-        report("X1-12 冻结批次被排除出拣选（按账面总量出库被拒）", False,
+        report("X1-14 冻结批次被排除出拣选（按账面总量出库被拒）", False,
                f"建出库单失败 HTTP {r.status_code}")
 
     print(f"\n{'=' * 62}\nX8 不良再处理：报工报废 → NCR → 返工 → 再检\n{'=' * 62}")
@@ -225,26 +233,37 @@ def main():
         r = c.put(f"{API}/ncr/{ncr_wr}/status", json={
             "to_status": "disposed", "disposition": "rework",
             "disposition_remark": "探测脚本：返工"})
+        disp2 = (r.json().get("data") or {}) if r.status_code == 200 else {}
         report("X8-4 制程 NCR 可推进到 disposed(rework)", r.status_code == 200,
                f"HTTP {r.status_code} {r.text[:120]}")
 
-        probed = []
-        for path in ("/rework-orders", "/production/rework-orders"):
-            rr = c.get(f"{API}{path}")
-            probed.append(f"{path}={rr.status_code}")
-        # ⚠️ 别用 /wms/issue-orders?issue_type=rework 探存在性：
-        #    列表接口不校验 issue_type，永远返 200 + 全部出库单，
-        #    只看状态码会得出"返工单资源存在"的假结论。
-        exists = any(p.endswith("=200") for p in probed)
-        report("X8-5 存在返工单据资源", exists, " ".join(probed))
+        # 判返工要落成「一张车间能执行的返工工单」+「处置完的再检单」
+        spawned = disp2.get("spawned") or {}
+        rework = spawned.get("rework_order")
+        report("X8-5 判返工 → 自动生成返工工单", bool(rework),
+               f"spawned={spawned} err={disp2.get('error')}")
+        if rework:
+            wo = (c.get(f"{API}/work-orders/{rework['id']}").json().get("data") or {})
+            report("X8-6 返工工单类型与数量正确",
+                   wo.get("wo_type") == "rework"
+                   and float(wo.get("planned_qty") or 0) > 0,
+                   f"wo_no={wo.get('wo_no')} wo_type={wo.get('wo_type')} "
+                   f"planned_qty={wo.get('planned_qty')} product={wo.get('product_code')}")
 
-        # 返工后需再检 → 有没有「NCR 处置后触发再检」的痕迹
+        recheck = spawned.get("recheck_inspection")
+        report("X8-7 处置后自动生成再检检验单", bool(recheck),
+               f"recheck={recheck} err={disp2.get('error')}")
+        if recheck:
+            io = (c.get(f"{API}/inspection-orders/{recheck['id']}").json().get("data") or {})
+            report("X8-8 再检单类型为 recheck",
+                   io.get("order_type") == "recheck",
+                   f"order_no={io.get('order_no')} order_type={io.get('order_type')} "
+                   f"work_order_id={io.get('work_order_id')}")
+
         trail = c.get(f"{API}/ncr/{ncr_wr}/trail").json().get("data") or []
         items = trail.get("items") if isinstance(trail, dict) else trail
         print(f"  [INFO] NCR 流水 {len(items or [])} 条: "
               + " → ".join(str((x or {}).get("to_status")) for x in (items or [])))
-        report("X8-6 处置后自动触发再检", False,
-               "处置只写字段，不生成再检检验单")
 
     # ── 汇总 ──
     print(f"\n{'=' * 62}\n汇总：{len(OK)} 段通 / {len(GAP)} 段断\n{'=' * 62}")
