@@ -302,6 +302,7 @@ async def judge_order(
     # 改造前判定只落在检验单上（外加 REJ 开一张 NCR），入库明细的
     # inspection_status 靠人工维护 → "判定不合格却仍可上架"（P0-1）。
     receipt_status = None
+    receipt_item = None
     if order.get("receipt_item_id"):
         from app.repositories.wms_repo import ReceiptOrderItemRepository
         item_repo = ReceiptOrderItemRepository(repo._session)
@@ -312,12 +313,34 @@ async def judge_order(
         receipt_status = "disqualified" if req.result == "REJ" else "qualified"
         await item_repo.update(order["receipt_item_id"],
                                {"inspection_status": receipt_status})
+        # 取回明细，供下面开 NCR 时补齐批次号 / 不合格数量
+        receipt_item = await item_repo.get(order["receipt_item_id"])
 
     # S-2：判定不合格（REJ）→ 自动发起不合格品评审（NCR）
     # 此前 REJ 只改一个状态字段、无任何处置载体（评审报告 P0-2/P0-3 指出的缺口）。
     # 幂等：同一检验单只开一张 NCR，重复判定不重复开单。
     ncr_id = None
     if req.result == "REJ":
+        # ★ 定位依据三件套：批次号 / 不合格数量 / 供应商。
+        # 此前一律为 NULL —— 收货明明带了 batch_no，但开单处没去取，
+        # 于是"判不合格"变成一张无从下手的单子：冻结不知道锁哪批、
+        # 退货不知道退哪批、追溯不知道从哪查起。三件套齐了，下游才使得上劲。
+        batch_no = None
+        defect_qty = None
+        supplier_id = None
+        if receipt_item:
+            batch_no = receipt_item.get("batch_no")
+            defect_qty = receipt_item.get("received_qty")
+            ro_id = receipt_item.get("receipt_id")
+            if ro_id:
+                from app.repositories.wms_repo import ReceiptOrderRepository
+                ro_repo = ReceiptOrderRepository(repo._session)
+                if repo.tenant_id:
+                    ro_repo.set_tenant_id(repo.tenant_id)
+                receipt_order = await ro_repo.get(ro_id)
+                if receipt_order:
+                    supplier_id = receipt_order.get("supplier_id")
+
         ncr_repo = NcrRepository(repo._session)
         ncr_repo.set_tenant_id(repo.tenant_id)
         # 从检验单 repo 继承写入归属，否则自动开的 NCR 的 org_id 为 NULL，
@@ -339,6 +362,10 @@ async def judge_order(
                     "source_no": order.get("order_no"),
                     "material_id": order.get("material_id"),
                     "work_order_id": order.get("work_order_id"),
+                    "batch_no": batch_no,
+                    "supplier_id": supplier_id,
+                    "total_qty": defect_qty,
+                    "defect_qty": defect_qty,
                     "defect_desc": f"检验单 {order.get('order_no')} 判定不合格（REJ），自动发起不合格评审",
                     "raised_by": user.get("id"),
                 },

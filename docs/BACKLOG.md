@@ -17,6 +17,9 @@
 | # | 项 | 现象 | 影响 | 一行根因 | 验收方式 |
 |---|---|---|---|---|---|
 | B-8 | **9 个种子角色里只有 `admin` 带 `is_system=1`** | 其余 8 个（`department_head` / `inspector` / `quality_engineer` …）界面上「删除」按钮可点 | 客户可以把平台预置的角色删掉；`seed_permissions.py` 按 code 授权，删掉后重跑种子只会报 "unmatched_roles"，不会自动重建 | 早期 `roles` 表只有 admin 标了 `is_system`，后续加角色时没有统一约定 | 二选一：①把 8 个种子角色统一标 `is_system=1`；②在 `seed_permissions.py` 里补"角色不存在则按内置定义重建" |
+| B-9 | **收货不建批次记录 → 库存批次冻结无从下手**（X1-8） | `POST /wms/receipt-order-items/{id}/receive` 传了 `batch_no` 也只用它做字符串，`batches` 表里查不到这条批次；`inventory` 行的 `batch_id` 被显式置 NULL（`find_or_create_in_inspection_zone` 注释说"简化待检区行"） | 判 REJ 后即使想冻结也**没有可冻结的对象**；批次追溯 / 召回同样断掉（`batch_id` 为空，`batches.is_locked` 无处可锁） | 待检区入账只写 `batch_no` 字符串、不落 `batches` 记录，全链路没有"批次实体" | 收货时 `find_or_create` 到 `batches`（再取 `batch_id` 写入 inventory 行）；REJ 后自动 `lock` 该批次；E2E `quality_defect_loop_e2e.py` X1-8 由 GAP 转 OK |
+| B-10 | **NCR 处置（disposition）只写字段，无任何下游动作**（X1-11 / X8-5 / X8-6） | NCR 推进到 `disposed` 并给 `disposition=return / rework / scrap` 后：不生成退货单、不生成返工单、不生成再检检验单、不核销库存 | 「处置方案」在系统里等于一段文字，车间拿不到可执行的单据；质量闭环实际止于 NCR | `NcrService.advance` 只 `update` NCR 自身字段 + 写流水 | 先定单据形态：①复用出库单 `issue_type=return/rework`；②新建退货单/返工单资源。定了再实现；E2E X1-11/X8-5/X8-6 由 GAP 转 OK |
+| B-11 | **供应商主数据无任何 API，`supplier_id` 是预留字段** | `/suppliers`、`/basic/suppliers` 全部 404；但 `receipt_orders.supplier_id`、`ncr_records.supplier_id` 都有列 | NCR 的供应商永远为空 → 「按供应商分摊不良」做不了；来料 NCR 无法归到供应商 | 产品决策：供应商主数据归 M01 ERP / M09 SRM 生命周期管理，MES 不自建主数据 | **不自行新建**。等 ERP 集成回填；在此之前 NCR 供应商维度不可用属预期。若客户要求 MES 侧可见，再单独拍板 |
 
 
 ## 二、已排期

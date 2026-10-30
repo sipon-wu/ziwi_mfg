@@ -248,13 +248,23 @@ async def test_judge_writes_back_receipt_item_status(judge, expected):
     fake_item_repo = MagicMock()
     fake_item_repo.set_tenant_id = MagicMock()
     fake_item_repo.update = AsyncMock(return_value=1)
+    # 判定后要取回明细，供开 NCR 时补齐批次号 / 不合格数量（见 test_iqc_ncr_locator）
+    fake_item_repo.get = AsyncMock(return_value={
+        "id": 7, "receipt_id": 3, "material_id": 11,
+        "batch_no": "B-TEST", "received_qty": 10.0,
+    })
 
     fake_ncr_svc = MagicMock()
     fake_ncr_svc.create_ncr = AsyncMock(return_value={"id": 1})
 
+    fake_ro_repo = MagicMock()
+    fake_ro_repo.get = AsyncMock(return_value={"id": 3, "supplier_id": 9})
+
     with (
         patch("app.repositories.wms_repo.ReceiptOrderItemRepository",
               return_value=fake_item_repo),
+        patch("app.repositories.wms_repo.ReceiptOrderRepository",
+              return_value=fake_ro_repo),
         patch("app.api.quality.NcrRepository", return_value=fake_qc_repo),
         patch("app.api.quality.NcrService", return_value=fake_ncr_svc),
     ):
