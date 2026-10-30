@@ -186,9 +186,12 @@ def test_frontend_perm_codes_exist_in_backend():
     (["SELF", "DEPT"], SCOPE_DEPT),
     (["DEPT", "DEPT_CHILD"], SCOPE_DEPT_CHILD),
     (["DEPT_CHILD", "ALL"], SCOPE_ALL),
-    # 历史数据 scope 为 NULL → 兜底 ALL（不能让老角色突然看不到数据）
-    ([None], SCOPE_ALL),
-    ([], SCOPE_ALL),
+    # 兜底：2026-10-30 由 ALL 收紧为 DEPT。
+    # 兜底值决定「配置缺失时往哪边错」：取 ALL 是静默放开全公司，
+    # 取 DEPT 最坏只是看不到别的部门（当场就会有人来问）。宁可有噪音。
+    ([None], SCOPE_DEPT),
+    ([], SCOPE_DEPT),
+    (["全部"], SCOPE_DEPT),
 ])
 def test_widest_scope(scopes, expected):
     assert widest_scope(scopes) == expected
@@ -299,18 +302,21 @@ def test_inject_org_owner_preserves_on_conflict_suffix():
     assert sql.endswith("ON CONFLICT DO NOTHING")
 
 
-def test_inject_org_owner_uses_department_id_for_issue_orders():
-    """issue_orders 的归属列是 department_id；若 INSERT 未带则补上。"""
-    sql = MultiTenantRepository._inject_org_owner(
-        "INSERT INTO issue_orders (tenant_id, issue_no) VALUES (:t, :n)"
-    )
-    assert sql is not None
-    assert "department_id" in sql
+def test_inject_org_owner_never_fills_business_column():
+    """issue_orders 的部门列是**业务列**，不再自动补 —— 见 ORG_AUTO_OWNED_TABLES。
 
-    # 已带 department_id 时不重复追加
+    改造前这里断言"补上 department_id"（当时是行为），但那等于替调用方拍板：
+    替别的部门开领料单会被静默记成开单人自己的部门，对账时才发现。
+    现在默认值显式写在 `api/wms.py::create_issue_order` 里，SQL 重写层不再动手。
+    """
     assert MultiTenantRepository._inject_org_owner(
-        "INSERT INTO issue_orders (tenant_id, issue_no, department_id) VALUES (:t, :n, :d)"
+        "INSERT INTO issue_orders (tenant_id, issue_no) VALUES (:t, :n)"
     ) is None
+
+    # 系统列 org_id 的表仍然要补
+    assert MultiTenantRepository._inject_org_owner(
+        "INSERT INTO work_orders (tenant_id, wo_no) VALUES (:t, :n)"
+    ) is not None
 
 
 @pytest.mark.asyncio

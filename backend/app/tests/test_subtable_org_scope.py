@@ -175,6 +175,51 @@ def test_unregistered_table_not_touched():
 
 
 # ============================================================
+# 3b. 业务列（非 org_id）不得自动补归属
+# ============================================================
+
+def test_issue_order_department_not_auto_filled():
+    """`issue_orders.department_id` 是**业务列**（领用部门），不能替调用方拍板。
+
+    改造前它和主表一起挂在 ORG_SCOPED_TABLES 里，`_inject_org_owner` 会在
+    INSERT 未带该列时补成**创建人**组织 —— 二车间的人给一车间开领料单、
+    前端漏传 department_id，单子就静默归了二车间，不报错、界面也看不出来。
+    """
+    repo = _make_repo(write_org_id=2)          # 创建人在二车间(5)
+    sql = (
+        "INSERT INTO issue_orders (tenant_id, issue_no, issue_type, warehouse_id) "
+        "VALUES (:tenant_id, :issue_no, :issue_type, :warehouse_id)"
+    )
+    assert repo._inject_org_owner(sql) is None, (
+        "issue_orders.department_id 被自动补了归属 —— 会静默记错领用部门"
+    )
+
+
+def test_issue_order_still_org_scoped_for_read():
+    """但读过滤必须保留：领料单仍按 department_id 做数据范围。"""
+    assert ORG_SCOPED_TABLES.get("issue_orders") == "department_id"
+
+    repo = _make_repo(org_scope=[5])
+    sql = repo._inject_tenant_where_select(
+        "SELECT i.* FROM issue_orders i LEFT JOIN warehouses w ON w.id = i.warehouse_id"
+    )
+    assert "i.department_id IN (5)" in sql
+
+
+def test_auto_owned_tables_only_contain_org_id_columns():
+    """自动补归属的名单必须是 ORG_SCOPED_TABLES 的**子集**，且只含 org_id 列。
+
+    两件事分开的理由：能读过滤 ≠ 能替你填业务字段。
+    """
+    from app.constants.modules import ORG_AUTO_OWNED_TABLES
+
+    unexpected = {t: c for t, c in ORG_AUTO_OWNED_TABLES.items()
+                  if c != "org_id" or ORG_SCOPED_TABLES.get(t) != c}
+    assert not unexpected, f"这些表被错误地允许自动补归属: {unexpected}"
+    assert "issue_orders" not in ORG_AUTO_OWNED_TABLES
+
+
+# ============================================================
 # 4. inspection_result 继承父单组织
 # ============================================================
 

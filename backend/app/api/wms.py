@@ -562,6 +562,14 @@ async def create_issue_order(req: IssueOrderCreate, current_user: dict = Depends
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     data["created_by"] = current_user.get("id")
+    # 领用部门必须**显式**定：`issue_orders.department_id` 同时是数据范围过滤列，
+    # 之前靠 ``MultiTenantRepository._inject_org_owner`` 在 SQL 重写时偷偷补成
+    # 创建人组织 —— 结果是"二车间的人替一车间开领料单、前端漏传 department_id"
+    # 会被静默记成二车间，不报错、界面也看不出来，对账时才发现领用部门全错。
+    # 现在把默认值摊在明面上（仍是"没指定就归自己部门"，但可 grep、可审计），
+    # 并把该表从自动补归属名单里摘掉（见 constants.ORG_AUTO_OWNED_TABLES）。
+    if data.get("department_id") is None:
+        data["department_id"] = current_user.get("org_id")
     await assert_doc_no_available(repo, "issue_orders", "issue_no",
                                   data.get("issue_no"), "出库单号")
     svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)

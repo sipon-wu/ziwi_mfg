@@ -17,6 +17,35 @@ from app.copilot import router as copilot_router
 
 settings = get_settings()
 
+
+async def _check_role_scopes() -> None:
+    """启动自检：任何角色的 scope 缺失或非法都要在日志里点名。
+
+    为什么要单独检查：``widest_scope()`` 遇到空/非法值会兜底成
+    ``SCOPE_FALLBACK``，这一步是**静默**的 —— 角色表里少填一个字段，
+    运行期表现却是"这个人怎么看到了别的部门"或者"怎么什么都看不到"，
+    两头都很难反查到是 scope 没配。启动时打一行日志，成本最低。
+    """
+    from sqlalchemy import text
+
+    from app.constants.modules import SCOPE_BREADTH, SCOPE_FALLBACK
+    from app.core.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = (await session.execute(
+            text("SELECT tenant_id, code, scope FROM roles")
+        )).fetchall()
+
+    bad = [(t, c, s) for t, c, s in rows if (s or "") not in SCOPE_BREADTH]
+    if bad:
+        print(f"[WARN] {len(bad)} 个角色未配合法数据范围，将兜底为 {SCOPE_FALLBACK}：")
+        for t, c, s in bad[:10]:
+            print(f"       {t}/{c} scope={s!r}")
+    else:
+        print(f"[INFO] 角色数据范围自检通过，共 {len(rows)} 个角色")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时
@@ -32,6 +61,14 @@ async def lifespan(app: FastAPI):
         print("[INFO] APScheduler 定时任务已启动")
     except Exception as e:
         print(f"[WARN] APScheduler 初始化失败: {e}")
+
+    # 角色数据范围自检：scope 缺失/非法会在运行期被兜底成 SCOPE_FALLBACK。
+    # 兜底值 2026-10-30 已从 ALL 收紧为 DEPT（宁可少看，不要静默越权），
+    # 但"被兜底"本身仍是配置错误，必须在启动日志里点名，否则永远没人配。
+    try:
+        await _check_role_scopes()
+    except Exception as e:
+        print(f"[WARN] 角色数据范围自检失败（不影响启动）: {e}")
 
     # 启动私有部署心跳上报（heartbeat.ziwi.cn，接口契约 D.1 节）
     # 仅当 HEARTBEAT_API_KEY 与 HEARTBEAT_DEPLOYMENT_ID 均已配置且非测试环境时启用，

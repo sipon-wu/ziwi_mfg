@@ -17,9 +17,7 @@
 | # | 项 | 现象 | 影响 | 一行根因 | 验收方式 |
 |---|---|---|---|---|---|
 | B-1 | **角色增删改界面** | 「系统管理 → 角色权限」只能给**已有**角色勾权限，不能新建角色、不能改名、不能删角色 | 客户上线时角色清单是死的（9 个种子角色），任何组织差异都得改代码/改库 | 只做了 `role_permission`（授权）页，没做 `role` 本身的 CRUD 页；后端 `RoleService` 有 create/update/delete，但 `delete` 之外的界面缺失 | 界面能新建「仓库主管」并配权，新角色用户登录即生效；删角色时 `user_roles` 有引用返回 409 |
-| B-4 | **`SCOPE_FALLBACK = SCOPE_ALL`** | 角色 `scope` 为空/非法时退回 `ALL` | 配错一个角色就静默放开全公司数据，且没有任何日志 | `constants/modules.py:127` 有意选的宽松兜底 | 改为 `DEPT` 兜底并打 WARN；或至少在启动时校验所有角色 scope 合法 |
-| B-5 | **`issue_orders.department_id` 被当成组织列** | 白名单里 `issue_orders → department_id`（领用部门），而 `_inject_org_owner` 会在 INSERT 未显式带该列时写入**创建人主组织** | 二车间的人替一车间开领料单，若前端没传 `department_id` 会被静默写成二车间 | 为了不加冗余列而复用了业务列，语义被混淆 | 领料单 `department_id` 必须由调用方显式给；`_inject_org_owner` 对 `department_id` 这类"业务列复用"应跳过注入 |
-| B-6 | **`warehouse_repo.py` 疑似死代码** | 该文件里有第二套 `InventoryTransactionRepository` / `InventoryRepository`，与 `wms_repo.py` 重复；除注释外无任何 import | 两套同名类长期并存，改一处漏一处（本次加 org_id 就要同时看两个文件） | 早期仓储模块拆分未收尾 | 确认无引用后删除；删前用 `pytest` + 全模块回归兜底 |
+| B-7 | **`wms_realistic_e2e.py` 硬编码 staging id** | 脚本里 `WID = 45`、`MID = 115`、`order_id = 34` 是 staging 上的真实 id | 指向本地库跑时，登录/建单都能过（SQLite 无外键约束），于是**静默造出一批 material_id/warehouse_id 指向不存在记录的孤儿单**，然后卡在库存断言上 | 脚本为 staging 一次性验证写的，没做靶场自举 | 改成"先按编码查/建物料与仓库，再拿 id"，或加前置校验：id 不存在直接退出并提示"本脚本仅限 staging" |
 
 ## 二、已排期
 
@@ -44,6 +42,9 @@
 | C-13 | **子表组织归属**（原 B-2） | 本批 | 3 张子表补 `org_id` + 登记白名单 + 迁移回填；派生 repo 统一 `inherit_context_from` |
 | C-14 | **种子用户全在根节点、数据范围无法验证**（原 B-3） | 本批 | 新增 `demo_ws1_leader` 挂真实部门；`verify_permissions.py` 增加"严格小于 admin"断言 |
 | C-15 | **deploy.sh 只跑一个迁移** | 本批 | 改为按文件名全量循环执行；此前 20261028 之后的 6 个迁移从未在 staging 执行过 |
+| C-16 | **`SCOPE_FALLBACK = SCOPE_ALL`**（原 B-4） | 本批 | 收紧为 `DEPT` + 启动自检点名未配合法 scope 的角色 |
+| C-17 | **`issue_orders.department_id` 被当组织列**（原 B-5） | 本批 | 拆出 `ORG_AUTO_OWNED_TABLES`：只有 `org_id` 系统列才自动补；业务列由 `create_issue_order` 显式赋默认值 |
+| C-18 | **`warehouse_repo.py` 死代码**（原 B-6） | 本批 | 确认零引用后 `git rm`；15 个同名类与 `wms_repo` 重复，删掉消除"改一处漏一处" |
 
 ---
 

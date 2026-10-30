@@ -3,8 +3,8 @@
 ## 为什么必须有这一层
 
 库存链路（入库明细 / 库存台账 / 批次 / 盘点 / 预警 / 流水 / 领料）**全部**是
-``LEFT JOIN materials m ON m.id = xxx.material_id``（``warehouse_repo.py``、
-``wms_repo.py``、``wms_service.py`` 共 15 处）。
+``LEFT JOIN materials m ON m.id = xxx.material_id``（``wms_repo.py``、
+``inventory_repo.py``、``wms_service.py`` 共 15 处）。
 
 成品若没有 ``materials`` 档案，入库单能建出来，但生成的是**台账孤儿行**：
 库存页看不到物料名，进不了批次追溯与安全库存预警。所以"直接按 products 建入库行"

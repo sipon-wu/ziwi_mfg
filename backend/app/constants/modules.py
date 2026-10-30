@@ -123,8 +123,13 @@ SCOPE_BREADTH: Dict[str, int] = {
     SCOPE_ALL: 9,
 }
 
-# 角色 scope 为空时的兜底（历史数据 scope 全为 NULL）
-SCOPE_FALLBACK = SCOPE_ALL
+# 角色 scope 为空时的兜底（历史数据 scope 全为 NULL）。
+#
+# 2026-10-30 由 SCOPE_ALL 收紧为 SCOPE_DEPT：兜底值决定了「配置缺失时系统往哪边
+# 出错」。取 ALL 意味着一个角色忘配 scope 就静默放开全公司数据，日志里一个字都没有；
+# 取 DEPT 最坏情况是该角色看不到别的部门（当场就有人来问），属于**可发现的错**。
+# 宁可有噪音，不要静默越权。
+SCOPE_FALLBACK = SCOPE_DEPT
 
 
 def widest_scope(scopes: List[Optional[str]]) -> str:
@@ -178,4 +183,18 @@ ORG_SCOPED_TABLES: Dict[str, str] = {
     "work_reports":           "org_id",
     "inspection_result":      "org_id",
     "inventory_transactions": "org_id",
+}
+
+# 允许「写入时自动补归属」的表 = 组织列是**系统列** `org_id` 的那些。
+#
+# 为什么要把这件事和 ORG_SCOPED_TABLES 分开：
+# `org_id` 是系统列，语义就是"这行归谁"，写的时候没人知道该填什么，
+# 自动补成操作人组织是对的；而 `issue_orders.department_id` 是**业务列**
+# （领用部门），自动补会把"替别人部门开的单"静默记成开单人自己的部门 ——
+# 二车间的人给一车间开领料单，前端漏传 department_id，单子就归了二车间，
+# 而且不报错、界面上也看不出来，等对账时才发现领用部门全错。
+#
+# 结论：业务列一律由调用方显式赋值（见 api/wms.py::create_issue_order）。
+ORG_AUTO_OWNED_TABLES: Dict[str, str] = {
+    table: col for table, col in ORG_SCOPED_TABLES.items() if col == "org_id"
 }

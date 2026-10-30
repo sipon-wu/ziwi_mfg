@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.constants.modules import ORG_SCOPED_TABLES
+from app.constants.modules import ORG_AUTO_OWNED_TABLES, ORG_SCOPED_TABLES
 
 class Repository(ABC):
     """数据访问抽象接口"""
@@ -186,7 +186,10 @@ class MultiTenantRepository(Repository):
         在列清单末尾追加 org 列、在最后一组 VALUES 末尾追加 ``:_org_id``。
 
         不做的事（保持"不猜"原则）：
-        - 表不在 ``ORG_SCOPED_TABLES`` → 不动
+        - 表不在 ``ORG_AUTO_OWNED_TABLES`` → 不动。注意这里用的**不是**
+          ``ORG_SCOPED_TABLES``：像 ``issue_orders.department_id`` 这种
+          "业务列复用"，读过滤要用它，写的时候却绝不能替调用方拍板
+          （替别的部门开单会被静默记成自己部门）。业务列由 API 层显式赋值。
         - SQL 已显式包含 org 列 → 尊重调用方，不覆盖
         - 非标准 INSERT（如 SELECT INTO / 多行 VALUES 以外形态）→ 不动
         """
@@ -194,7 +197,7 @@ class MultiTenantRepository(Repository):
         if not match:
             return None
         table = match.group(1).lower()
-        org_col = ORG_SCOPED_TABLES.get(table)
+        org_col = ORG_AUTO_OWNED_TABLES.get(table)
         if not org_col:
             return None
 
