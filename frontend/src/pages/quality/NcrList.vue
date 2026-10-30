@@ -183,7 +183,7 @@ function fmtTime(t: string) {
         :style="{ cursor: 'pointer', padding: '4px 12px' }"
         @click="statusFilter = opt.value; onStatusChange()"
       >{{ opt.label }}</van-tag>
-      <van-button size="small" type="primary" icon="plus" style="margin-left:auto" @click="openCreate">新建</van-button>
+      <van-button v-perm="'M30:ncr:create'" size="small" type="primary" icon="plus" style="margin-left:auto" @click="openCreate">新建</van-button>
     </div>
 
     <van-list v-model:loading="loading" :finished="!total || items.length >= total" finished-text="没有更多了" @load="loadData">
@@ -202,6 +202,7 @@ function fmtTime(t: string) {
           <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
             <van-button
               v-for="act in NEXT_ACTIONS[item.status] || []"
+              v-perm="'M30:ncr_status:update'"
               :key="act.to"
               size="mini"
               type="primary"
@@ -209,6 +210,7 @@ function fmtTime(t: string) {
               @click="advance(item, act.to)"
             >{{ act.label }}</van-button>
             <van-button v-if="['open', 'reviewing', 'disposed'].includes(item.status)"
+              v-perm="'M30:ncr_status:update'"
               size="mini" plain type="danger" @click="advance(item, 'cancelled')">作废</van-button>
             <van-button size="mini" plain icon="orders-o" @click="openTrail(item)">流转记录</van-button>
           </div>

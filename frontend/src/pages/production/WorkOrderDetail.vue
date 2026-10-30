@@ -3,7 +3,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
 import { showToast } from 'vant'
+import { useAuthStore } from '@/stores/auth'
 import type { WorkOrder } from '@/types'
+
+const auth = useAuthStore()
+/** 工单全部动作（下达/开工/暂停/恢复/完工/关闭/作废）共用同一个执行权限 */
+const canOperate = computed(() => auth.hasPerm('M01:work_order:execute'))
 
 interface MaterialShortItem {
   material_code: string
@@ -211,6 +216,7 @@ function fmtTime(v?: string | null) {
       <div style="margin:16px;display:flex;flex-wrap:wrap;gap:8px">
         <van-button
           v-for="a in actions" :key="a.action"
+          v-perm="'M01:work_order:execute'"
           :type="a.action === 'cancel' ? 'default' : (a.action === 'complete' ? 'success' : 'primary')"
           :plain="a.action === 'cancel' || a.action === 'pause'"
           :loading="busy === a.action"
@@ -218,7 +224,10 @@ function fmtTime(v?: string | null) {
           @click="runAction(a.action)">
           {{ a.label }}
         </van-button>
-        <div v-if="!actions.length" style="color:#969799;font-size:13px">
+        <div v-if="!canOperate && actions.length" style="color:#969799;font-size:13px">
+          当前状态可执行的操作需要「工单操作」权限（M01:work_order:execute），你的角色没有开通
+        </div>
+        <div v-else-if="!actions.length" style="color:#969799;font-size:13px">
           当前状态无可执行操作
         </div>
       </div>

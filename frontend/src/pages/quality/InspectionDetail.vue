@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get, put } from '@/api/client'
 import { showToast } from 'vant'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const canJudge = computed(() => auth.hasPerm('M03:inspection_order:approve'))
 
 // 对齐后端：order_type ∈ first/inspection/spot_check；result ∈ ACC/REJ/UAI（未判定 pending）
 const ORDER_TYPE_MAP: Record<string, string> = {
@@ -65,9 +68,12 @@ onMounted(fetch)
 
       <van-cell-group title="判定" style="margin-top:12px;">
         <div style="padding:12px; display:flex; gap:10px;">
-          <van-button type="success" size="small" :loading="judging" @click="judge('ACC')">合格</van-button>
-          <van-button type="danger" size="small" :loading="judging" @click="judge('REJ')">不合格</van-button>
-          <van-button type="warning" size="small" :loading="judging" @click="judge('UAI')">待判定</van-button>
+          <van-button v-perm="'M03:inspection_order:approve'" type="success" size="small" :loading="judging" @click="judge('ACC')">合格</van-button>
+          <van-button v-perm="'M03:inspection_order:approve'" type="danger" size="small" :loading="judging" @click="judge('REJ')">不合格</van-button>
+          <van-button v-perm="'M03:inspection_order:approve'" type="warning" size="small" :loading="judging" @click="judge('UAI')">待判定</van-button>
+        </div>
+        <div v-if="!canJudge" style="padding:0 12px 12px;color:#969799;font-size:13px">
+          判定需要「检验判定」权限（M03:inspection_order:approve），你的角色没有开通
         </div>
         <van-cell
           v-if="order.result === 'REJ'"

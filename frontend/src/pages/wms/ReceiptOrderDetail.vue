@@ -210,15 +210,15 @@ function canSubmitInspection(item: any) {
             <div v-if="item.inspection_id">检验单 ID: {{ item.inspection_id }}</div>
             <div v-if="item.remark">备注: {{ item.remark }}</div>
             <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-              <van-button v-if="canReceive(item)" size="mini" type="primary"
+              <van-button v-if="canReceive(item)" v-perm="'M04:wms_receipt_order_item:execute'" size="mini" type="primary"
                 :loading="busy === `${item.id}:receive`" @click.stop="openReceive(item)">
                 收货登记
               </van-button>
-              <van-button v-if="canSubmitInspection(item)" size="mini" type="warning" plain
+              <van-button v-if="canSubmitInspection(item)" v-perm="'M04:wms_receipt_order_item:execute'" size="mini" type="warning" plain
                 :loading="busy === `${item.id}:submit-inspection`" @click.stop="submitInspection(item)">
                 送检
               </van-button>
-              <van-button v-if="canStore(item)" size="mini" type="success"
+              <van-button v-if="canStore(item)" v-perm="'M04:wms_receipt_order_item:execute'" size="mini" type="success"
                 :loading="busy === `${item.id}:store`" @click.stop="openStore(item)">
                 上架确认
               </van-button>

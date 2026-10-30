@@ -192,9 +192,9 @@ function formatStageActions(status: string): string[] {
           <van-space direction="column" align="end">
             <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
             <van-space>
-              <van-button v-if="formatStageActions(item.status).includes('推进')" size="mini" type="primary" @click.stop="handleAdvance(item)">推进</van-button>
-              <van-button v-if="item.status === 'review'" size="mini" type="success" @click.stop="handleConvert(item)">转量产</van-button>
-              <van-button v-if="formatStageActions(item.status).includes('终止')" size="mini" type="danger" @click.stop="handleTerminate(item)">终止</van-button>
+              <van-button v-if="formatStageActions(item.status).includes('推进')" v-perm="'M16:trial:execute'" size="mini" type="primary" @click.stop="handleAdvance(item)">推进</van-button>
+              <van-button v-if="item.status === 'review'" v-perm="'M16:trial:execute'" size="mini" type="success" @click.stop="handleConvert(item)">转量产</van-button>
+              <van-button v-if="formatStageActions(item.status).includes('终止')" v-perm="'M16:trial:execute'" size="mini" type="danger" @click.stop="handleTerminate(item)">终止</van-button>
             </van-space>
           </van-space>
         </template>

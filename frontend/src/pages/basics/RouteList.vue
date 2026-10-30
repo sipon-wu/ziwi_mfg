@@ -239,7 +239,7 @@ onMounted(fetchData)
       <div class="flex gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
-        <van-button type="success" size="small" @click="openCreate">新建路线</van-button>
+        <van-button v-perm="'M00:route:create'" type="success" size="small" @click="openCreate">新建路线</van-button>
         <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       </div>
     </div>
@@ -295,26 +295,31 @@ onMounted(fetchData)
                   <van-button size="mini" plain icon="bars" @click.stop="goEditor(item)" title="工序编排" />
                   <van-button
                     v-if="item.status === 'draft'"
+                    v-perm="'M00:route:update'"
                     icon="edit" size="mini" plain type="primary"
                     @click.stop="openEdit(item)"
                   />
                   <van-button
                     v-if="item.status === 'draft'"
+                    v-perm="'M00:route:execute'"
                     icon="success" size="mini" plain type="success"
                     @click.stop="handlePublish(item)"
                   />
                   <van-button
                     v-if="item.status === 'published'"
+                    v-perm="'M00:route_new_version:create'"
                     icon="records" size="mini" plain type="warning"
                     @click.stop="handleNewVersion(item)"
                   />
                   <van-button
                     v-if="item.status !== 'archived'"
+                    v-perm="'M00:route_archive:create'"
                     icon="folder" size="mini" plain
                     @click.stop="handleArchive(item)"
                   />
                   <van-button
                     v-if="item.status === 'draft'"
+                    v-perm="'M00:route:delete'"
                     icon="delete" size="mini" plain type="danger"
                     @click.stop="handleDelete(item)"
                   />

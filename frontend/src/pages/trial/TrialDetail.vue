@@ -200,13 +200,13 @@ async function handleTerminate() {
       <!-- 操作按钮 -->
       <div style="padding: 12px 16px">
         <van-space direction="vertical" fill>
-          <van-button v-if="['planning', 'lab_trial', 'pilot_run', 'batch_verify'].includes(order.status)" block type="primary" @click="handleAdvance">
+          <van-button v-if="['planning', 'lab_trial', 'pilot_run', 'batch_verify'].includes(order.status)" v-perm="'M16:trial:execute'" block type="primary" @click="handleAdvance">
             阶段推进 ({{ statusMap[order.status] }} → 下一阶段)
           </van-button>
-          <van-button v-if="order.status === 'review'" block type="success" @click="handleConvert">
+          <van-button v-if="order.status === 'review'" v-perm="'M16:trial:execute'" block type="success" @click="handleConvert">
             一键转量产
           </van-button>
-          <van-button v-if="!['production', 'terminated'].includes(order.status)" block type="warning" @click="handleTerminate">
+          <van-button v-if="!['production', 'terminated'].includes(order.status)" v-perm="'M16:trial:execute'" block type="warning" @click="handleTerminate">
             终止试产
           </van-button>
         </van-space>
@@ -219,7 +219,7 @@ async function handleTerminate() {
           <div style="padding: 12px">
             <van-field v-model="bomText" type="textarea" rows="12" placeholder="请输入JSON格式的BOM数据" />
             <van-space style="margin-top: 8px">
-              <van-button size="small" type="primary" @click="handleSaveBom">保存BOM</van-button>
+              <van-button v-perm="'M16:trial_bom:update'" size="small" type="primary" @click="handleSaveBom">保存BOM</van-button>
               <van-button size="small" @click="bomText = '[]'">清空</van-button>
             </van-space>
           </div>
@@ -228,7 +228,7 @@ async function handleTerminate() {
           <div style="padding: 12px">
             <van-field v-model="routeText" type="textarea" rows="12" placeholder="请输入JSON格式的路线数据" />
             <van-space style="margin-top: 8px">
-              <van-button size="small" type="primary" @click="handleSaveRoute">保存路线</van-button>
+              <van-button v-perm="'M16:trial_route:update'" size="small" type="primary" @click="handleSaveRoute">保存路线</van-button>
               <van-button size="small" @click="routeText = '[]'">清空</van-button>
             </van-space>
           </div>
@@ -253,7 +253,7 @@ async function handleTerminate() {
         </van-tab>
         <van-tab title="评审记录">
           <div style="padding: 12px">
-            <van-button v-if="order.status !== 'terminated' && order.status !== 'production'" block type="primary" style="margin-bottom: 12px" @click="handleSubmitReview">
+            <van-button v-if="order.status !== 'terminated' && order.status !== 'production'" v-perm="'M16:trial:approve'" block type="primary" style="margin-bottom: 12px" @click="handleSubmitReview">
               提交评审
             </van-button>
             <van-cell v-for="item in reviews" :key="item.id">
@@ -270,9 +270,9 @@ async function handleTerminate() {
               </template>
               <template v-if="item.conclusion === 'pending'" #value>
                 <van-space>
-                  <van-button size="mini" type="success" @click="handleReviewDecision(item.id, 'approved')">通过</van-button>
-                  <van-button size="mini" type="warning" @click="handleReviewDecision(item.id, 'adjust')">调整</van-button>
-                  <van-button size="mini" type="danger" @click="handleReviewDecision(item.id, 'terminated')">终止</van-button>
+                  <van-button v-perm="'M16:trial_review:approve'" size="mini" type="success" @click="handleReviewDecision(item.id, 'approved')">通过</van-button>
+                  <van-button v-perm="'M16:trial_review:approve'" size="mini" type="warning" @click="handleReviewDecision(item.id, 'adjust')">调整</van-button>
+                  <van-button v-perm="'M16:trial_review:approve'" size="mini" type="danger" @click="handleReviewDecision(item.id, 'terminated')">终止</van-button>
                 </van-space>
               </template>
             </van-cell>
