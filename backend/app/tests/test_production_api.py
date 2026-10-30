@@ -17,13 +17,40 @@ class TestProductionAPI:
         assert len(data["data"]["items"]) == 1
 
     async def test_create_work_order(self, async_client):
-        with patch("app.repositories.production_repo.ProductionRepository.create_work_order") as mock:
+        # 工单号由前端填写 → 建单前有单号预检，需让 query_one 返回 None（视为不重复）
+        with (
+            patch("app.repositories.production_repo.ProductionRepository.create_work_order") as mock,
+            patch(
+                "app.repositories.production_repo.ProductionRepository.query_one",
+                new_callable=AsyncMock,
+            ) as mock_query_one,
+        ):
             mock.return_value = 1
+            mock_query_one.return_value = None
             resp = await async_client.post("/api/v1/work-orders", json={
                 "wo_no": "WO001", "product_code": "P001", "product_name": "测试产品", "planned_qty": 100
             })
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
+
+    async def test_create_work_order_duplicate_no_returns_400(self, async_client):
+        """同号工单 → 400-0100，且不再落库"""
+        with (
+            patch("app.repositories.production_repo.ProductionRepository.create_work_order") as mock_create,
+            patch(
+                "app.repositories.production_repo.ProductionRepository.query_one",
+                new_callable=AsyncMock,
+            ) as mock_query_one,
+        ):
+            mock_query_one.return_value = {"id": 1, "wo_no": "WO-DUP"}
+            resp = await async_client.post("/api/v1/work-orders", json={
+                "wo_no": "WO-DUP", "product_code": "P001", "product_name": "测试产品", "planned_qty": 100
+            })
+            mock_create.assert_not_called()
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "400-0100"
+        assert "WO-DUP" in detail["message"]
 
     async def test_list_work_reports(self, async_client):
         with patch("app.repositories.production_repo.ProductionRepository.list_reports") as mock:
