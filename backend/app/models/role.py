@@ -1,4 +1,6 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy import (
+    Column, BigInteger, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
@@ -25,6 +27,14 @@ ROLE_SCOPE_DEFAULT = ROLE_SCOPE_ALL
 
 class Role(Base):
     __tablename__ = "roles"
+    # 角色编码是授权与数据范围判断的锚点：`get_by_code()` / `user_roles` 都按 code
+    # 定位角色。此前没有唯一约束，同编码可建出 N 个角色（实测 E2E 已复现两个
+    # `e2e_role_845617`），按 code 查角色时会随机命中其中一个 —— 表现为"权限
+    # 时有时无"，且不报任何错。约束放在 (tenant_id, code) 上：不同租户各自
+    # 可以有 `warehouse_manager`。
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_roles_tenant_code"),
+    )
 
     id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")

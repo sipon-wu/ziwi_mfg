@@ -161,10 +161,16 @@ class TestRolePermissionsAndScope:
         assert data["permissions"] == ["key_user:module_config", "key_user:dept_scope"]
         assert data["scope"] == "DEPT_CHILD"
 
+    @patch("app.repositories.role_repo.RoleRepository.get_by_code")
     @patch("app.repositories.role_repo.RoleRepository.create")
     @patch("app.repositories.role_repo.RoleRepository.assign_permissions")
     @patch("app.repositories.role_repo.RoleRepository.find_permission_ids_by_codes")
-    async def test_create_role_with_permissions_codes(self, mock_find, mock_assign, mock_create, async_client):
+    async def test_create_role_with_permissions_codes(
+        self, mock_find, mock_assign, mock_create, mock_get_by_code, async_client,
+    ):
+        # 服务层在 create 前会先查一次编码是否重复（B-1 补的唯一性闸门），
+        # 不 patch 会走真实 session → 测试里拿到的是 mock 的 coroutine
+        mock_get_by_code.return_value = None
         mock_create.return_value = 88
         mock_find.return_value = [11, 12]
         resp = await async_client.post("/api/v1/roles", json={

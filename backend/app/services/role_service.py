@@ -3,6 +3,14 @@ from app.models.role import KEY_USER_ROLE_CODE, KEY_USER_PERMISSIONS, ROLE_SCOPE
 from app.constants.modules import MODULE_NAMES, MODULE_PLAT
 from app.constants.permission_labels import action_label, action_sort_key, resource_label
 from typing import Dict, List, Optional
+import re
+
+# 角色编码格式：小写字母开头，2-40 位，只允许小写字母/数字/下划线。
+# 为什么在这里也校验：UI 只是其中一条入口，脚本与第三方集成直接打 API 时
+# 同样要拦住 `Admin` / `仓库主管` / `a` 这类编码 —— 它们一旦落库，就会被
+# 权限码 `ROLE:xxx` 与前端权限门引用，事后改名要全链路改。
+ROLE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+ROLE_CODE_HINT = "角色编码只能是小写字母开头、由小写字母/数字/下划线组成（2-40 位）"
 
 
 class RoleService:
@@ -29,7 +37,20 @@ class RoleService:
         return role
 
     async def create(self, data: dict) -> dict:
-        """B13: 支持同时传入 `permissions`(权限编码数组) 与 `scope`。"""
+        """B13: 支持同时传入 `permissions`(权限编码数组) 与 `scope`。
+
+        创建前做两道闸：编码格式 + 编码唯一。
+        唯一性**必须**在服务层先查一次，不能只靠 DB 唯一约束：约束命中的是
+        IntegrityError，冒到接口层就是 500，用户看到"创建失败"；先查一次才能
+        返回"编码已存在，请换一个"这种人话。并发下仍可能撞约束，由 API 层兜底。
+        """
+        code = str(data.get("code") or "").strip()
+        if not ROLE_CODE_RE.match(code):
+            raise ValueError(ROLE_CODE_HINT)
+        if await self.role_repo.get_by_code(code):
+            raise ValueError(f"角色编码「{code}」已存在，请换一个")
+        data["code"] = code
+
         permission_codes = data.pop("permissions", None) or []
         data["scope"] = self._normalize_scope(data.get("scope"))
         count = await self.role_repo.create(data)
@@ -63,6 +84,14 @@ class RoleService:
             raise ValueError("角色不存在")
         if role.get("is_system"):
             raise ValueError("系统内置角色不可删除")
+        # 有成员时禁止删除：`delete()` 会连 user_roles 一起清掉，等同于
+        # "悄悄摘掉一批人的权限"——不报错、不提示，事后才发现某个人什么都看不到了。
+        # 先让用户显式把人移走，删除才是他知情的选择。
+        members = await self.role_repo.count_users(id)
+        if members:
+            raise ValueError(
+                f"该角色下还有 {members} 名成员，请先把成员移出再删除"
+            )
         count = await self.role_repo.delete(id)
         return {"affected": count}
 

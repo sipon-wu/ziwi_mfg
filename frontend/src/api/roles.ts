@@ -131,3 +131,17 @@ export function addRoleUser(roleId: number, userId: number) {
 export function removeRoleUser(roleId: number, userId: number) {
   return del(`/roles/${roleId}/users/${userId}`)
 }
+
+/**
+ * 候选成员搜索 —— 供「添加角色成员」选择器使用。
+ *
+ * 复用 `GET /users`（`PLAT:user:read`），不新增后端端点：
+ * 要给角色加人，本来就得先能看人，权限上没有额外的越权风险。
+ */
+export function searchUsersForRole(keyword: string, pageSize = 20) {
+  return get<{ items: RoleUser[]; total: number }>('/users', {
+    page: 1,
+    page_size: pageSize,
+    keyword: keyword || undefined,
+  })
+}

@@ -151,14 +151,19 @@ class RoleRepository(MultiTenantRepository):
         await self._replace_role_permissions(role_id, permission_ids)
 
     async def get_users(self, role_id: int) -> List[Dict]:
-        """角色成员列表（B3 组织树落地后已 JOIN 回填 org_name / org_code）。"""
+        """角色成员列表（B3 组织树落地后已 JOIN 回填 org_name / org_code）。
+
+        ⚠️ JOIN 条件必须带 ``ur.user_id = u.id``：只写 ``ur.role_id = :role_id``
+        会让 ``users`` 与 ``user_roles`` 做**笛卡尔积** —— 角色有 1 名成员、
+        租户有 11 个用户时，接口返回 11 行"全员都是成员"。界面表现为
+        "随便一个角色点开都显示全部用户"，且不报错。
+        """
         return await self.query(
             """SELECT u.id, u.username, u.real_name, u.status, u.primary_org_id,
                       o.name AS org_name, o.code AS org_code
                FROM users u
                LEFT JOIN organizations o ON o.id = u.primary_org_id
-               JOIN user_roles ur ON ur.role_id = :role_id
-               WHERE ur.role_id = :role_id
+               JOIN user_roles ur ON ur.user_id = u.id AND ur.role_id = :role_id
                ORDER BY u.id""",
             {"role_id": role_id}
         )
@@ -190,6 +195,17 @@ class RoleRepository(MultiTenantRepository):
             "SELECT id, tenant_id, name, code, description, is_system, scope FROM roles WHERE code = :code",
             {"code": code},
         )
+
+    async def count_users(self, role_id: int) -> int:
+        """角色下挂了多少个用户。
+
+        删除角色前必须查一次：``delete()`` 会连 ``user_roles`` 一起清掉，
+        不拦就等于"删一个角色，悄悄摘掉一批人的权限"，且没有任何报错。
+        """
+        row = await self.query_one(
+            "SELECT COUNT(*) AS n FROM user_roles WHERE role_id = :r", {"r": role_id}
+        )
+        return int((row or {}).get("n") or 0)
 
     async def find_permission_ids_by_codes(self, codes: List[str]) -> List[int]:
         """根据权限编码列表批量查询权限 ID（B13：POST /roles 传 codes → ids）。"""

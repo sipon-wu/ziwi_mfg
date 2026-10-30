@@ -1,0 +1,140 @@
+[
+  {
+    "id": "E1",
+    "name": "admin 登录",
+    "status": "PASS",
+    "detail": "perms=333"
+  },
+  {
+    "id": "E1",
+    "name": "左侧有「+ 新建」按钮",
+    "status": "PASS",
+    "detail": "count=1"
+  },
+  {
+    "id": "E2",
+    "name": "新建弹窗打开",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "id": "E2",
+    "name": "新角色出现在左侧列表",
+    "status": "PASS",
+    "detail": "code=e2e_role_692248"
+  },
+  {
+    "id": "E2",
+    "name": "新建后自动选中该角色",
+    "status": "PASS",
+    "detail": "active=e2e_role_692248"
+  },
+  {
+    "id": "E3",
+    "name": "新角色默认 0 项权限",
+    "status": "PASS",
+    "detail": "已勾选 0 / 333 项"
+  },
+  {
+    "id": "E3",
+    "name": "数据范围按表单落库（「本部门」）",
+    "status": "PASS",
+    "detail": "scope=本部门"
+  },
+  {
+    "id": "E4",
+    "name": "编码重复时在弹窗内提示后端人话（不是\"创建失败\"）",
+    "status": "PASS",
+    "detail": "err=角色编码「e2e_role_692248」已存在，请换一个"
+  },
+  {
+    "id": "E4",
+    "name": "校验失败后弹窗不关闭",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "id": "E5",
+    "name": "改名后右侧标题同步更新",
+    "status": "PASS",
+    "detail": "title=E2E仓库主管692248改 e2e_role_692248"
+  },
+  {
+    "id": "E5",
+    "name": "改名后左侧列表同步更新",
+    "status": "PASS",
+    "detail": "left=E2E仓库主管692248改"
+  },
+  {
+    "id": "E5",
+    "name": "编辑态下角色编码不可修改",
+    "status": "PASS",
+    "detail": "disabled=true"
+  },
+  {
+    "id": "E6",
+    "name": "内置角色 admin 的删除按钮禁用",
+    "status": "PASS",
+    "detail": "found=true disabled=yes"
+  },
+  {
+    "id": "E8",
+    "name": "成员区有「+ 添加成员」按钮",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "id": "E8",
+    "name": "加入成员后成员区多一人",
+    "status": "PASS",
+    "detail": "0 → 1（一号车间主任）"
+  },
+  {
+    "id": "E7",
+    "name": "角色有成员时后端拒绝删除（列表仍在）",
+    "status": "PASS",
+    "detail": "成员 1 人 → 仍在=true"
+  },
+  {
+    "id": "E7",
+    "name": "成员已全部移出",
+    "status": "PASS",
+    "detail": "剩余 0 人"
+  },
+  {
+    "id": "E7",
+    "name": "临时角色已从列表消失",
+    "status": "PASS",
+    "detail": "code=e2e_role_692248"
+  },
+  {
+    "id": "E7",
+    "name": "9 个种子角色一个都没被误删",
+    "status": "PASS",
+    "detail": "已核对 9 个"
+  },
+  {
+    "id": "E9",
+    "name": "demo_ws1_leader 登录",
+    "status": "PASS",
+    "detail": "perms=271"
+  },
+  {
+    "id": "E9",
+    "name": "无 PLAT:role:create 的账号看不到「+ 新建」",
+    "status": "PASS",
+    "detail": "count=0"
+  },
+  {
+    "id": "E9",
+    "name": "无 role:update/delete 的账号看不到编辑/删除",
+    "status": "PASS",
+    "detail": "count=0"
+  },
+  {
+    "id": "E10",
+    "name": "全程无 JS 运行时错误",
+    "status": "PASS",
+    "detail": "0 error"
+  }
+]

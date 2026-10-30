@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.exc import IntegrityError
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.role_repo import RoleRepository
 from app.services.role_service import RoleService
@@ -27,7 +28,20 @@ async def create_role(
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     svc = RoleService(repo)
-    result = await svc.create(data)
+    try:
+        result = await svc.create(data)
+    except ValueError as e:
+        # 编码格式非法 / 编码重复 —— 都是用户能自己改的错，给 400 + 人话
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
+    except IntegrityError:
+        # 并发下两个请求同时过了服务层的前置检查，靠 DB 唯一约束兜住。
+        # 必须回滚：失败的事务留着会让同一请求后续任何查询都报
+        # "current transaction is aborted"。
+        await repo.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "409-0003", "message": "角色编码已存在，请换一个再试"},
+        )
     return {"code": 0, "message": "角色创建成功", "data": result}
 
 @router.get("/permissions")

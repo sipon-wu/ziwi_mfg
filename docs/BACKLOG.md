@@ -8,7 +8,7 @@
 > - 状态只有三种：`待拍板` / `已排期` / `已闭`
 > - 已闭项保留在表里不删（留痕），只改状态 + 补 commit
 >
-> 最后更新：2026-10-30
+> 最后更新：2026-11-01
 
 ---
 
@@ -16,8 +16,9 @@
 
 | # | 项 | 现象 | 影响 | 一行根因 | 验收方式 |
 |---|---|---|---|---|---|
-| B-1 | **角色增删改界面** | 「系统管理 → 角色权限」只能给**已有**角色勾权限，不能新建角色、不能改名、不能删角色 | 客户上线时角色清单是死的（9 个种子角色），任何组织差异都得改代码/改库 | 只做了 `role_permission`（授权）页，没做 `role` 本身的 CRUD 页；后端 `RoleService` 有 create/update/delete，但 `delete` 之外的界面缺失 | 界面能新建「仓库主管」并配权，新角色用户登录即生效；删角色时 `user_roles` 有引用返回 409 |
 | B-7 | **`wms_realistic_e2e.py` 硬编码 staging id** | 脚本里 `WID = 45`、`MID = 115`、`order_id = 34` 是 staging 上的真实 id | 指向本地库跑时，登录/建单都能过（SQLite 无外键约束），于是**静默造出一批 material_id/warehouse_id 指向不存在记录的孤儿单**，然后卡在库存断言上 | 脚本为 staging 一次性验证写的，没做靶场自举 | 改成"先按编码查/建物料与仓库，再拿 id"，或加前置校验：id 不存在直接退出并提示"本脚本仅限 staging" |
+| B-8 | **9 个种子角色里只有 `admin` 带 `is_system=1`** | 其余 8 个（`department_head` / `inspector` / `quality_engineer` …）界面上「删除」按钮可点 | 客户可以把平台预置的角色删掉；`seed_permissions.py` 按 code 授权，删掉后重跑种子只会报 "unmatched_roles"，不会自动重建 | 早期 `roles` 表只有 admin 标了 `is_system`，后续加角色时没有统一约定 | 二选一：①把 8 个种子角色统一标 `is_system=1`；②在 `seed_permissions.py` 里补"角色不存在则按内置定义重建" |
+
 
 ## 二、已排期
 
@@ -32,7 +33,7 @@
 | C-3 | SPC 判异只飘红不开 NCR | `2873fdf` | `get_by_source` 幂等 |
 | C-4 | 完工件数不进库存 | `e966db4` | 完工自动建生产入库单 |
 | C-5 | 单号可重复（6 张单） | `f40880c` / `ebfed04` | `doc_no.py` + 6 处唯一约束 |
-| C-6 | 删角色留孤儿 | 前序 | 删前查 `user_roles` |
+| C-6 | 删角色留孤儿 | 前序 | 删前先清 `user_roles`/`role_permissions`（**当时并没有"有成员则拒绝"，见 C-20**） |
 | C-7 | 试产转量产只翻状态位 | `a9f6411` | 一并建 BOM 快照 + 成品档案 |
 | C-8 | 页内动作不受权限约束 | `76a877c` | `v-perm` 按钮门 |
 | C-9 | 成品无物料档案 → 完工入库恒 skipped | `a335402` | `material_sync.py` 幂等补建 |
@@ -45,6 +46,10 @@
 | C-16 | **`SCOPE_FALLBACK = SCOPE_ALL`**（原 B-4） | 本批 | 收紧为 `DEPT` + 启动自检点名未配合法 scope 的角色 |
 | C-17 | **`issue_orders.department_id` 被当组织列**（原 B-5） | 本批 | 拆出 `ORG_AUTO_OWNED_TABLES`：只有 `org_id` 系统列才自动补；业务列由 `create_issue_order` 显式赋默认值 |
 | C-18 | **`warehouse_repo.py` 死代码**（原 B-6） | 本批 | 确认零引用后 `git rm`；15 个同名类与 `wms_repo` 重复，删掉消除"改一处漏一处" |
+| C-19 | **角色增删改界面**（原 B-1） | 本批 | 左侧「+ 新建」、头部「编辑/删除」、成员区「+ 添加成员」，三处都过权限门（`canCreate`/`canUpdate`/`canDelete`/`canAddMember`）；编码创建后禁改（`/^[a-z][a-z0-9_]{1,39}$/`） |
+| C-20 | **`roles.code` 无唯一约束** | 本批 | 做 C-19 时为"编码重复该给人话"写断言才发现：同编码能建出 N 个角色，`get_by_code()` 随机命中 → 权限时有时无且不报错。三层防护：模型 `UniqueConstraint(tenant_id, code)` + 服务层前置查重 + 接口层 `ValueError→400`；迁移 `20261101_roles_code_unique.py` 去重并补索引 |
+| C-21 | **有成员的角色可被删除，成员权限被静默摘掉** | 本批 | `RoleService.delete` 只拦 `is_system`，不查成员；`RoleRepository.delete` 连 `user_roles` 一起清 → "删一个角色，悄悄摘掉一批人的权限"。补 `count_users()` 前置检查，返回 409 + "还有 N 名成员，请先移出" |
+| C-22 | **`GET /roles/{id}/users` 返回全租户用户** | 本批 | `JOIN user_roles ur ON ur.role_id = :role_id` 少了 `ur.user_id = u.id` → `users × user_roles` 笛卡尔积。1 名成员的临时角色在界面上显示 11 人（=全租户用户数），任意角色点开都是全员。补 JOIN 条件 + 一条跑生产 SQL 的回归测试 |
 
 ---
 

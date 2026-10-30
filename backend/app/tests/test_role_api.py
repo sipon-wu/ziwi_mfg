@@ -113,3 +113,172 @@ class TestM00KeyUser:
         assert "key_user:module_config" in result["permission_codes"]
         assert "key_user:approval_scope" in result["permission_codes"]
         assert "key_user:dept_scope" in result["permission_codes"]
+
+
+class TestRoleCodeUniqueness:
+    """角色编码唯一性（B-1 做「角色增删改界面」时挖出的后端缺陷）。
+
+    `roles.code` 是授权与数据范围判断的锚点，此前**没有唯一约束** —— 同编码能
+    建出多个角色，`get_by_code()` 随机命中其中一个，表现为"权限时有时无"，
+    且不报任何错。三层防护：DB 唯一约束（兜并发）/ 服务层前置查重（给人话）/
+    接口层 ValueError→400（不让 500 冒到页面）。
+    """
+
+    async def test_duplicate_code_returns_400_with_human_message(self, async_client):
+        with (
+            patch("app.repositories.role_repo.RoleRepository.get_by_code") as mock_get,
+            patch("app.repositories.role_repo.RoleRepository.create") as mock_create,
+        ):
+            mock_get.return_value = {"id": 2, "code": "admin"}
+            resp = await async_client.post(
+                "/api/v1/roles",
+                json={"name": "重复", "code": "admin", "scope": "DEPT"},
+            )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "400-0000"
+        assert "已存在" in detail["message"]
+        mock_create.assert_not_called()
+
+    async def test_invalid_code_format_returns_400(self, async_client):
+        # 大写开头 / 单字符 / 中文 / 空格 —— 都不该落库
+        for bad in ("Admin", "a", "仓库主管", "has space", "1abc", ""):
+            with patch("app.repositories.role_repo.RoleRepository.create") as mock_create:
+                resp = await async_client.post(
+                    "/api/v1/roles",
+                    json={"name": "格式测试", "code": bad, "scope": "DEPT"},
+                )
+            assert resp.status_code == 400, f"{bad!r} 应被拒绝"
+            assert "角色编码" in resp.json()["detail"]["message"]
+            mock_create.assert_not_called()
+
+    async def test_valid_code_creates_role(self, async_client):
+        with (
+            patch("app.repositories.role_repo.RoleRepository.get_by_code") as mock_get,
+            patch("app.repositories.role_repo.RoleRepository.create") as mock_create,
+        ):
+            mock_get.return_value = None
+            mock_create.return_value = 42
+            resp = await async_client.post(
+                "/api/v1/roles",
+                json={"name": "仓库主管", "code": "warehouse_manager_2", "scope": "DEPT"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == 42
+        mock_create.assert_called_once()
+
+    def test_model_declares_tenant_code_unique_constraint(self):
+        """约束必须声明在模型上：`create_all` 只建表不补约束，
+        靠手工 SQL 加索引会让全新环境与老库分叉（见 2026-10-06 结构漂移复盘）。"""
+        from app.models.role import Role
+        names = {
+            tuple(c.name for c in con.columns)
+            for con in Role.__table__.constraints
+            if con.__class__.__name__ == "UniqueConstraint"
+        }
+        assert ("tenant_id", "code") in names, f"roles 缺少 (tenant_id, code) 唯一约束，现有 {names}"
+
+    def test_migration_file_exists(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        assert (root / "migrations" / "20261101_roles_code_unique.py").exists()
+
+
+class TestRoleDeleteGuard:
+    """删除角色前的两道闸：内置角色 / 还有成员。
+
+    此前 ``RoleService.delete`` 只拦内置角色，**不检查成员** ——
+    ``RoleRepository.delete`` 会连 ``user_roles`` 一起清掉，等价于
+    "删一个角色，悄悄摘掉一批人的权限"，不报错、不提示。
+    """
+
+    async def test_delete_role_with_members_returns_409(self, async_client):
+        with (
+            patch("app.repositories.role_repo.RoleRepository.get") as mock_get,
+            patch("app.repositories.role_repo.RoleRepository.count_users") as mock_count,
+            patch("app.repositories.role_repo.RoleRepository.delete") as mock_del,
+        ):
+            mock_get.return_value = {"id": 5, "code": "scheduler", "is_system": False}
+            mock_count.return_value = 3
+            resp = await async_client.delete("/api/v1/roles/5")
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "3 名成员" in detail["message"]
+        mock_del.assert_not_called()
+
+    async def test_delete_system_role_returns_409(self, async_client):
+        with (
+            patch("app.repositories.role_repo.RoleRepository.get") as mock_get,
+            patch("app.repositories.role_repo.RoleRepository.delete") as mock_del,
+        ):
+            mock_get.return_value = {"id": 2, "code": "admin", "is_system": True}
+            resp = await async_client.delete("/api/v1/roles/2")
+        assert resp.status_code == 409
+        assert "内置角色" in resp.json()["detail"]["message"]
+        mock_del.assert_not_called()
+
+    async def test_delete_empty_role_ok(self, async_client):
+        with (
+            patch("app.repositories.role_repo.RoleRepository.get") as mock_get,
+            patch("app.repositories.role_repo.RoleRepository.count_users") as mock_count,
+            patch("app.repositories.role_repo.RoleRepository.delete") as mock_del,
+        ):
+            mock_get.return_value = {"id": 7, "code": "temp_role", "is_system": False}
+            mock_count.return_value = 0
+            mock_del.return_value = 1
+            resp = await async_client.delete("/api/v1/roles/7")
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0
+        mock_del.assert_called_once_with(7)
+
+
+class TestRoleUsersQuery:
+    """`GET /roles/{id}/users` 的 JOIN 必须带 `ur.user_id = u.id`。
+
+    漏掉这个条件时 `users` 与 `user_roles` 会做**笛卡尔积**：角色有 1 名成员、
+    租户有 11 个用户 → 接口返回 11 行，界面上"随便点开哪个角色都显示全部用户"。
+    这条测试直接跑生产 SQL（不复制 SQL 文本，改坏了必红）。
+    """
+
+    async def test_get_users_only_returns_members(self):
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from app.repositories.role_repo import RoleRepository
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, real_name TEXT,"
+                " status INTEGER, primary_org_id INTEGER)"
+            ))
+            await conn.execute(text(
+                "CREATE TABLE organizations (id INTEGER PRIMARY KEY, name TEXT, code TEXT)"
+            ))
+            await conn.execute(text(
+                "CREATE TABLE user_roles (id INTEGER PRIMARY KEY, user_id INTEGER,"
+                " role_id INTEGER, tenant_id TEXT)"
+            ))
+            # 11 个用户，只有 id=3 是 role 99 的成员
+            for i in range(1, 12):
+                await conn.execute(
+                    text("INSERT INTO users (id, username) VALUES (:i, :u)"),
+                    {"i": i, "u": f"u{i}"},
+                )
+            await conn.execute(text(
+                "INSERT INTO user_roles (user_id, role_id, tenant_id) VALUES (3, 99, 't')"
+            ))
+
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+        async with Session() as s:
+            rows = await RoleRepository(s).get_users(99)
+        await engine.dispose()
+
+        assert [r["id"] for r in rows] == [3], (
+            f"角色 99 只有 1 名成员，却返回了 {len(rows)} 行 —— "
+            f"JOIN 少了 ur.user_id = u.id，成了笛卡尔积"
+        )

@@ -16,14 +16,19 @@ import { showConfirmDialog, showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
 import {
   ROLE_SCOPES,
+  addRoleUser,
   assignRolePermissions,
+  createRole,
+  deleteRole,
   fetchPermissionCatalog,
   fetchRoleDetail,
   fetchRoles,
   fetchRoleUsers,
   removeRoleUser,
   scopeLabel,
+  searchUsersForRole,
   setRoleScope,
+  updateRole,
 } from '@/api/roles'
 import type {
   PermissionCatalogModule,
@@ -31,6 +36,7 @@ import type {
   RoleItem,
   RoleUser,
 } from '@/api/roles'
+import { errMessage } from '@/utils/error'
 
 const auth = useAuthStore()
 
@@ -38,6 +44,10 @@ const auth = useAuthStore()
 const canAssign = computed(() => auth.hasPerm('PLAT:role_permission:update'))
 const canSetScope = computed(() => auth.hasPerm('PLAT:role_scope:update'))
 const canManageMember = computed(() => auth.hasPerm('PLAT:role_user:delete'))
+const canAddMember = computed(() => auth.hasPerm('PLAT:role_user:create'))
+const canCreate = computed(() => auth.hasPerm('PLAT:role:create'))
+const canUpdate = computed(() => auth.hasPerm('PLAT:role:update'))
+const canDelete = computed(() => auth.hasPerm('PLAT:role:delete'))
 
 /* ── 状态 ── */
 const roles = ref<RoleItem[]>([])
@@ -277,7 +287,160 @@ async function onRemoveMember(user: RoleUser) {
     members.value = members.value.filter((m) => m.id !== user.id)
     showToast('已移出')
   } catch (e: any) {
-    showToast(e?.response?.data?.detail?.message || '操作失败')
+    showToast(errMessage(e, '操作失败'))
+  }
+}
+
+/* ────────────── 角色增删改（B-1：此前只有授权，没有角色本身的新建/改名/删除） ────────────── */
+
+/** null = 新建；数字 = 正在编辑的角色 id */
+const editingRoleId = ref<number | null>(null)
+const showRoleEditor = ref(false)
+const savingRole = ref(false)
+const roleForm = ref({ name: '', code: '', description: '', scope: 'DEPT' })
+const roleFormError = ref('')
+
+function openCreateRole() {
+  editingRoleId.value = null
+  roleForm.value = { name: '', code: '', description: '', scope: 'DEPT' }
+  roleFormError.value = ''
+  showRoleEditor.value = true
+}
+
+function openEditRole() {
+  if (!currentRole.value) return
+  editingRoleId.value = currentRole.value.id
+  roleForm.value = {
+    name: currentRole.value.name,
+    code: currentRole.value.code,
+    description: currentRole.value.description || '',
+    scope: currentRole.value.scope || 'DEPT',
+  }
+  roleFormError.value = ''
+  showRoleEditor.value = true
+}
+
+async function submitRole() {
+  const name = roleForm.value.name.trim()
+  const code = roleForm.value.code.trim()
+  if (!name) { roleFormError.value = '角色名称不能为空'; return }
+  if (!editingRoleId.value && !code) { roleFormError.value = '角色编码不能为空'; return }
+  if (!editingRoleId.value && !/^[a-z][a-z0-9_]{1,39}$/.test(code)) {
+    // 编码是权限授予与数据范围判断的锚点，改起来牵连很广，建的时候就约束住
+    roleFormError.value = '角色编码只能是小写字母开头、由小写字母/数字/下划线组成（2-40 位）'
+    return
+  }
+  roleFormError.value = ''
+  savingRole.value = true
+  try {
+    if (editingRoleId.value) {
+      await updateRole(editingRoleId.value, {
+        name,
+        description: roleForm.value.description,
+      })
+      showToast('角色已更新')
+      const id = editingRoleId.value
+      showRoleEditor.value = false
+      roles.value = roles.value.map((r) =>
+        r.id === id ? { ...r, name, description: roleForm.value.description } : r,
+      )
+      if (currentRole.value?.id === id) {
+        currentRole.value = { ...currentRole.value, name, description: roleForm.value.description }
+      }
+    } else {
+      const res = await createRole({
+        name,
+        code,
+        description: roleForm.value.description,
+        scope: roleForm.value.scope,
+      })
+      showToast('角色已创建，接下来给它勾权限')
+      showRoleEditor.value = false
+      // 新建后必须重新拉列表：permission_count/user_count 都是后端聚合出来的
+      const roleRes = await fetchRoles(1, 100)
+      roles.value = roleRes.items || []
+      const created = roles.value.find((r) => r.id === res?.id) || roles.value.at(-1)
+      if (created) await selectRole(created)
+    }
+  } catch (e: any) {
+    // 编码重复会返回 400 + 人话，直接展示；不要退化成"创建失败"
+    roleFormError.value = errMessage(e, '保存失败')
+  } finally {
+    savingRole.value = false
+  }
+}
+
+async function onDeleteRole() {
+  if (!currentRole.value) return
+  if (currentRole.value.is_system) {
+    showToast('内置角色不能删除')
+    return
+  }
+  try {
+    await showConfirmDialog({
+      title: '删除角色',
+      message:
+        `确定删除「${currentRole.value.name}」？\n` +
+        `该角色下有 ${currentRole.value.user_count ?? 0} 名成员，` +
+        '有成员时后端会拒绝删除（需先移出成员）。',
+      confirmButtonText: '删除',
+      confirmButtonColor: '#ee0a24',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteRole(currentRole.value.id)
+    showToast('已删除')
+    const roleRes = await fetchRoles(1, 100)
+    roles.value = roleRes.items || []
+    currentRoleId.value = null
+    currentRole.value = null
+    members.value = []
+    if (roles.value.length) await selectRole(roles.value[0])
+  } catch (e: any) {
+    showToast(errMessage(e, '删除失败'))
+  }
+}
+
+/* ────────────── 添加角色成员 ────────────── */
+const showMemberPicker = ref(false)
+const userKeyword = ref('')
+const userOptions = ref<RoleUser[]>([])
+const loadingUsers = ref(false)
+
+async function openMemberPicker() {
+  userKeyword.value = ''
+  showMemberPicker.value = true
+  await searchUsers()
+}
+
+async function searchUsers() {
+  loadingUsers.value = true
+  try {
+    const res = await searchUsersForRole(userKeyword.value.trim())
+    const existing = new Set(members.value.map((m) => m.id))
+    userOptions.value = (res.items || []).filter((u) => !existing.has(u.id))
+  } catch (e: any) {
+    showToast(errMessage(e, '用户列表加载失败'))
+    userOptions.value = []
+  } finally {
+    loadingUsers.value = false
+  }
+}
+
+async function onAddMember(user: RoleUser) {
+  if (!currentRoleId.value) return
+  try {
+    await addRoleUser(currentRoleId.value, user.id)
+    members.value = [...members.value, user]
+    userOptions.value = userOptions.value.filter((u) => u.id !== user.id)
+    showToast(`已把「${user.real_name || user.username}」加入该角色`)
+    // 左侧「N 人」是后端聚合值，加完人必须重拉，否则数字不动会被当成没生效
+    const roleRes = await fetchRoles(1, 100)
+    roles.value = roleRes.items || []
+  } catch (e: any) {
+    showToast(errMessage(e, '加入失败'))
   }
 }
 
@@ -292,7 +455,10 @@ loadAll()
       <!-- 左：角色 -->
       <aside class="rp-roles">
         <div class="rp-roles__hd">
-          角色 <span class="rp-muted">{{ roles.length }}</span>
+          <span>角色 <span class="rp-muted">{{ roles.length }}</span></span>
+          <button v-if="canCreate" class="rp-btn rp-btn--primary rp-btn--sm" @click="openCreateRole">
+            + 新建
+          </button>
         </div>
         <div
           v-for="r in roles"
@@ -328,10 +494,26 @@ loadAll()
               </h2>
               <p class="rp-head__desc">{{ currentRole.description || '暂无描述' }}</p>
             </div>
-            <div class="rp-head__stats">
-              已勾选
-              <b>{{ selected.size }}</b>
-              / {{ catalogTotal }} 项
+            <div class="rp-head__right">
+              <div class="rp-head__stats">
+                已勾选
+                <b>{{ selected.size }}</b>
+                / {{ catalogTotal }} 项
+              </div>
+              <div v-if="canUpdate || canDelete" class="rp-head__ops">
+                <button v-if="canUpdate" class="rp-btn rp-btn--ghost rp-btn--sm" @click="openEditRole">
+                  编辑
+                </button>
+                <button
+                  v-if="canDelete"
+                  class="rp-btn rp-btn--danger rp-btn--sm"
+                  :disabled="currentRole.is_system"
+                  :title="currentRole.is_system ? '内置角色不能删除' : '删除该角色'"
+                  @click="onDeleteRole"
+                >
+                  删除
+                </button>
+              </div>
             </div>
           </header>
 
@@ -420,8 +602,17 @@ loadAll()
 
           <!-- 成员 -->
           <div class="rp-members">
-            <div class="rp-section-title">
-              角色成员 <span class="rp-muted">{{ members.length }} 人</span>
+            <div class="rp-members__hd">
+              <div class="rp-section-title">
+                角色成员 <span class="rp-muted">{{ members.length }} 人</span>
+              </div>
+              <button
+                v-if="canAddMember"
+                class="rp-btn rp-btn--ghost rp-btn--sm"
+                @click="openMemberPicker"
+              >
+                + 添加成员
+              </button>
             </div>
             <div v-if="members.length" class="rp-members__list">
               <div v-for="u in members" :key="u.id" class="rp-member">
@@ -465,6 +656,90 @@ loadAll()
         </template>
       </section>
     </template>
+
+    <!-- 新建 / 编辑角色 -->
+    <van-popup v-model:show="showRoleEditor" position="center" round class="rp-popup">
+      <div class="rp-popup__hd">
+        {{ editingRoleId ? '编辑角色' : '新建角色' }}
+      </div>
+      <div class="rp-popup__bd">
+        <label class="rp-field">
+          <span class="rp-field__label">角色名称 <i>*</i></span>
+          <input v-model="roleForm.name" class="rp-input" placeholder="如：仓库主管" maxlength="50" />
+        </label>
+        <label class="rp-field">
+          <span class="rp-field__label">角色编码 <i v-if="!editingRoleId">*</i></span>
+          <input
+            v-model="roleForm.code"
+            class="rp-input"
+            :disabled="!!editingRoleId"
+            placeholder="如：warehouse_manager"
+            maxlength="40"
+          />
+          <span class="rp-field__hint">
+            {{
+              editingRoleId
+                ? '编码创建后不可修改（它被授权与数据范围引用）'
+                : '小写字母开头，可含数字与下划线；创建后不可改'
+            }}
+          </span>
+        </label>
+        <label class="rp-field">
+          <span class="rp-field__label">描述</span>
+          <input v-model="roleForm.description" class="rp-input" placeholder="可选" maxlength="100" />
+        </label>
+        <label v-if="!editingRoleId" class="rp-field">
+          <span class="rp-field__label">数据范围</span>
+          <select v-model="roleForm.scope" class="rp-input">
+            <option v-for="s in ROLE_SCOPES" :key="s.value" :value="s.value">
+              {{ s.label }} — {{ s.desc }}
+            </option>
+          </select>
+        </label>
+        <p v-if="roleFormError" class="rp-popup__err">{{ roleFormError }}</p>
+      </div>
+      <div class="rp-popup__ft">
+        <button class="rp-btn rp-btn--ghost" @click="showRoleEditor = false">取消</button>
+        <button class="rp-btn rp-btn--primary" :disabled="savingRole" @click="submitRole">
+          {{ savingRole ? '保存中…' : '保存' }}
+        </button>
+      </div>
+    </van-popup>
+
+    <!-- 添加成员 -->
+    <van-popup v-model:show="showMemberPicker" position="center" round class="rp-popup">
+      <div class="rp-popup__hd">添加成员到「{{ currentRole?.name }}」</div>
+      <div class="rp-popup__bd">
+        <div class="rp-search-row">
+          <input
+            v-model="userKeyword"
+            class="rp-input"
+            placeholder="搜索用户名 / 姓名"
+            @keyup.enter="searchUsers"
+          />
+          <button class="rp-btn rp-btn--ghost rp-btn--sm" @click="searchUsers">搜索</button>
+        </div>
+        <van-loading v-if="loadingUsers" style="padding: 12px 0" />
+        <div v-else-if="!userOptions.length" class="rp-muted" style="padding: 12px 0">
+          没有可选用户（已在该角色的人不会列出）
+        </div>
+        <div v-else class="rp-user-list">
+          <div v-for="u in userOptions" :key="u.id" class="rp-user">
+            <div>
+              <div class="rp-member__name">{{ u.real_name || u.username }}</div>
+              <div class="rp-member__meta">
+                {{ u.username }}
+                <template v-if="u.org_name"> · {{ u.org_name }}</template>
+              </div>
+            </div>
+            <button class="rp-btn rp-btn--primary rp-btn--sm" @click="onAddMember(u)">加入</button>
+          </div>
+        </div>
+      </div>
+      <div class="rp-popup__ft">
+        <button class="rp-btn rp-btn--ghost" @click="showMemberPicker = false">关闭</button>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -491,6 +766,10 @@ loadAll()
   overflow-y: auto;
 }
 .rp-roles__hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--ziwi-text-primary, #1e293b);
@@ -864,5 +1143,118 @@ loadAll()
   padding: 0 10px;
   border-color: var(--ziwi-danger, #ef4444);
   color: var(--ziwi-danger, #ef4444);
+}
+
+/* ── 角色增删改（B-1） ── */
+.rp-btn--sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.rp-btn--primary {
+  background: var(--ziwi-primary, #2563eb);
+  border-color: var(--ziwi-primary, #2563eb);
+  color: #fff;
+}
+.rp-btn--primary:disabled,
+.rp-btn--danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rp-head__right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.rp-head__ops {
+  display: flex;
+  gap: 8px;
+}
+.rp-members__hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rp-popup {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+.rp-popup__hd {
+  padding: 16px 18px 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+.rp-popup__bd {
+  padding: 6px 18px 4px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.rp-popup__ft {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+}
+.rp-popup__err {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ziwi-danger, #ef4444);
+}
+.rp-field {
+  display: block;
+  margin-bottom: 12px;
+}
+.rp-field__label {
+  display: block;
+  font-size: 12px;
+  color: var(--ziwi-text-secondary, #555);
+  margin-bottom: 4px;
+}
+.rp-field__label i {
+  color: var(--ziwi-danger, #ef4444);
+  font-style: normal;
+}
+.rp-field__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ziwi-text-tertiary, #94a3b8);
+  line-height: 1.5;
+}
+.rp-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  box-sizing: border-box;
+  border: 1px solid var(--ziwi-border, #e2e8f0);
+  border-radius: var(--ziwi-radius-md, 6px);
+  background: #fff;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+.rp-input:disabled {
+  background: var(--ziwi-bg-subtle, #f8fafc);
+  color: var(--ziwi-text-tertiary, #94a3b8);
+}
+.rp-search-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rp-user-list {
+  max-height: 320px;
+  overflow: auto;
+}
+.rp-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ziwi-border-light, #f1f5f9);
 }
 </style>
