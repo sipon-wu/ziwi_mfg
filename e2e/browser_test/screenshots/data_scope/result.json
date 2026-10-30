@@ -1,0 +1,93 @@
+[
+  {
+    "id": "D1",
+    "name": "admin 登录",
+    "status": "PASS",
+    "ok": "PASS",
+    "detail": "perms=333 org_id=1"
+  },
+  {
+    "id": "D1",
+    "name": "admin 造了一张根节点工单的今日报工",
+    "status": "PASS",
+    "ok": "PASS",
+    "detail": "wo_no=WO-DS-122341"
+  },
+  {
+    "id": "D1",
+    "name": "admin 报工页有数据",
+    "status": "PASS",
+    "ok": true,
+    "detail": "DOM 行数=21 API total=21"
+  },
+  {
+    "id": "D1",
+    "name": "DOM 行数与 API 一致（页面没自己过滤/漏渲染）",
+    "status": "PASS",
+    "ok": true,
+    "detail": "DOM=21 API=21"
+  },
+  {
+    "id": "D2",
+    "name": "demo_ws1_leader 登录",
+    "status": "PASS",
+    "ok": "PASS",
+    "detail": "perms=270 org_id=2"
+  },
+  {
+    "id": "D2",
+    "name": "该账号挂在真实部门（不是公司根 1）",
+    "status": "PASS",
+    "ok": "PASS",
+    "detail": "org_id=2"
+  },
+  {
+    "id": "D3",
+    "name": "ws1 主任的报工行数少于 admin（根节点报工不可见）",
+    "status": "PASS",
+    "ok": true,
+    "detail": "scoped=3 < admin=21"
+  },
+  {
+    "id": "D3",
+    "name": "DOM 行数与 API 一致（过滤发生在后端，不是前端藏起来）",
+    "status": "PASS",
+    "ok": true,
+    "detail": "DOM=3 API=3"
+  },
+  {
+    "id": "D3",
+    "name": "页面上看不到 admin 造的那张根节点工单",
+    "status": "PASS",
+    "ok": true,
+    "detail": "查找 WO-DS-122341"
+  },
+  {
+    "id": "D4",
+    "name": "ws1 主任能看到自己的报工（不是一片空白）",
+    "status": "PASS",
+    "ok": true,
+    "detail": "DOM 行数=3"
+  },
+  {
+    "id": "D5",
+    "name": "存在有明细的根节点检验单",
+    "status": "PASS",
+    "ok": true,
+    "detail": "order=1 明细 1 条"
+  },
+  {
+    "id": "D5",
+    "name": "ws1 主任读同一张单的明细为空（子表不宽于父单）",
+    "status": "PASS",
+    "ok": true,
+    "detail": "HTTP 200 明细 0 条"
+  },
+  {
+    "id": "D6",
+    "name": "全程无 JS 运行时错误",
+    "status": "PASS",
+    "ok": true,
+    "detail": "0 error"
+  }
+]

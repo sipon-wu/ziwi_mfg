@@ -62,6 +62,17 @@ class FakeMaterialRepo:
     def set_write_org_id(self, oid):
         self._org = oid
 
+    def inherit_context_from(self, other):
+        """与真实 ``MultiTenantRepository`` 同签名：一次性继承全部请求级上下文。
+
+        真实实现会拷 tenant_id / org_scope / write_org_id / feature_flags，
+        假对象只需证明"调用了继承且拿到了 write_org_id"。
+        """
+        self._tenant_id = getattr(other, "_tenant_id", None)
+        self._org = getattr(other, "_write_org_id", None)
+        self.inherited_from = other
+        return self
+
     async def create(self, data):
         if FakeMaterialRepo.fail:
             raise FakeMaterialRepo.fail

@@ -87,11 +87,8 @@ async def ensure_finished_material(
 
     from app.repositories.wms_repo import MaterialRepository
 
-    write_org_id = getattr(base_repo, "_write_org_id", None)
-    repo = MaterialRepository(base_repo._session)
+    repo = MaterialRepository(base_repo._session).inherit_context_from(base_repo)
     repo.set_tenant_id(tenant_id)
-    if write_org_id:
-        repo.set_write_org_id(write_org_id)
 
     payload = {
         "tenant_id": tenant_id,

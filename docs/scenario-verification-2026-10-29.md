@@ -236,6 +236,8 @@
 | 9 | 成品无物料档案 → 完工入库一直 skipped | 本文档同期 | `material_sync_e2e.py` 17/17 |
 | 10 | 权限只记日志不阻断（影子模式） | `a20b2ef` | `permission_enforce_e2e.js` 9×46 全 PASS |
 | 11 | **参数化路由完全绕过权限**（见下节） | `a20b2ef` | `test_permission_enforce.py` 151 例 |
+| 12 | 三张子表无组织归属 → 数据范围漏 | 本批 | `subtable_org_e2e.py` 17/17 + `data_scope_e2e.js` 13/13 |
+| 13 | 种子用户全在根节点 → 数据范围无法验证 | 本批 | `verify_permissions.py` 新增严格小于断言 |
 
 ### 第 9 项的结论（推翻原 §六 之外的假设）
 
@@ -245,11 +247,43 @@
 
 **采用**：`materials.code` 沿用 `products.code`、`material_type='finished'`，在「试产转量产」和「完工前」两处幂等自动补建（`app/services/material_sync.py`）。
 
-### 仍未闭的项（需拍板）
+### 仍未闭的项
 
-- 角色增删改界面（当前只能给已有角色配权限）
-- 子表组织归属：`work_reports` / `inspection_result` / `inventory_transactions` 无 `org_id`
-  （部门负责人看不到本部门报工，数据范围只对主表生效）
+见 `docs/BACKLOG.md`（唯一台账）。当前待拍板 4 条：B-1 角色增删改界面、
+B-4 `SCOPE_FALLBACK=ALL`、B-5 `issue_orders.department_id` 语义混淆、
+B-6 `warehouse_repo.py` 疑似死代码。
+
+### 已闭：子表组织归属（本批）
+
+强模式切开后，"权限"是真的了，"数据范围"还差三张子表。
+
+`ORG_SCOPED_TABLES` 只登记了 5 张主表，`work_reports` / `inspection_result` /
+`inventory_transactions` **完全不过滤**。缺陷表现不是"看不到"而是**全看到** ——
+页面有数据、排序正常、就是多了，不拿两个账号对比根本发现不了。
+
+**归属规则**（写入侧）：
+
+| 子表 | 归属给谁 | 为什么 |
+|---|---|---|
+| `work_reports` | **报工人**的组织 | 车间主任要看"本车间工人报的工"，不是"本车间被下的工单的报工"。工单通常由生产部/计划下达，按工单归属会让车间主任一条都看不到 |
+| `inspection_result` | **继承检验单**（INSERT 子查询） | 子表若用录入人组织，"品质部录入 + 生产部检验单"会让生产部负责人看得到单头看不到明细 |
+| `inventory_transactions` | **操作人**组织 | 仓库作业由仓储部执行，流水跟着作业人走 |
+
+**顺带修掉的系统性问题**：服务层 `XxxRepository(self.repo._session)` 手工派生 repo
+时只补 `tenant_id`，`_org_scope` 与 `_write_org_id` 全丢 → 写出的行 `org_id` 为 NULL，
+随后被过滤掉（自己写的自己看不见），且不报错。新增
+`MultiTenantRepository.inherit_context_from()` 统一继承，10 处派生全部改用它，
+并加静态检查（`test_services_use_inherit_context`）防回归。
+
+**可验证性问题**：10 个 `test_*` 用户 `primary_org_id` 全是公司根，
+`DEPT_CHILD` 解析出整棵树 → 无论过滤写得对不对，所有人看到的都一样，
+数据范围**在种子数据上根本没法验证**。新增 `demo_ws1_leader`（一号车间主任）
+作为观察点，并把"可见量严格小于 admin"写成断言。
+
+**验证**：pytest 774 → **797**｜`subtable_org_e2e.py` **17/17**｜
+`data_scope_e2e.js` **13/13**（真实浏览器：admin 21 行 vs 一号车间主任 3 行，
+且 DOM 行数与 API total 逐一对齐）｜`verify_permissions.py` 全通过｜
+结构漂移 0
 
 ### 已闭：强制模式 + 参数化路由越权（`a20b2ef`）
 

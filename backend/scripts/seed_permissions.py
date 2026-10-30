@@ -89,12 +89,14 @@ ROLE_GRANTS = {
     # 依据：R_PROD R_SCHEDULE R_BOMS R_EQUIP R_QUALITY R_ENERGY R_DC R_SYSTEM R_TRIAL
     #       + menu: andon.escalation_rules / trial / lab
     # PLAT:role_permission:read —— 角色权限配置页的**只读**查看（含权限目录），可看不可改
+    # PLAT:role_user:read —— 同页右侧"该角色有哪些成员"（GET /roles/{id}/users）。
+    #   少了它会出现"能进页面、页面里那一块 403"，且只有点开某个角色才暴露。
     "department_head": OPEN_MODULE_READ + [
         M00_WRITE, M04_WRITE,
         "M01:*", "M02:*", "M03:*", "M06:*", "M10:*",
         "M11:*", "M12:*", "M15:*", "M16:*", "M30:*",
         "PLAT:organization:*", "PLAT:user:read", "PLAT:role:read",
-        "PLAT:role_permission:read",
+        "PLAT:role_permission:read", "PLAT:role_user:read",
     ],
 
     # 班组长：生产（工单/报工/排产）+ 设备 + 安灯处理 + 仓储收发

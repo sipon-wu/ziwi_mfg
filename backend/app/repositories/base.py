@@ -129,6 +129,25 @@ class MultiTenantRepository(Repository):
         ——"自己建的单自己看不见"。故在 INSERT 时统一补归属。
         """
         self._write_org_id = org_id
+
+    def inherit_context_from(self, other: "MultiTenantRepository") -> "MultiTenantRepository":
+        """从另一个 repo 继承**全部请求级上下文**，返回 self 便于链式调用。
+
+        场景：服务层为了写另一张表手工 ``new XxxRepository(self.repo._session)``。
+        这类派生 repo 只 set_tenant_id 就跑了，会丢掉 ``_org_scope`` 与
+        ``_write_org_id`` —— 表现为"派生 repo 写出的行 org_id 为 NULL"，
+        随后被数据范围过滤掉（自己写的自己看不见），而且不报错、极难查。
+
+        统一入口，杜绝逐个 set_xxx 漏一个。用法：
+
+            tx_repo = InventoryTransactionRepository(self.repo._session) \\
+                .inherit_context_from(self.repo)
+        """
+        self._tenant_id = getattr(other, "_tenant_id", None)
+        self._org_scope = getattr(other, "_org_scope", None)
+        self._write_org_id = getattr(other, "_write_org_id", None)
+        self.feature_flags = getattr(other, "feature_flags", None) or {}
+        return self
     
     def set_feature_flags(self, flags: Dict[str, bool]):
         """设置当前租户的 feature_flags（路由决策使用）"""

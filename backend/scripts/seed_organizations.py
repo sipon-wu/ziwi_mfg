@@ -10,10 +10,11 @@
 本种子的取舍
 ------------
 - 演示组织树建到"公司 → 车间/部门 → 班组"三层，覆盖 4 种 org_type。
-- **所有演示用户主组织都设为公司根节点**：这样 DEPT_CHILD 解析出整棵树，
-  可见范围与切换前完全一致（行为不变），机制正确性由单元测试验证，
-  不靠改演示数据来"演示"。
-- 存量 5 张业务表回填到公司根节点。
+- **现有 10 个 test_\* 用户主组织留在公司根节点**：这样 DEPT_CHILD 解析出整棵树，
+  可见范围与切换前完全一致（行为不变），不靠改演示数据来"演示"。
+- **另建 `demo_ws1_leader`（一号车间主任）挂在 ORG-WS1**：没有真实部门的观察点，
+  数据范围"是否生效"就无法验证 —— 2026-10-30 切强制模式时才发现的盲区。
+- 存量业务表回填到公司根节点（演示数据都是根节点账号造的，与其实际归属一致）。
 
 角色数据范围（roles.scope）
 ---------------------------
@@ -77,7 +78,23 @@ BACKFILL = {
     "ncr_records":      "org_id",
     "receipt_orders":   "org_id",
     "issue_orders":     "department_id",
+    # 子表（2026-10-30 补，见 docs/BACKLOG.md #B-2）
+    "work_reports":           "org_id",
+    "inspection_result":      "org_id",
+    "inventory_transactions": "org_id",
 }
+
+# 数据范围演示账号：挂到**真实部门**上，用来证明「部门负责人只看本部门」。
+#
+# 为什么单独建账号，而不把现有 10 个 test_* 移到各部门：
+# 现有 10 个账号挂在公司根节点，是为了让切换数据范围前后行为一致（见上文取舍）；
+# 一旦移走，`verify_permissions.py` 里既有的「可见量与 admin 一致」等断言、
+# 以及全部模块回归所依赖的可见数据量都会变 —— 那是另一件事，不该混在本次改动里。
+# 本次补的是**可验证性**：有真实部门的观察点，才能证明过滤真的生效。
+DEMO_SCOPED_USERS = [
+    # (username, real_name, password, role_code, org_code)
+    ("demo_ws1_leader", "一号车间主任", "admin123", "department_head", "ORG-WS1"),
+]
 
 
 async def seed() -> dict:
@@ -86,7 +103,8 @@ async def seed() -> dict:
     from app.core.database import get_engine
 
     engine = get_engine()
-    stats = {"orgs": 0, "backfilled": {}, "scopes": 0, "members": 0}
+    stats = {"orgs": 0, "backfilled": {}, "scopes": 0, "members": 0,
+             "demo_users": 0, "demo_scoped": []}
     org_ids = {}
 
     async with engine.begin() as conn:
@@ -157,10 +175,14 @@ async def seed() -> dict:
             stats["scopes"] += res.rowcount
 
         # ── 4. 演示用户主组织 → 公司根节点（保证可见范围与切换前一致）──
+        #     数据范围演示账号除外：它们必须留在真实部门上，否则无法验证过滤。
+        demo_names = [u[0] for u in DEMO_SCOPED_USERS]
         users = await conn.execute(
-            text("SELECT id FROM users WHERE tenant_id = :t"), {"t": TENANT},
+            text("SELECT id, username FROM users WHERE tenant_id = :t"), {"t": TENANT},
         )
-        for (uid,) in users.fetchall():
+        for uid, uname in users.fetchall():
+            if uname in demo_names:
+                continue
             await conn.execute(
                 text("DELETE FROM user_organizations WHERE user_id = :u"), {"u": uid},
             )
@@ -175,6 +197,68 @@ async def seed() -> dict:
                 {"o": root_id, "u": uid},
             )
             stats["members"] += 1
+
+        # ── 5. 数据范围演示账号（幂等建号 + 绑定角色 + 挂真实部门）──
+        from app.core.security import hash_password
+
+        for uname, real_name, password, role_code, org_code in DEMO_SCOPED_USERS:
+            org_id = org_ids.get(org_code)
+            if not org_id:
+                print(f"[warn] 组织 {org_code} 不存在，跳过 {uname}")
+                continue
+
+            row = (await conn.execute(
+                text("SELECT id FROM users WHERE tenant_id = :t AND username = :u"),
+                {"t": TENANT, "u": uname},
+            )).fetchone()
+            if row:
+                uid = row[0]
+                await conn.execute(
+                    text("UPDATE users SET primary_org_id = :o WHERE id = :u"),
+                    {"o": org_id, "u": uid},
+                )
+            else:
+                res = await conn.execute(
+                    text("""INSERT INTO users
+                              (tenant_id, username, password_hash, real_name,
+                               primary_org_id, status)
+                            VALUES (:t, :u, :p, :rn, :o, 'active')"""),
+                    {"t": TENANT, "u": uname, "p": hash_password(password),
+                     "rn": real_name, "o": org_id},
+                )
+                uid = res.lastrowid
+                if uid is None:
+                    uid = (await conn.execute(
+                        text("SELECT id FROM users WHERE tenant_id = :t AND username = :u"),
+                        {"t": TENANT, "u": uname},
+                    )).fetchone()[0]
+                stats["demo_users"] += 1
+
+            # 组织绑定（主组织唯一）
+            await conn.execute(
+                text("DELETE FROM user_organizations WHERE user_id = :u"), {"u": uid},
+            )
+            await conn.execute(
+                text("""INSERT INTO user_organizations
+                          (tenant_id, user_id, org_id, is_primary)
+                        VALUES (:t, :u, :o, 1)"""),
+                {"t": TENANT, "u": uid, "o": org_id},
+            )
+            # 角色绑定（先删后建，保证与本表声明一致）
+            await conn.execute(
+                text("""DELETE FROM user_roles
+                        WHERE user_id = :u
+                          AND role_id IN (SELECT id FROM roles WHERE tenant_id = :t
+                                          AND code = :c)"""),
+                {"t": TENANT, "u": uid, "c": role_code},
+            )
+            await conn.execute(
+                text("""INSERT INTO user_roles (tenant_id, user_id, role_id, created_at)
+                        SELECT :t, :u, r.id, CURRENT_TIMESTAMP FROM roles r
+                        WHERE r.tenant_id = :t AND r.code = :c"""),
+                {"t": TENANT, "u": uid, "c": role_code},
+            )
+            stats["demo_scoped"].append(f"{uname}@{org_code}({role_code})")
 
     await engine.dispose()
     stats["org_ids"] = org_ids
@@ -192,6 +276,9 @@ def main() -> int:
         print(f"   {t:20s} {n}")
     print(f"[scopes] 更新角色数据范围 {stats['scopes']} 个")
     print(f"[members] 用户归属组织 {stats['members']} 人")
+    print(f"[demo] 新建数据范围演示账号 {stats['demo_users']} 个")
+    for line in stats["demo_scoped"]:
+        print(f"   {line}")
     return 0
 
 

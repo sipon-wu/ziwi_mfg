@@ -138,6 +138,7 @@ class InventoryTransaction(Base):
 
     id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id        = Column(String(50), nullable=False, comment="租户ID")
+    org_id           = Column(BigInteger, comment="归属组织ID（数据范围过滤用，取操作人主组织）")
     transaction_type = Column(String(32), nullable=False, comment="receipt/issue/transfer/adjust/scrap")
     voucher_no       = Column(String(64), nullable=False, comment="物料凭证号")
     material_id      = Column(BigInteger, nullable=False, comment="物料ID")

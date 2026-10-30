@@ -240,9 +240,7 @@ class ProductionService:
 
         # 1. 执行 BOM 快照（M02）
         try:
-            bom_repo = BomRepository(self.repo._session)
-            if self.repo._tenant_id:
-                bom_repo.set_tenant_id(self.repo._tenant_id)
+            bom_repo = BomRepository(self.repo._session).inherit_context_from(self.repo)
             bom_svc = BomService(bom_repo)
             snapshot = await bom_svc.snapshot_bom(id, tenant_id)
             result["bom_snapshot"] = {"id": snapshot.get("id"), "bom_version": snapshot.get("bom_version")}
@@ -251,9 +249,7 @@ class ProductionService:
 
         # 2. 执行齐套性检查（M07）
         try:
-            inv_repo = InventoryRepository(self.repo._session)
-            if self.repo._tenant_id:
-                inv_repo.set_tenant_id(self.repo._tenant_id)
+            inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)
             check_svc = MaterialCheckService(self.repo, bom_repo, inv_repo)
             check_result = await check_svc.check_material_availability(id)
             update_result = await check_svc.update_work_order_check_result(
@@ -510,13 +506,19 @@ class ProductionService:
             from app.repositories.ncr_repo import NcrRepository
             from app.services.ncr_service import NcrService
 
+            # 注意：继承写成独立语句而不是链式 ``NcrRepository(...).inherit_context_from(...)``。
+            # 链式在单测里被 patch 成 MagicMock 时，``.inherit_context_from()`` 会返回
+            # 另一个 MagicMock，把配置好的假 repo 覆盖掉 —— 可测性也是设计的一部分。
             ncr_repo = NcrRepository(self.repo._session)
+            ncr_repo.inherit_context_from(self.repo)
             if tenant_id:
                 ncr_repo.set_tenant_id(tenant_id)
-            # 继承写入归属，否则自动开的 NCR org_id 为 NULL，部门负责人看不见
-            write_org_id = getattr(self.repo, "_write_org_id", None) or order.get("org_id")
-            if write_org_id:
-                ncr_repo.set_write_org_id(write_org_id)
+            # 继承写入归属，否则自动开的 NCR org_id 为 NULL，部门负责人看不见；
+            # 当前用户无组织归属时退回工单归属（制程 NCR 天然属于工单所在组织）。
+            if not isinstance(getattr(ncr_repo, "_write_org_id", None), int):
+                write_org_id = order.get("org_id")
+                if write_org_id:
+                    ncr_repo.set_write_org_id(write_org_id)
 
             existing = await ncr_repo.get_by_source("process", report_id)
             if existing:

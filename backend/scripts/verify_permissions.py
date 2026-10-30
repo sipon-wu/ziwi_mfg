@@ -84,7 +84,27 @@ async def main() -> int:
             "JOIN user_roles ur ON ur.user_id = u.id "
             "JOIN roles r ON r.id = ur.role_id WHERE u.tenant_id = :t"
         ), {"t": TENANT})
-        mapping = {r[2]: (r[0], r[1]) for r in rows.fetchall()}
+        # 一个角色可能挂多个账号（seed_organizations 会建 demo_ws1_leader，
+        # 它同样是 department_head）。**必须按 ROLE_USER 显式取**，
+        # 不能 `{code: row}` 让"最后一行覆盖" —— 那会让本脚本随机拿到
+        # 挂在别的部门的账号，C 段可见量断言随之漂移且没有任何提示。
+        mapping = {}
+        for uid, uname, rcode in rows.fetchall():
+            want = ROLE_USER.get(rcode)
+            if want and uname != want:
+                continue
+            mapping[rcode] = (uid, uname)
+
+        # 数据范围演示账号：不在「角色 → 固定账号」表里，单独取一只。
+        # 注：不要写 LIKE 'demo[_]%' —— SQLite 的 LIKE 不支持字符类，
+        #     `[_]` 会被当成"字面量 [、任意一个字符、]"，匹配不到任何行（静默漏测）。
+        demo = await session.execute(text(
+            "SELECT id, username FROM users WHERE tenant_id = :t "
+            "AND username LIKE 'demo%' ORDER BY id LIMIT 1"
+        ), {"t": TENANT})
+        demo_row = demo.fetchone()
+        if demo_row:
+            mapping["department_head_demo"] = (demo_row[0], demo_row[1])
         # 归还 session
         try:
             await gen.__anext__()
@@ -166,6 +186,40 @@ async def main() -> int:
     failures += 0 if ok else 1
     _check("DEPT_CHILD@公司根 与 admin 可见量一致", ok,
            f"dept_head={dept_head_total} admin={admin_total}")
+
+    # 真实部门的观察点：demo_ws1_leader 挂一号车间（ORG-WS1=2），
+    # DEPT_CHILD 解析出 {2 一号车间, 3 机加工班组, 4 装配班组}。
+    # 没有这条，数据范围"是否真的过滤"就没有任何断言 —— 上面那条只证明
+    # "挂在根节点的人看得到全部"，挂在根节点本来就该看全部，证明不了过滤生效。
+    demo = mapping.get("department_head_demo")
+    if demo:
+        demo_token = create_local_token(demo[0], TENANT)
+        tokens["department_head_demo"] = demo_token
+        r = await call("GET", "/api/v1/work-orders?page=1&page_size=100",
+                       "department_head_demo")
+        demo_total = r.json().get("data", {}).get("total", -1) if r.status_code == 200 else -1
+        ok = -1 < demo_total < admin_total if admin_total else False
+        failures += 0 if ok else 1
+        _check("DEPT_CHILD@一号车间 可见量严格小于 admin", ok,
+               f"demo={demo_total} < admin={admin_total}")
+        if ok:
+            # 列表接口不返回 org_id（投影里没有），所以不能直接查 items 的 org_id。
+            # 改为与库里"一号车间子树内的工单数"对账 —— 这才是过滤是否精确的证据。
+            gen2 = get_db()
+            s2 = await gen2.__anext__()
+            cnt = await s2.execute(text(
+                "SELECT COUNT(*) FROM work_orders WHERE tenant_id = :t "
+                "AND org_id IN (2, 3, 4)"
+            ), {"t": TENANT})
+            db_cnt = cnt.scalar() or 0
+            try:
+                await gen2.__anext__()
+            except StopAsyncIteration:
+                pass
+            ok2 = demo_total == db_cnt
+            failures += 0 if ok2 else 1
+            _check("可见量 == 库中一号车间子树内的工单数", ok2,
+                   f"接口 {demo_total} vs 库 {db_cnt}")
 
     # ============================================================
     print("\n=== D. 组织 CRUD ===")

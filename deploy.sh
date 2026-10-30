@@ -30,8 +30,15 @@ docker network connect mfg1_default mfg1-backend 2>/dev/null || true
 docker restart mfg1-backend 2>/dev/null
 sleep 3
 
-echo "[5/6] 结构漂移迁移（补列 + 数值列类型收紧，幂等，失败不阻断）"
-docker exec -w /app mfg1-backend python /app/migrations/20261006_missing_columns.py || true
+echo "[5/6] 结构迁移（按文件名顺序全量执行，每个脚本自身幂等，失败不阻断）"
+# 为什么要循环而不是逐个列：此前只显式跑了 20261006 一个脚本，
+# 20261028 之后的 5 个迁移（ncr / organizations / status_log / iqc / wo_receipt /
+# unique_doc_no / subtable_org）**从未在 staging 上执行过** —— 新列靠 create_all
+# 建不出来（create_all 只建表不补列），于是"代码进去了、库没跟上"。
+for m in $(docker exec mfg1-backend sh -c 'ls /app/migrations/*.py 2>/dev/null | sort'); do
+  echo "  -> $m"
+  docker exec -w /app mfg1-backend python "$m" || true
+done
 
 echo "[6/6] 等待健康 + 轻量验证"
 sleep 10

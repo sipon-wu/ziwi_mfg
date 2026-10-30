@@ -171,4 +171,11 @@ ORG_SCOPED_TABLES: Dict[str, str] = {
     "ncr_records":      "org_id",
     "receipt_orders":   "org_id",
     "issue_orders":     "department_id",
+    # ── 子表（2026-10-30 补，此前三张表完全不过滤 = 数据范围在这三张表上失效）──
+    # 归属规则：work_reports 取**报工人**组织（车间主任要看到本车间工人报的工，
+    # 而不是看"本车间被下的工单"）；inspection_result / inventory_transactions
+    # 在写入侧显式继承父单/操作人组织，见对应 repo 的 INSERT。
+    "work_reports":           "org_id",
+    "inspection_result":      "org_id",
+    "inventory_transactions": "org_id",
 }

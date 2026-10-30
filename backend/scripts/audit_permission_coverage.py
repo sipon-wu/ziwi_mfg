@@ -105,7 +105,11 @@ async def main() -> int:
     print(f"租户 {args.tenant}｜角色 {len(roles)} 个｜路由 {len(perm_map)} 条｜"
           f"不同权限码 {len(required_codes)} 个｜权限字典 {len(perm_dict)} 条")
 
+    # failed = 硬阻塞（有它就一定不能切）；warned = 提醒（可能是有意为之）
+    # 之前两者混用，导致『43 个 PLAT 平台管理码只给 admin』这种**有意设计**
+    # 被当成阻塞项，结论永远打印"暂不建议切强制模式"—— 狼来了几次之后就没人看了。
     failed = False
+    warned = False
 
     # ── 1. 路由码是否都在权限字典里 ──
     print("\n=== 1. 路由权限码 vs 权限字典 ===")
@@ -130,7 +134,7 @@ async def main() -> int:
         if not hit:
             dead.append((code, len([p for p, c in perm_map.items() if c == code])))
     if dead:
-        failed = True
+        warned = True
         print(f"  [WARN] {len(dead)} 个码没有任何非 admin 角色命中 —— 切强制后这些接口只对 admin 开放：")
         by_mod = defaultdict(list)
         for code, n in dead:
@@ -176,12 +180,15 @@ async def main() -> int:
     # ── 结论 ──
     print("\n" + "=" * 70)
     if failed:
-        print("结论：**暂不建议切强制模式**，先处理上面 [FAIL]/[WARN] 的项。")
-        print("      也可以用灰度开关分批切：PERMISSION_ENFORCE_MODULES=M01,M03")
+        print("结论：**有阻塞项，不能切强制模式**（见上面 [FAIL]）。")
+        print("      灰度只能推迟问题，不会解决问题：/work-orders/、/judge 这类")
+        print("      参数化路由一旦漏登记，强制模式下是**裸奔**而不是 403。")
+    elif warned:
+        print("结论：**无阻塞项**，可以保持强制模式。")
+        print("      上面 [WARN] 的无人可用码若确属平台管理类（PLAT:*），有意只给")
+        print("      admin 即可；若不属，则是某个角色少了能力，需要补授权。")
     else:
-        print("结论：可以切强制模式（覆盖检查全部通过）。")
-        print("      建议先灰度：PERMISSION_ENFORCE=true + PERMISSION_ENFORCE_MODULES=M01,M03")
-        print("      观察无 403 异常后再清空 MODULES 全量生效。")
+        print("结论：覆盖检查全部通过，强制模式可以全量生效。")
     return 1 if (failed and args.strict) else 0
 
 

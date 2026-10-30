@@ -89,6 +89,9 @@ class InspectionResult(Base):
     id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False)
     order_id = Column(BigInteger, nullable=False, comment="FK to inspection_order.id")
+    # 归属组织：**继承检验单**，不取录入人组织。子表若用录入人组织，
+    # 会出现"品质部录入人 + 生产部检验单"→ 生产部负责人看得到单头看不到明细。
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用，继承检验单 org_id）")
     item_id = Column(BigInteger, comment="FK to inspection_item.id")
     item_name = Column(String(200), comment="冗余字段")
     # spec_value 保持文本：实测为**区间描述**（如 "39.95~40.05"、"0~1.6"），非单值，不能改数值

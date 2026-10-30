@@ -61,6 +61,7 @@ class WorkReport(Base):
     id = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id = Column(String(50), nullable=False, comment="租户ID")
     work_order_id = Column(BigInteger, nullable=False, comment="关联工单ID")
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用，取报工人主组织）")
     report_date = Column(Date, nullable=False, comment="报工日期")
     reporter_id = Column(BigInteger, nullable=False, comment="报工人ID")
     operation_code = Column(String(100), comment="工序编码")

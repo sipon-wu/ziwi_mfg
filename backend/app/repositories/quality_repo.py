@@ -234,10 +234,27 @@ class InspectionResultRepository(MultiTenantRepository):
         )
 
     async def create_result(self, data: dict) -> int:
+        """写入检验结果明细。
+
+        归属组织 ``org_id`` **继承检验单**（子查询取 ``inspection_order.org_id``），
+        不取录入人组织 —— 否则「品质部录入 + 生产部检验单」会让生产部负责人
+        看得到单头、看不到明细。调用方已在 data 里给了 ``org_id`` 时以调用方为准
+        （``MultiTenantRepository._inject_org_owner`` 检测到列已存在就不再覆盖）。
+        """
+        if data.get("org_id") is None:
+            return await self.execute(
+                "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
+                "spec_value, measured_value, deviation, unit, result, remark) "
+                "VALUES (:tenant_id, :order_id, "
+                "(SELECT org_id FROM inspection_order WHERE id = :order_id), "
+                ":item_id, :item_name, :spec_value, "
+                ":measured_value, :deviation, :unit, :result, :remark)",
+                data,
+            )
         return await self.execute(
-            "INSERT INTO inspection_result (tenant_id, order_id, item_id, item_name, spec_value, "
-            "measured_value, deviation, unit, result, remark) "
-            "VALUES (:tenant_id, :order_id, :item_id, :item_name, :spec_value, "
+            "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
+            "spec_value, measured_value, deviation, unit, result, remark) "
+            "VALUES (:tenant_id, :order_id, :org_id, :item_id, :item_name, :spec_value, "
             ":measured_value, :deviation, :unit, :result, :remark)",
             data,
         )

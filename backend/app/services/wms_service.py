@@ -142,9 +142,7 @@ class LocationService:
         max_capacity = data.get("max_capacity")
 
         from app.repositories.wms_repo import WarehouseZoneRepository
-        zone_repo = WarehouseZoneRepository(self.repo._session)
-        if self.repo._tenant_id:
-            zone_repo.set_tenant_id(self.repo._tenant_id)
+        zone_repo = WarehouseZoneRepository(self.repo._session).inherit_context_from(self.repo)
         zone = await zone_repo.get(zone_id)
         if not zone:
             raise ValueError(f"库区不存在: {zone_id}")
@@ -296,9 +294,7 @@ class InventoryService:
         await self.repo.upsert(target_data)
 
         # 记录流水
-        tx_repo = InventoryTransactionRepository(self.repo._session)
-        if self.repo._tenant_id:
-            tx_repo.set_tenant_id(self.repo._tenant_id)
+        tx_repo = InventoryTransactionRepository(self.repo._session).inherit_context_from(self.repo)
         await tx_repo.create({
             "tenant_id": tenant_id,
             "transaction_type": "transfer",
@@ -1127,12 +1123,8 @@ class InventoryCountService:
             raise ValueError("只有已完成的盘点单才能调整")
 
         from app.repositories.wms_repo import InventoryRepository, InventoryTransactionRepository
-        inv_repo = InventoryRepository(self.repo._session)
-        if self.repo._tenant_id:
-            inv_repo.set_tenant_id(self.repo._tenant_id)
-        tx_repo = InventoryTransactionRepository(self.repo._session)
-        if self.repo._tenant_id:
-            tx_repo.set_tenant_id(self.repo._tenant_id)
+        inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)
+        tx_repo = InventoryTransactionRepository(self.repo._session).inherit_context_from(self.repo)
 
         items = await self.item_repo.list_by_count(id)
         adjust_count = 0
@@ -1207,12 +1199,8 @@ class InventoryAlertService:
 
     async def check_and_alert(self, tenant_id: str) -> list:
         """检查所有物料库存，低于阈值的生成预警"""
-        mat_repo = MaterialRepository(self.repo._session)
-        if self.repo._tenant_id:
-            mat_repo.set_tenant_id(self.repo._tenant_id)
-        inv_repo = InventoryRepository(self.repo._session)
-        if self.repo._tenant_id:
-            inv_repo.set_tenant_id(self.repo._tenant_id)
+        mat_repo = MaterialRepository(self.repo._session).inherit_context_from(self.repo)
+        inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)
 
         alert_count = 0
         materials = await mat_repo.list_below_safety_stock()
