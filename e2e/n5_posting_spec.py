@@ -114,6 +114,14 @@ def check(label: str, actual, expected):
         raise SpecError(f"{label} 不满足：actual={actual} expected={expected}")
 
 
+def check_near(label: str, actual: float, expected: float, tol: float = 0.01):
+    ok = abs(actual - expected) <= tol
+    mark = "PASS" if ok else "FAIL"
+    print(f"  [{mark}] {label}: actual={actual} expected≈{expected} (tol={tol})")
+    if not ok:
+        raise SpecError(f"{label} 不满足：actual={actual} expected≈{expected}")
+
+
 async def main():
     print(f"== N5 验收脚本（方案 B 确认即过账） base={BASE_URL} ==")
     async with httpx.AsyncClient(timeout=30) as client:
@@ -123,6 +131,13 @@ async def main():
         warehouse_id = await ensure_warehouse(client)
         material_id = await ensure_material(client)
         print(f"  使用 warehouse_id={warehouse_id} material_id={material_id}")
+
+        # ⚠️ 全部断言改成**相对基线**：原脚本写死绝对值（"收货后现存量=100"），
+        # 只有在"该物料库存恰好为 0"的空库上跑第一次才成立。复用已有物料时
+        # 基线不是 0，第二次跑就必红，看起来像"过账算错了"。
+        base_stock = await current_stock(client, material_id)
+        base_tx, base_sum = await tx_summary(client, material_id)
+        print(f"  [BASELINE] 现存量={base_stock} 流水={base_tx} 增量和={base_sum}")
 
         # ① 收货登记 +100（pending → inspecting，待检区入账）
         ro = await client.post(f"{API}/wms/receipt-orders", json={
@@ -143,9 +158,10 @@ async def main():
             raise SpecError(f"收货登记失败 {recv.status_code}: {recv.text}")
         recv_status = (await client.get(f"{API}/wms/receipt-orders/{ro_id}")).json()["data"]["status"]
         check("收货后入库单状态=inspecting", recv_status, "inspecting")
-        check("收货后现存量=100", await current_stock(client, material_id), float(EXP_RECEIVE))
+        check_near("收货后现存量+100",
+                   await current_stock(client, material_id) - base_stock, float(EXP_RECEIVE))
         c1, s1 = await tx_summary(client, material_id)
-        check("收货后流水=1", c1, 1)
+        check("收货后流水+1", c1 - base_tx, 1)
 
         # ② 出库确认 -10
         io1 = await client.post(f"{API}/wms/issue-orders", json={
@@ -160,9 +176,11 @@ async def main():
                                  json={"issued_qty": EXP_ISSUE_1})
         if iss1.status_code != 200:
             raise SpecError(f"出库确认1失败 {iss1.status_code}: {iss1.text}")
-        check("发-10后现存量=90", await current_stock(client, material_id), float(EXP_RECEIVE - EXP_ISSUE_1))
+        check_near("发-10后现存量=基线+90",
+                   await current_stock(client, material_id) - base_stock,
+                   float(EXP_RECEIVE - EXP_ISSUE_1))
         c2, s2 = await tx_summary(client, material_id)
-        check("发-10后流水=2", c2, 2)
+        check("发-10后流水+2", c2 - base_tx, 2)
 
         # ③ 出库确认 -5
         io2 = await client.post(f"{API}/wms/issue-orders", json={
@@ -177,10 +195,11 @@ async def main():
                                  json={"issued_qty": EXP_ISSUE_2})
         if iss2.status_code != 200:
             raise SpecError(f"出库确认2失败 {iss2.status_code}: {iss2.text}")
-        check("出-5后现存量=85", await current_stock(client, material_id), float(EXP_FINAL_STOCK))
+        check_near("出-5后现存量=基线+85",
+                   await current_stock(client, material_id) - base_stock, float(EXP_FINAL_STOCK))
         c3, s3 = await tx_summary(client, material_id)
-        check("出-5后流水=3", c3, EXP_TX_COUNT)
-        check("增量和=85", s3, float(EXP_TX_SUM))
+        check("出-5后流水+3", c3 - base_tx, EXP_TX_COUNT)
+        check_near("增量和=85", s3 - base_sum, float(EXP_TX_SUM))
 
         # ============================================
         # T05 扩展 — cancel 状态感知红冲验收
@@ -204,9 +223,10 @@ async def main():
             f"{API}/wms/receipt-orders/{ro_pending_id}",
         )).json()["data"]["status"]
         check("cancel-10 入库单 status=cancelled", ro_pending_status, "cancelled")
-        check("cancel-10 库存不变=85", await current_stock(client, material_id), float(EXP_FINAL_STOCK))
+        check_near("cancel-10 库存不变", await current_stock(client, material_id),
+                   base_stock + EXP_FINAL_STOCK)
         c10, _ = await tx_summary(client, material_id)
-        check("cancel-10 流水数不变=3", c10, EXP_TX_COUNT)
+        check("cancel-10 流水数不变", c10 - base_tx, EXP_TX_COUNT)
 
         # cancel-11：取消已收货（inspecting）状态的收货单
         N_CANCEL11 = 30
@@ -238,9 +258,9 @@ async def main():
             f"{API}/wms/receipt-orders/{ro_insp_id}",
         )).json()["data"]["status"]
         check("cancel-11 入库单 status=cancelled", ro_insp_status, "cancelled")
-        check("cancel-11 库存-N（待检区回滚）",
-              await current_stock(client, material_id),
-              float(stock_before_c11 - N_CANCEL11))
+        check_near("cancel-11 库存-N（待检区回滚）",
+                   await current_stock(client, material_id),
+                   float(stock_before_c11 - N_CANCEL11))
         c11, _ = await tx_summary(client, material_id)
         check("cancel-11 流水+1（多一条 cancel 流水）",
               c11, tx_before_c11 + 1)
@@ -275,9 +295,9 @@ async def main():
             f"{API}/wms/issue-orders/{io_issued_id}",
         )).json()["data"]["status"]
         check("cancel-12 出库单 status=cancelled", io_issued_status, "cancelled")
-        check("cancel-12 库存+M（原库位回滚）",
-              await current_stock(client, material_id),
-              float(stock_before_c12 + M_CANCEL12))
+        check_near("cancel-12 库存+M（原库位回滚）",
+                   await current_stock(client, material_id),
+                   float(stock_before_c12 + M_CANCEL12))
         c12, _ = await tx_summary(client, material_id)
         check("cancel-12 流水+1（多一条 cancel 流水）",
               c12, tx_before_c12 + 1)

@@ -56,6 +56,7 @@
 | C-27 | **初始化一年日历报「共 66795 天」** | 本批 | `batch_upsert` 累加 `upsert()` 返回值 —— `upsert()` 走 INSERT 返自增主键、走 UPDATE 返 rowcount，两种口径混加。实际只有 365 行。改为按行数计数 |
 | C-28 | **月度报表 500（SQLite）** | 本批 | `ProductionRepository.monthly_report` 用 `date_trunc('month', ...)`，PG 专有。本就只汇总单月 → 改区间 + 常量分组键 |
 | C-29 | **`factory_full_flow_e2e.py` 硬编码 staging 资源 + 三处断言口径错** | 本批 | ①`WH_RAW=41/WH_FG=43/MATERIAL_ID=115/PRODUCT_ID=34` 只有 staging 有 → 改 S0 靶场自举（含走真实收货+上架补原料库存）；②S3 打印"跳过出库验证"却照旧断言库存减少 → 无库存改真跳过；③S4 取消**出库**单断言"库存不变"（照抄收货单语义）→ 改为"回滚量 == 当初扣减量"；④成品上架没传 `location_id` 被 `WMS_404_LOCATION` 拒，只打 WARN 就放过 → 补库位并改为硬断言 |
+| C-30 | **`n5_posting_spec.py` 断言写死绝对值，复用物料必红** | 本批 | 脚本首跑 `FAIL 收货后现存量=100: actual=1500.0`。`ensure_material` 按编码复用已有物料（id=30，库里已有 1400 库存），而断言写的是"收货 100 后存量 == 100"。改为记录 `base_stock/base_tx/base_sum` 基线后全部用**增量**断言（`check_near(actual - base, delta)`）；同时把 cancel-11/cancel-12 的库存浮点等值判断换成 `check_near`。语义不变，只是不再假设基线为 0 —— 脚本因此可反复跑 |
 
 ### 方言依赖专项（C-26/C-28 共性）
 
