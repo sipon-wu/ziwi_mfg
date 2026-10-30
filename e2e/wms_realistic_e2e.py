@@ -7,7 +7,8 @@ USER = os.environ.get("USERNAME", "test_admin")
 PASS = os.environ.get("PASSWORD", "test123456")
 TENANT = os.environ.get("TENANT", "mfg_demo")
 
-TS = datetime.now().strftime("%m%d%H%M")
+# 精确到秒：单号形如 PO-RCV-<TS>-001，只到分钟时同一分钟内重跑会撞唯一约束
+TS = datetime.now().strftime("%m%d%H%M%S")
 
 
 class SpecError(Exception):
@@ -50,6 +51,19 @@ async def get_inventory(client, material_id):
     )
 
 
+async def act(client, url, body, label):
+    """必须成功的状态流转：非 200 立刻带后端原话失败。
+
+    原脚本对这些调用**不看状态码** —— 后端拒绝时（例如出库缺批次、库位不匹配）
+    脚本会继续往下跑，最后卡在库存断言上，看起来像"库存算错了"，实际是
+    上一个动作压根没生效。这类"静默失败"是最难查的一类。
+    """
+    r = await client.post(url, json=body)
+    if r.status_code != 200:
+        raise SpecError(f"{label} 失败 {r.status_code}: {r.text[:300]}")
+    return r
+
+
 async def create_receipt(client, receipt_no, warehouse_id, material_id, qty):
     r = await client.post(
         f"{BASE}/api/v1/wms/receipt-orders",
@@ -70,14 +84,106 @@ async def create_receipt(client, receipt_no, warehouse_id, material_id, qty):
     return ro_id, item_id, order
 
 
+# ── 靶场自举 ────────────────────────────────────────────────────────────
+# 本脚本原先硬编码 staging 上的 WID=45 / MID=115 / order_id=34。指向其它库
+# （尤其本地 SQLite —— 它默认不校验外键）跑时，单据照样能建成功，只是
+# material_id / warehouse_id 全指向不存在的记录 —— 静默造孤儿单，然后卡在
+# 库存断言上，"看起来是库存算错了"，实际是靶场根本不存在。
+#
+# 现在改为按**编码**自举：查不到就建，查得到就复用。同一套脚本既能跑本地
+# 也能跑 staging / 生产预发，且重复跑不产生新的脏数据。
+WH_CODE = "E2E-WH"
+MAT_CODE = "E2E-MAT"
+
+
+async def _first(client, url, params):
+    r = await client.get(url, params=params)
+    if r.status_code != 200:
+        raise SpecError(f"GET {url} failed {r.status_code}: {r.text[:200]}")
+    return (r.json().get("data") or {}).get("items") or []
+
+
+async def ensure_warehouse(client, code, name):
+    for w in await _first(client, f"{BASE}/api/v1/wms/warehouses",
+                          {"keyword": code, "page_size": 100}):
+        if w.get("code") == code:
+            print(f"  [REUSE] 仓库 {code} id={w['id']}")
+            return w["id"]
+    r = await client.post(f"{BASE}/api/v1/wms/warehouses", json={
+        "code": code, "name": name, "type": "raw_material",
+    })
+    if r.status_code != 200:
+        raise SpecError(f"Create warehouse failed {r.status_code}: {r.text[:200]}")
+    wid = r.json()["data"]["id"]
+    print(f"  [CREATE] 仓库 {code} id={wid}")
+    return wid
+
+
+async def ensure_material(client, code, name, unit="PCS"):
+    for m in await _first(client, f"{BASE}/api/v1/wms/materials",
+                          {"keyword": code, "page_size": 100}):
+        if m.get("code") == code:
+            print(f"  [REUSE] 物料 {code} id={m['id']}")
+            return m["id"]
+    r = await client.post(f"{BASE}/api/v1/wms/materials", json={
+        "code": code, "name": name, "unit": unit, "material_type": "raw",
+    })
+    if r.status_code != 200:
+        raise SpecError(f"Create material failed {r.status_code}: {r.text[:200]}")
+    mid = r.json()["data"]["id"]
+    print(f"  [CREATE] 物料 {code} id={mid}")
+    return mid
+
+
+async def ensure_location(client, warehouse_id):
+    """上架必须有库位；仓库是新建的就顺手建一个，已有就复用第一个。"""
+    r = await client.get(f"{BASE}/api/v1/wms/warehouses/{warehouse_id}/locations",
+                         params={"page_size": 100})
+    if r.status_code == 200:
+        payload = r.json().get("data")
+        # 这个子资源直接返回数组，不是 {items: [...]}（与仓库/物料列表不同）
+        items = payload if isinstance(payload, list) else (payload or {}).get("items") or []
+        if items:
+            print(f"  [REUSE] 库位 id={items[0]['id']}")
+            return items[0]["id"]
+    r = await client.post(f"{BASE}/api/v1/wms/locations", json={
+        "warehouse_id": warehouse_id, "location_code": "E2E-L01", "location_type": "shelf",
+    })
+    if r.status_code != 200:
+        raise SpecError(f"Create location failed {r.status_code}: {r.text[:200]}")
+    lid = r.json()["data"]["id"]
+    print(f"  [CREATE] 库位 E2E-L01 id={lid}")
+    return lid
+
+
+async def ensure_work_order(client, wo_no):
+    """出库单的 order_id 必须指向真实工单，否则又是孤儿引用。"""
+    rows = await _first(client, f"{BASE}/api/v1/work-orders",
+                        {"keyword": wo_no, "page_size": 100})
+    for w in rows:
+        if w.get("wo_no") == wo_no:
+            print(f"  [REUSE] 工单 {wo_no} id={w['id']}")
+            return w["id"]
+    r = await client.post(f"{BASE}/api/v1/work-orders", json={
+        "wo_no": wo_no,
+        "product_code": MAT_CODE,
+        "product_name": "E2E 拟真用例成品",
+        "planned_qty": 100,
+        "wo_type": "production",
+    })
+    if r.status_code != 200:
+        raise SpecError(f"Create work order failed {r.status_code}: {r.text[:200]}")
+    oid = r.json()["data"]["id"]
+    print(f"  [CREATE] 工单 {wo_no} id={oid}")
+    return oid
+
+
 async def main():
     client = httpx.AsyncClient(timeout=30)
     token = await login(client)
     client.headers["Authorization"] = f"Bearer {token}"
     client.headers["X-Tenant-Id"] = TENANT
 
-    WID = 45
-    MID = 115
     results = []
 
     def check(name, actual, expected):
@@ -88,6 +194,14 @@ async def main():
         if not ok:
             raise SpecError(f"{name}: got {actual}, expected {expected}")
 
+    # ── 靶场自举：不假设任何既有 id ──
+    print("== 靶场自举 ==")
+    WID = await ensure_warehouse(client, WH_CODE, "E2E 拟真仓")
+    MID = await ensure_material(client, MAT_CODE, "E2E 拟真物料")
+    loc_id = await ensure_location(client, WID)
+    order_id = await ensure_work_order(client, f"WO-E2E-{TS}")
+    print()
+
     print(f"== WMS 拟真用例 E2E (warehouse={WID} material={MID}) ==\n")
 
     # baseline
@@ -97,10 +211,8 @@ async def main():
     # ==== S1: Receipt + inspecting cancel (rollback) ====
     print("--- S1: 收货->inspecting->取消(回滚) ---")
     ro1_id, item1_id, _ = await create_receipt(client, f"PO-RCV-{TS}-001", WID, MID, 200)
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-order-items/{item1_id}/receive",
-        json={"received_qty": 200},
-    )
+    await act(client, f"{BASE}/api/v1/wms/receipt-order-items/{item1_id}/receive",
+              {"received_qty": 200}, "S1 收货")
     s1_insp = await get_inventory(client, MID)
     check("S1-insp-stock+200", s1_insp - base_stock, 200.0)
 
@@ -123,37 +235,25 @@ async def main():
     # ==== S2: Receipt + store + cancel (stored rollback) ====
     print("\n--- S2: 收货->上架->取消(stored回滚) ---")
     ro2_id, item2_id, _ = await create_receipt(client, f"PO-RCV-{TS}-002", WID, MID, 150)
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-order-items/{item2_id}/receive",
-        json={"received_qty": 150},
-    )
-    loc_r = await client.get(f"{BASE}/api/v1/wms/locations?page_size=10")
-    locations = loc_r.json().get("data", {}).get("items", [])
-    loc_id = locations[0]["id"] if locations else None
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-order-items/{item2_id}/store",
-        json={"location_id": loc_id, "stored_qty": 150},
-    )
+    await act(client, f"{BASE}/api/v1/wms/receipt-order-items/{item2_id}/receive",
+              {"received_qty": 150}, "S2 收货")
+    # 库位在自举阶段已确保存在（loc_id），不再就地取"列表第一条"
+    await act(client, f"{BASE}/api/v1/wms/receipt-order-items/{item2_id}/store",
+              {"location_id": loc_id, "stored_qty": 150}, "S2 上架")
     s2_stored = await get_inventory(client, MID)
     check("S2-stored+150", s2_stored - base_stock, 150.0)
 
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-orders/{ro2_id}/cancel",
-        json={"reason": "采购订单取消-协议终止"},
-    )
+    await act(client, f"{BASE}/api/v1/wms/receipt-orders/{ro2_id}/cancel",
+              {"reason": "采购订单取消-协议终止"}, "S2 取消")
     check("S2-stored-rollback", await get_inventory(client, MID), base_stock)
 
     # ==== S3: Receipt + store + issue + cancel (issued rollback) ====
     print("\n--- S3: 收货->上架->出库->取消(issued回滚) ---")
     ro3_id, item3_id, _ = await create_receipt(client, f"PO-RCV-{TS}-003", WID, MID, 100)
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-order-items/{item3_id}/receive",
-        json={"received_qty": 100},
-    )
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-order-items/{item3_id}/store",
-        json={"location_id": loc_id, "stored_qty": 100},
-    )
+    await act(client, f"{BASE}/api/v1/wms/receipt-order-items/{item3_id}/receive",
+              {"received_qty": 100}, "S3 收货")
+    await act(client, f"{BASE}/api/v1/wms/receipt-order-items/{item3_id}/store",
+              {"location_id": loc_id, "stored_qty": 100}, "S3 上架")
     s3_pre = await get_inventory(client, MID)
 
     # create issue order
@@ -163,7 +263,7 @@ async def main():
             "issue_no": f"ISO-{TS}-001",
             "issue_type": "production",
             "warehouse_id": WID,
-            "order_id": 34,
+            "order_id": order_id,
             "items": [
                 {"line_no": 1, "material_id": MID, "demanded_qty": 100, "unit": "PCS"}
             ],
@@ -175,10 +275,8 @@ async def main():
     io = await get_issue_order(client, io_id)
     io_item_id = io["items"][0]["id"]
 
-    await client.post(
-        f"{BASE}/api/v1/wms/issue-order-items/{io_item_id}/issue",
-        json={"issued_qty": 50},
-    )
+    await act(client, f"{BASE}/api/v1/wms/issue-order-items/{io_item_id}/issue",
+              {"issued_qty": 50}, "S3 出库")
     s3_post = await get_inventory(client, MID)
     check("S3-issued-50", s3_pre - s3_post, 50.0)
 
@@ -194,10 +292,8 @@ async def main():
     print("\n--- S4: pending取消(零影响) ---")
     ro4_id, _, _ = await create_receipt(client, f"PO-RCV-{TS}-004", WID, MID, 50)
     s4_before = await get_inventory(client, MID)
-    await client.post(
-        f"{BASE}/api/v1/wms/receipt-orders/{ro4_id}/cancel",
-        json={"reason": "单据建错-作废"},
-    )
+    await act(client, f"{BASE}/api/v1/wms/receipt-orders/{ro4_id}/cancel",
+              {"reason": "单据建错-作废"}, "S4 取消")
     check("S4-pending-zero", await get_inventory(client, MID), s4_before)
 
     # ==== S5: audit trail ====

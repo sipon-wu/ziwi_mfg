@@ -358,6 +358,22 @@ class InventoryRepository(MultiTenantRepository):
             {"qty": quantity, "id": id},
         )
 
+    async def find_available_rows(self, material_id: int, warehouse_id: int) -> list:
+        """物料级（``batch_id IS NULL``）**所有**可用库存行，按可用量降序。
+
+        为什么不能只用 ``find_one``：同一物料在同一仓库会有多条库位级库存行 ——
+        待检区一行、正式库位一行；每次收货/上架/取消都会留下数量为 0 的行。
+        ``find_one`` 不带 ``location_id`` 时只 ``first()`` 取一条，可能刚好取到
+        0 那行 → **明明有货却报"可用库存不足：现有 0.0"**，而且怎么查都对不上。
+        """
+        return await self.query(
+            "SELECT * FROM inventory "
+            "WHERE material_id = :mid AND warehouse_id = :wid AND batch_id IS NULL "
+            "AND (quantity - locked_qty) > 0 "
+            "ORDER BY (quantity - locked_qty) DESC",
+            {"mid": material_id, "wid": warehouse_id},
+        )
+
     async def find_available_batches(self, material_id: int, warehouse_id: int,
                                      pick_strategy: str = "fifo", required_qty: float = None) -> list:
         """按拣选策略查找可用批次库存，按优先级排序返回

@@ -16,7 +16,6 @@
 
 | # | 项 | 现象 | 影响 | 一行根因 | 验收方式 |
 |---|---|---|---|---|---|
-| B-7 | **`wms_realistic_e2e.py` 硬编码 staging id** | 脚本里 `WID = 45`、`MID = 115`、`order_id = 34` 是 staging 上的真实 id | 指向本地库跑时，登录/建单都能过（SQLite 无外键约束），于是**静默造出一批 material_id/warehouse_id 指向不存在记录的孤儿单**，然后卡在库存断言上 | 脚本为 staging 一次性验证写的，没做靶场自举 | 改成"先按编码查/建物料与仓库，再拿 id"，或加前置校验：id 不存在直接退出并提示"本脚本仅限 staging" |
 | B-8 | **9 个种子角色里只有 `admin` 带 `is_system=1`** | 其余 8 个（`department_head` / `inspector` / `quality_engineer` …）界面上「删除」按钮可点 | 客户可以把平台预置的角色删掉；`seed_permissions.py` 按 code 授权，删掉后重跑种子只会报 "unmatched_roles"，不会自动重建 | 早期 `roles` 表只有 admin 标了 `is_system`，后续加角色时没有统一约定 | 二选一：①把 8 个种子角色统一标 `is_system=1`；②在 `seed_permissions.py` 里补"角色不存在则按内置定义重建" |
 
 
@@ -50,6 +49,8 @@
 | C-20 | **`roles.code` 无唯一约束** | 本批 | 做 C-19 时为"编码重复该给人话"写断言才发现：同编码能建出 N 个角色，`get_by_code()` 随机命中 → 权限时有时无且不报错。三层防护：模型 `UniqueConstraint(tenant_id, code)` + 服务层前置查重 + 接口层 `ValueError→400`；迁移 `20261101_roles_code_unique.py` 去重并补索引 |
 | C-21 | **有成员的角色可被删除，成员权限被静默摘掉** | 本批 | `RoleService.delete` 只拦 `is_system`，不查成员；`RoleRepository.delete` 连 `user_roles` 一起清 → "删一个角色，悄悄摘掉一批人的权限"。补 `count_users()` 前置检查，返回 409 + "还有 N 名成员，请先移出" |
 | C-22 | **`GET /roles/{id}/users` 返回全租户用户** | 本批 | `JOIN user_roles ur ON ur.role_id = :role_id` 少了 `ur.user_id = u.id` → `users × user_roles` 笛卡尔积。1 名成员的临时角色在界面上显示 11 人（=全租户用户数），任意角色点开都是全员。补 JOIN 条件 + 一条跑生产 SQL 的回归测试 |
+| C-23 | **`wms_realistic_e2e.py` 硬编码 staging id**（原 B-7） | 本批 | 改为按编码自举：`ensure_warehouse` / `ensure_material` / `ensure_location` / `ensure_work_order` 查不到就建、查得到就复用；同一脚本可跑本地与 staging。另把 8 处**不看状态码**的 POST 换成 `act()`，失败立刻带后端原话退出（此前后端拒绝也继续跑，最后卡在库存断言上，看起来像"库存算错了"）。`TS` 从分钟精度改到秒，同分钟重跑不再撞单号唯一约束 |
+| C-24 | **WMS 出库自动拣选取到 0 库存行，明明有货报"库存不足"** | 本批 | `issue_item` 物料级回退用 `find_one(material_id, warehouse_id)`，不带 `location_id` 时只 `first()` 取一条；而同一物料同一仓库有多条库位级库存行（待检区 / 正式库位 / 取消后留下的 0 行）。改为 `find_available_rows()` 返回全部可用行（可用量降序）+ 服务层逐行扣减，与批次拣选分支同一思路 |
 
 ---
 

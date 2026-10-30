@@ -863,16 +863,31 @@ class IssueOrderService:
                     if remaining > 0:
                         raise ValueError(f"物料库存不足，仍需 {remaining} {item['unit']}")
                 else:
-                    # 回退：物料级库存行（含待检区，batch_id IS NULL）
-                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id)
-                    if not inv_row:
+                    # 回退：物料级库存行（含待检区，batch_id IS NULL）。
+                    # ⚠️ 必须遍历**所有**可用行，不能 find_one 取第一条：同一物料
+                    # 在同一仓库会有多条库位级库存行（待检区一行、正式库位一行），
+                    # 每次收货/上架/取消还会留下数量为 0 的行。find_one 可能刚好取到
+                    # 0 那行 → 明明有货却报"可用库存不足：现有 0.0"。
+                    rows = await self.inv_repo.find_available_rows(
+                        item["material_id"], warehouse_id
+                    )
+                    if not rows:
                         raise ValueError(f"物料 {item['material_id']} 无可用的库存记录")
-                    avail = inv_row["quantity"] - inv_row["locked_qty"]
-                    if avail < qty:
-                        raise ValueError(f"可用库存不足：现有 {avail}，需求 {qty}")
-                    await self.inv_repo.stock_out(inv_row["id"], qty)
-                    await self._create_issue_tx(tenant_id, item, order, -qty,
-                                                inv_row.get("location_id"), batch_no, created_by)
+                    total_avail = sum(r["quantity"] - r["locked_qty"] for r in rows)
+                    if total_avail < qty:
+                        raise ValueError(f"可用库存不足：现有 {total_avail}，需求 {qty}")
+                    remaining = qty
+                    for r in rows:
+                        if remaining <= 0:
+                            break
+                        avail = r["quantity"] - r["locked_qty"]
+                        take = min(remaining, avail)
+                        if take <= 0:
+                            continue
+                        await self.inv_repo.stock_out(r["id"], take)
+                        await self._create_issue_tx(tenant_id, item, order, -take,
+                                                    r.get("location_id"), batch_no, created_by)
+                        remaining -= take
             else:
                 # 显式指定库位/批次 → 解析正确的库存行 id
                 inv_row = None
