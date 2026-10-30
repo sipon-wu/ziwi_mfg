@@ -29,6 +29,80 @@ router = APIRouter(prefix="/api/v1", tags=["M10-SPC"])
 
 
 # ============================================================
+# 判异 → 不合格评审（P0-3）
+# ============================================================
+
+# 严重度合并顺序：一张单只留最高那一档
+_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _worst_severity(anomalies: list) -> str:
+    worst = "medium"
+    for a in anomalies:
+        sev = str(a.get("severity") or "medium").lower()
+        if _SEVERITY_RANK.get(sev, 0) > _SEVERITY_RANK.get(worst, 0):
+            worst = sev
+    return worst
+
+
+async def _raise_spc_ncr(repo, *, tenant_id: str, dimension_key: str,
+                         chart_type: str, limit_id: int,
+                         anomalies: list, actor_id: int = None) -> dict:
+    """控制图判异 → 自动开不合格评审单。
+
+    改造前 ``api/spc.py`` 全文没有 ncr 引用：判异只落 ``spc_alerts``（告警展示），
+    评审流程还得有人手工再录一遍 —— 而 NCR 状态机（``ncr_service``）早就完备。
+
+    幂等粒度是**控制图维度**而不是控制限行：每次重算都会 INSERT 一行新的
+    ``spc_control_limits``，若按 ``source_id=limit_id`` 去重，同一张图重算三次
+    就开三张单。这里按 ``source_no=dimension_key`` 找未关闭的单复用。
+    """
+    from app.repositories.ncr_repo import NcrRepository
+    from app.services.ncr_service import NcrService
+
+    ncr_repo = NcrRepository(repo._session)
+    if tenant_id:
+        ncr_repo.set_tenant_id(tenant_id)
+    # 继承写入归属，否则部门负责人看不到自己图上的判异单
+    if getattr(repo, "_write_org_id", None):
+        ncr_repo.set_write_org_id(repo._write_org_id)
+
+    existing = await ncr_repo.get_open_by_source_no("spc", dimension_key)
+    if existing:
+        return {"ncr_id": existing["id"], "created": False}
+
+    rules = "、".join(
+        f"规则{a.get('rule_no')}（子组{a.get('subgroup_no', '-')}）"
+        for a in anomalies
+    )
+    desc_lines = [
+        f"控制图 {chart_type} / {dimension_key} 判异，共 {len(anomalies)} 处：{rules}",
+    ]
+    for a in anomalies[:10]:
+        desc_lines.append(f"- 规则{a.get('rule_no')}: {a.get('description', '')}")
+
+    svc = NcrService(repo._session, tenant_id, repo=ncr_repo)
+    created = await svc.create_ncr(
+        {
+            "tenant_id": tenant_id,
+            "ncr_no": f"NC-SPC-{limit_id}",
+            "source_type": "spc",
+            "source_id": limit_id,
+            "source_no": dimension_key,
+            "defect_type": "SPC判异",
+            "severity": _worst_severity(anomalies),
+            "defect_qty": len(anomalies),
+            "total_qty": len(anomalies),
+            "defect_desc": "\n".join(desc_lines),
+            "raised_by": actor_id,
+        },
+        actor_id=actor_id,
+    )
+    return {"ncr_id": created["id"], "created": True}
+
+
+
+# ============================================================
 # 控制限配置
 # ============================================================
 @router.get("/spc/control-limits")
@@ -147,7 +221,7 @@ async def calculate_control_limits(
             "subgroup_count": limits.get("subgroup_count", 0),
             "calculated_at": datetime.now().isoformat(),
         }
-        await repo.create_limit(limit_data)
+        limit_id = await repo.create_limit(limit_data)
 
         # 批量保存数据点
         points = result.get("points", [])
@@ -196,6 +270,22 @@ async def calculate_control_limits(
                     "severity": anomaly.get("severity", "medium"),
                     "is_read": 0,
                 })
+
+        # 判异 → 不合格评审（P0-3）。告警只是"看见了"，评审单才是"有人负责"。
+        if anomalies:
+            try:
+                result["ncr"] = await _raise_spc_ncr(
+                    repo, tenant_id=tenant_id,
+                    dimension_key=req.dimension_key, chart_type=req.chart_type,
+                    limit_id=limit_id, anomalies=anomalies,
+                    actor_id=current_user.get("id"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                # 开单失败不能回滚已算出的控制限与数据点 —— 那会把"计算成功"
+                # 变成一个说不清的部分失败。留痕，让告警仍然可用。
+                import logging
+                logging.getLogger(__name__).exception("SPC 判异自动开 NCR 失败: %s", exc)
+                result["ncr"] = {"ncr_id": None, "error": str(exc)}
 
     return {"code": 0, "message": "计算完成", "data": result}
 

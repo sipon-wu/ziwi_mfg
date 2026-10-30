@@ -48,6 +48,21 @@ class NcrRepository(MultiTenantRepository):
             {"st": source_type, "sid": source_id},
         )
 
+    async def get_open_by_source_no(self, source_type: str,
+                                    source_no: str) -> Optional[Dict]:
+        """按来源单号查**未关闭**的 NCR。
+
+        SPC 判异用它做幂等：控制限行每次重算都会新增一行，若按 ``source_id``
+        去重，同一张控制图重算三次会开出三张评审单。改按"图维度"（存
+        ``source_no``）去重，且只认未关闭的 —— 关掉之后再次判异应当重新开单。
+        """
+        return await self.query_one(
+            "SELECT * FROM ncr_records WHERE source_type = :st AND source_no = :sno "
+            "AND (status IS NULL OR status NOT IN ('closed', 'cancelled')) "
+            "ORDER BY id DESC LIMIT 1",
+            {"st": source_type, "sno": source_no},
+        )
+
     async def update(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)
         return await self.execute(
