@@ -248,5 +248,15 @@
 - 角色增删改界面（当前只能给已有角色配权限）
 - 切强制模式三步（`PERMISSION_ENFORCE` 仍是 `false`，直调接口仍 200）
 - 子表组织归属：`work_reports` / `inspection_result` / `inventory_transactions` 无 `org_id`
-- **完工 / 转产的结果前端未展示**：`POST /work-orders` 创建接口也不返回 `data.id`，
-  用户建完工单拿不到 id，完工后也看不到"入库单 PRD-xxx 已生成"
+
+### 已闭：结果反馈闭环（`b98c283`）
+
+改造前 `POST /work-orders` 不回 `data.id`、完工返回的 `production_receipt` 在 `src/`
+里一次都没出现 —— 用户"点了、提示成功、什么都不知道"。现在：
+
+- 建单回 `data.id`，前端建完直接 `router.replace` 到详情
+- 完工弹「完工完成」：入库单号 / 仓库 / 数量 / "待收货"状态 / 成品档案是否自动建立，
+  未建成时点名原因；有 `M04` 读权时给「查看入库单」直达按钮
+- 新增 `src/utils/error.ts`：`errMessage()` 统一取后端 `detail.message`
+  （此前 4 处用 `e.message`，拿到的是 axios 的 "Request failed with status code 400"）
+- 验证：`work_order_result_e2e.js` 17/17 PASS，全程 0 JS 错误
