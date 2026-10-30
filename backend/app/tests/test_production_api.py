@@ -31,7 +31,11 @@ class TestProductionAPI:
                 "wo_no": "WO001", "product_code": "P001", "product_name": "测试产品", "planned_qty": 100
             })
         assert resp.status_code == 200
-        assert resp.json()["code"] == 0
+        body = resp.json()
+        assert body["code"] == 0
+        # 必须回 id：不回的话前端建完只能"回列表 → 搜索 → 点进去"
+        assert body["data"]["id"] == 1
+        assert body["data"]["wo_no"] == "WO001"
 
     async def test_create_work_order_duplicate_no_returns_400(self, async_client):
         """同号工单 → 400-0100，且不再落库"""

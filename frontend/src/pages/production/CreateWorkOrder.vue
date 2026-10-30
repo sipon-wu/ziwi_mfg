@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { post } from '@/api/client'
 import { showToast } from 'vant'
+import { errMessage } from '@/utils/error'
 
 const router = useRouter()
 const form = ref({ wo_no: '', product_code: '', product_name: '', planned_qty: 0, remark: '' })
@@ -11,11 +12,17 @@ const submitting = ref(false)
 async function handleSubmit() {
   submitting.value = true
   try {
-    await post('/work-orders', form.value)
+    // 后端现在回 { id, wo_no }。建完直接进详情，省掉
+    // "回列表 → 搜索 → 点进去"这套动作。
+    const res: any = await post('/work-orders', form.value)
     showToast('创建成功')
-    router.push('/work-orders')
-  } catch { showToast('创建失败') }
-  finally { submitting.value = false }
+    if (res?.id) router.replace(`/work-orders/${res.id}`)
+    else router.push('/work-orders')
+  } catch (e: any) {
+    // 以前这里固定弹"创建失败"，把"工单号已存在，请换一个单号"这类
+    // 后端人话全吞了 —— 用户只能猜自己哪儿填错了。
+    showToast(errMessage(e, '创建失败'))
+  } finally { submitting.value = false }
 }
 </script>
 

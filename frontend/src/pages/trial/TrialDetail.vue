@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showDialog, showToast, showLoadingToast, closeToast } from 'vant'
 import { getTrial, getTrialRoute, saveTrialRoute, getTrialBom, saveTrialBom, listReviews, submitReview, makeReviewDecision, advanceStage, convertToProduction, terminateTrial } from '@/api/trial'
 import type { TrialOrder, TrialRoute, TrialBom, TrialReview } from '@/api/trial'
+import { errMessage } from '@/utils/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -166,7 +167,7 @@ async function handleConvert() {
     showDialog({ title: '转量产完成', message: lines.join('\n'), messageAlign: 'left' })
     fetchAll()
   } catch (e: any) {
-    showToast(e?.message || '转量产失败')
+    showToast(errMessage(e, '转量产失败'))
   }
 }
 

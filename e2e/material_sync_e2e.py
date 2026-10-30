@@ -64,17 +64,12 @@ def make_work_order(c, wo_no, product_code, product_name, qty=20):
     })
     if r.status_code != 200:
         return None, f"建工单失败 {r.status_code} {r.text[:200]}"
-    wo_id = data_of(r).get("id") or data_of(r).get("order_id")
+    # 建单接口**必须**直接回 data.id：不回的话前端建完拿不到 id，
+    # 只能"回列表 → 搜索 → 点进去"。这里不做关键字反查兜底，
+    # 让漏返回 id 的回归当场暴露。
+    wo_id = data_of(r).get("id")
     if not wo_id:
-        # 部分实现把 id 放在 data.order_id / 直接在顶层
-        d = body(r)
-        wo_id = (d.get("data") or {}).get("id") if isinstance(d.get("data"), dict) else None
-    if not wo_id:
-        r2 = c.get(f"{API}/work-orders", params={"keyword": wo_no, "page_size": 5})
-        items = (data_of(r2) or {}).get("items") or []
-        wo_id = items[0]["id"] if items else None
-    if not wo_id:
-        return None, "建工单成功但取不到 id"
+        return None, f"建单接口未返回 data.id：{r.text[:200]}"
 
     # 草稿不可报工：先下达（release），报工时再自动开工
     r = c.post(f"{API}/work-orders/{wo_id}/release", json={})

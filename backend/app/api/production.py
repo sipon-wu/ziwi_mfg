@@ -41,7 +41,9 @@ async def create_work_order(
     result = await guard_duplicate(
         svc.create_work_order(data, current_user.get("tenant_id", "default")),
         "工单号", data.get("wo_no"))
-    return {"code": 0, "message": result["message"]}
+    # 回 id 供前端直接跳详情；其他创建接口（如物料）也是这个形状
+    return {"code": 0, "message": result["message"],
+            "data": {"id": result.get("id"), "wo_no": result.get("wo_no")}}
 
 @router.get("/work-orders/{order_id}")
 async def get_work_order(

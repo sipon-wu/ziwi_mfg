@@ -42,8 +42,10 @@ class ProductionService:
 
     async def create_work_order(self, data: dict, tenant_id: str) -> dict:
         data["tenant_id"] = tenant_id
-        await self.repo.create_work_order(data)
-        return {"message": "工单创建成功"}
+        order_id = await self.repo.create_work_order(data)
+        # 必须回 id：不回的话前端建完工单拿不到 id，
+        # 只能"建成功 → 回列表 → 搜索 → 再点进去"，缺一步跳不过去。
+        return {"message": "工单创建成功", "id": order_id, "wo_no": data.get("wo_no")}
 
     async def update_work_order(self, id: int, data: dict) -> dict:
         await self.repo.update_work_order(id, data)

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { showConfirmDialog, showDialog, showToast } from 'vant'
 import { listTrials, advanceStage, terminateTrial, convertToProduction } from '@/api/trial'
 import type { TrialOrder } from '@/api/trial'
+import { errMessage } from '@/utils/error'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
@@ -141,7 +142,7 @@ async function handleConvert(order: TrialOrder) {
     showDialog({ title: '转量产完成', message: lines.join('\n'), messageAlign: 'left' })
     fetch()
   } catch (e: any) {
-    showToast(e?.message || '转量产失败')
+    showToast(errMessage(e, '转量产失败'))
   }
 }
 

@@ -2,8 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
-import { showToast } from 'vant'
+import { showDialog, showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
+import { errCode, errMessage } from '@/utils/error'
 import type { WorkOrder } from '@/types'
 
 const auth = useAuthStore()
@@ -80,11 +81,72 @@ async function fetch() {
   } finally { loading.value = false }
 }
 
-function errMessage(e: any, fallback: string): string {
-  const d = e?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (d && typeof d === 'object' && d.message) return d.message
-  return fallback
+/**
+ * 完工结果弹窗：把"入库单建没建成"讲清楚。
+ *
+ * 后端 ``complete_work_order`` 的 ``production_receipt`` 三种形态：
+ *   - created=true       → 已生成 PRD-xxx
+ *   - skipped=true       → 没生成，reason 说明原因（零产出 / 无成品仓 / 档案补建失败）
+ *   - 字段缺失（老数据） → 不提这一块
+ */
+interface ProductionReceiptResult {
+  created?: boolean
+  skipped?: boolean
+  reason?: string
+  receipt_id?: number
+  receipt_no?: string
+  warehouse_name?: string
+  qty?: number
+  material_created?: boolean
+  material_code?: string
+}
+
+const canViewReceipt = computed(() => auth.hasPerm('M04:wms_receipt_order:read'))
+
+async function showCompleteResult(res: any) {
+  const pr: ProductionReceiptResult = res?.production_receipt || {}
+  const lines: string[] = []
+
+  if (pr.created) {
+    lines.push(`已生成生产入库单：${pr.receipt_no || '（单号缺失）'}`)
+    if (pr.warehouse_name) lines.push(`入库仓库：${pr.warehouse_name}`)
+    if (pr.qty != null) lines.push(`入库数量：${pr.qty}`)
+    lines.push('状态为待收货，需仓库收货并上架后才计入库存')
+    if (pr.material_created) {
+      lines.push(`成品档案：已自动建立（${pr.material_code}），可去物料页补充规格与安全库存`)
+    }
+  } else if (pr.skipped) {
+    lines.push(`未生成生产入库单：${pr.reason || '原因未说明'}`)
+    lines.push('完工本身已完成，不影响工单状态；补上原因后可手工建入库单')
+  }
+
+  const warns: string[] = res?.warnings || []
+  if (warns.length) {
+    if (lines.length) lines.push('')
+    lines.push('需要注意：')
+    warns.forEach((w) => lines.push(`· ${w}`))
+  }
+
+  if (!lines.length) {
+    showToast('已完工')
+    return
+  }
+
+  const canJump = !!(pr.created && pr.receipt_id && canViewReceipt.value)
+  try {
+    await showDialog({
+      title: '完工完成',
+      message: lines.join('\n'),
+      messageAlign: 'left',
+      // 默认 320px 会把"状态为待收货…"这类长句拦腰折断，加宽到 420
+      width: 420,
+      showCancelButton: canJump,
+      confirmButtonText: canJump ? '查看入库单' : '知道了',
+    })
+    if (canJump) router.push(`/wms/receipt-orders/${pr.receipt_id}`)
+  } catch {
+    /* 用户点取消：不跳转 */
+  }
 }
 
 // ==================== 下达（带齐套检查） ====================
@@ -161,12 +223,18 @@ async function call(id: any, action: string, body?: any) {
   busy.value = action
   try {
     const res = await post<any>(`/work-orders/${id}/${action}`, body)
-    const warns: string[] = res?.warnings || []
-    showToast(warns.length ? `已完成：${warns[0]}` : '操作成功')
+    if (action === 'complete') {
+      // 完工不只是"状态变了"：后端会同步生成生产入库单。
+      // 以前这里只弹一句"操作成功"，用户不知道入库单已经建了、也不知道建没建成。
+      await showCompleteResult(res)
+    } else {
+      const warns: string[] = res?.warnings || []
+      showToast(warns.length ? `已完成：${warns[0]}` : '操作成功')
+    }
     fetch()
   } catch (e: any) {
     // 完工被"零产出"拦下 → 引导走强制完工，而不是让用户对着红字发呆
-    if (e?.response?.data?.detail?.code === '400-0003') {
+    if (errCode(e) === '400-0003') {
       openReason('force_complete')
     } else {
       showToast(errMessage(e, '操作失败，请重试'))
