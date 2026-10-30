@@ -149,6 +149,15 @@ async function handleConvert() {
     } else {
       lines.push('工艺路线：未生成')
     }
+    // 成品物料档案：转产顺带把成品补进 materials，否则完工自动建入库单会一直
+    // 走 skipped（产品 PRO-xxx 与物料 M-xxx 是两套编码）
+    if (d.material?.material_code) {
+      lines.push(d.material.created
+        ? `成品档案：已自动建立（物料编码 ${d.material.material_code}），可去物料页补充规格与安全库存`
+        : `成品档案：已有（物料编码 ${d.material.material_code}）`)
+    } else if (d.material?.reason) {
+      lines.push(`成品档案：未建立 — ${d.material.reason}（完工时将无法自动生成生产入库单）`)
+    }
     if (d.warnings?.length) {
       lines.push('')
       lines.push('需要注意：')

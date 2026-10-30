@@ -216,3 +216,37 @@
 1. **S1+S2（权限体系重做）是 Beta 前做，还是 Beta 后？** 它是唯一一项"不修就不能对外承诺权限隔离"的工作，但工作量最大。
 2. **S3（组织表）本轮只建表不做界面，还是建表+界面一起？**
 3. 上面第六节 6 项最小改动，**是否现在就动手**？
+
+---
+
+## 八、执行进展（2026-10-30 收口）
+
+第六节清单已全部落地，另补两处本文未列出的断点（按钮级权限门、成品物料档案）。
+
+| # | 断点 | commit | 验证 |
+|---|---|---|---|
+| 1 | 工单状态机可任意跳 | 前序 | pytest |
+| 2 | 报工入参无断言 | 前序 | pytest |
+| 3 | SPC 判异只飘红不开 NCR | `2873fdf` | pytest + E2E |
+| 4 | 完工件数不进库存 | `e966db4` | pytest + E2E |
+| 5 | 单号可重复（6 张单） | `f40880c` / `ebfed04` | `doc_no_unique_e2e.py` 18/18 |
+| 6 | 删角色留孤儿 | 前序 | pytest |
+| 7 | 试产转量产只翻状态位 | `a9f6411` | `trial_to_production_e2e.py` 45/45 |
+| 8 | 页内动作不受权限约束 | `76a877c` | `perm_button_gate_e2e.js` 19 PASS / 0 FAIL |
+| 9 | 成品无物料档案 → 完工入库一直 skipped | 本文档同期 | `material_sync_e2e.py` 17/17 |
+
+### 第 9 项的结论（推翻原 §六 之外的假设）
+
+`products`（PRO-xxx）与 `materials`（M-xxx）两套编码未打通，导致「完工自动生成生产入库单」在种子数据上恒定 skipped。
+
+**不能**按 products 直接建入库明细行：`receipt_order_items.material_id` NOT NULL，而库存查询 / 批次 / 盘点 / 预警 / 流水共 15 处全是 `LEFT JOIN materials`，硬建只会得到台账孤儿行。
+
+**采用**：`materials.code` 沿用 `products.code`、`material_type='finished'`，在「试产转量产」和「完工前」两处幂等自动补建（`app/services/material_sync.py`）。
+
+### 仍未闭的项（需拍板）
+
+- 角色增删改界面（当前只能给已有角色配权限）
+- 切强制模式三步（`PERMISSION_ENFORCE` 仍是 `false`，直调接口仍 200）
+- 子表组织归属：`work_reports` / `inspection_result` / `inventory_transactions` 无 `org_id`
+- **完工 / 转产的结果前端未展示**：`POST /work-orders` 创建接口也不返回 `data.id`，
+  用户建完工单拿不到 id，完工后也看不到"入库单 PRD-xxx 已生成"

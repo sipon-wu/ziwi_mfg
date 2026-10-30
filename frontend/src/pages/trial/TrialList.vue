@@ -127,6 +127,13 @@ async function handleConvert(order: TrialOrder) {
     lines.push(d.route?.written
       ? `工艺路线：${d.route.code}，${d.route.written} 道工序（draft）`
       : '工艺路线：未生成')
+    if (d.material?.material_code) {
+      lines.push(d.material.created
+        ? `成品档案：已自动建立（${d.material.material_code}）`
+        : `成品档案：已有（${d.material.material_code}）`)
+    } else if (d.material?.reason) {
+      lines.push(`成品档案：未建立 — ${d.material.reason}`)
+    }
     if (d.warnings?.length) {
       lines.push('')
       d.warnings.forEach((w: string) => lines.push(`· ${w}`))

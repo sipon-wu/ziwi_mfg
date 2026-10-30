@@ -14,6 +14,7 @@ from app.repositories.trial_repo import (
     TrialBomRepository,
     TrialReviewRepository,
 )
+from app.services.material_sync import ensure_finished_material
 
 
 # 有效阶段顺序
@@ -241,6 +242,9 @@ class TrialService:
 
         bom_result = await self._write_formal_bom(order, warnings)
         route_result = await self._write_formal_route(order, warnings)
+        # 成品物料档案：转产即意味着这个产品要反复生产、要进库存。
+        # 不补的话完工自动建入库单会走 skipped（产品 PRO-xxx 与物料 M-xxx 两套编码）。
+        material_result = await self._ensure_product_material(order, warnings)
 
         now = datetime.now().isoformat()
         await self.order_repo.update_order(order_id, {
@@ -255,6 +259,7 @@ class TrialService:
             "product_name": order["product_name"],
             "bom": bom_result,
             "route": route_result,
+            "material": material_result,
             "warnings": warnings,
         }
 
@@ -433,6 +438,50 @@ class TrialService:
         warnings.append("正式路线已生成但状态为 draft，需工艺工程师确认后发布")
         return {"written": written, "route_id": route_id, "code": code,
                 "status": "draft", "missing_operation": missing}
+
+    async def _ensure_product_material(self, order: Dict, warnings: List[str]) -> Dict:
+        """转量产 → 确保成品在 ``materials`` 有档案。
+
+        不补的话「完工 → 自动生成生产入库单」会一直走 skipped：
+        产品在 ``products``（PRO-xxx），物料在 ``materials``（M-xxx），
+        库存链路全部 ``LEFT JOIN materials``，缺档案就只能是台账孤儿行。
+
+        失败**不阻断**转产，只进 warnings —— 主数据问题是配置问题，
+        不该让已经评审通过的试产卡在转产这一步。
+        """
+        product_id = order.get("product_id")
+        product = None
+        if product_id:
+            product = await self.order_repo.query_one(
+                "SELECT id, code, name, spec, unit FROM products WHERE id = :i LIMIT 1",
+                {"i": product_id},
+            )
+        if not product or not (product.get("code") or "").strip():
+            warnings.append(
+                "产品主数据缺失（无 product_id 或编码为空），未建立成品物料档案；"
+                "完工时将无法自动生成生产入库单"
+            )
+            return {"created": False, "material_id": None, "material_code": None,
+                    "reason": "产品主数据缺失"}
+
+        synced = await ensure_finished_material(
+            self.order_repo,
+            code=product.get("code"),
+            name=product.get("name") or order.get("product_name"),
+            spec=product.get("spec") or order.get("product_spec"),
+            unit=product.get("unit"),
+        )
+        material = synced["material"]
+        if not material:
+            warnings.append(f"{synced['reason']}（完工时将无法自动生成生产入库单）")
+            return {"created": False, "material_id": None, "material_code": None,
+                    "reason": synced["reason"]}
+
+        return {
+            "created": bool(synced["created"]),
+            "material_id": material["id"],
+            "material_code": material.get("code"),
+        }
 
     async def terminate_trial(self, order_id: int, reason: str = None) -> Dict:
         """终止试产"""

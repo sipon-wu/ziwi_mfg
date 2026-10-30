@@ -10,6 +10,7 @@ from app.constants.work_order_states import (
 from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
 from app.repositories.inventory_repo import InventoryRepository
+from app.services.material_sync import ensure_finished_material
 from app.services.bom_service import BomService
 from app.services.material_check_service import MaterialCheckService
 from typing import Optional
@@ -385,9 +386,12 @@ class ProductionService:
         这里只建**待收货草稿**，不直接过账：收货与上架仍需仓库按流程确认
         （含 IQC 送检），否则等于绕过仓库与品质两道关。
 
-        三种"建不出"的情况都**不阻断完工**，只在返回值里说明原因：
+        "建不出"的情况都**不阻断完工**，只在返回值里说明原因：
         完工是既成事实，入库单建不出来是主数据/仓库配置的问题，
         不该让车间因为仓库没配成品仓而完不了工。
+
+        成品物料档案缺失已不再直接跳过 —— 会先尝试自动补建
+        （见 ``app/services/material_sync.py``），补建失败才算建不出。
         """
         qty = order.get("completed_qty") or 0
         work_order_id = order.get("id")
@@ -407,13 +411,20 @@ class ProductionService:
                     "receipt_id": existing["id"], "receipt_no": existing["receipt_no"]}
 
         product_code = order.get("product_code")
-        material = await self.repo.query_one(
-            "SELECT id, code, name, unit FROM materials WHERE code = :c LIMIT 1",
-            {"c": product_code},
+        # 成品档案缺失时**自动补建**，不再直接跳过：
+        # 库存链路全是 LEFT JOIN materials，按 products 硬建行只会得到台账孤儿行。
+        # 编码沿用 products.code（见 material_sync 模块注释）。
+        synced = await ensure_finished_material(
+            self.repo,
+            code=product_code,
+            name=order.get("product_name"),
+            unit=None,
         )
+        material = synced["material"]
         if not material:
             return {"skipped": True,
-                    "reason": f"成品 {product_code} 未建物料档案，无法生成生产入库单"}
+                    "reason": f"{synced['reason']}，无法生成生产入库单"}
+        material_created = bool(synced["created"])
 
         warehouse = await self.repo.query_one(
             "SELECT id, name FROM warehouses WHERE type = 'finished' "
@@ -479,6 +490,10 @@ class ProductionService:
             "created": True, "receipt_id": receipt_id, "receipt_no": receipt_no,
             "warehouse_id": warehouse["id"], "warehouse_name": warehouse.get("name"),
             "material_id": material["id"], "qty": qty,
+            # 成品物料档案是否是本次自动补建的 —— 前端据此提示
+            # "已自动为 XX 建立成品档案，可去物料页补充规格与安全库存"
+            "material_created": material_created,
+            "material_code": material.get("code") or product_code,
         }
 
     async def _raise_scrap_ncr(self, order: dict, report_id: int, scrap_qty: int,

@@ -170,6 +170,23 @@ def main():
     check("T7 告警含「缺 operation_id」", any("operation_id" in w for w in ws))
     check("T7 告警提示路线需发布", any("draft" in w for w in ws))
 
+    # 成品物料档案：转产即意味着这产品要反复生产、要进库存。
+    # 不补的话「完工自动生成入库单」会一直 skipped（products 与 materials 两套编码）。
+    mat_res = d.get("material") or {}
+    check("T7 转产顺带建立了成品物料档案", mat_res.get("created") is True,
+          f"material_code={mat_res.get('material_code')} reason={mat_res.get('reason')}")
+    check("T7 成品档案编码沿用产品编码", mat_res.get("material_code") == code,
+          f"expected={code} actual={mat_res.get('material_code')}")
+
+    r = c.get(f"{API}/wms/materials", params={"keyword": code, "page_size": 20})
+    mats = ((body(r).get("data") or {}).get("items")) or []
+    hit = next((m for m in mats if m.get("code") == code), None)
+    check("T7 物料页能查到该成品档案", hit is not None, f"code={code}")
+    if hit:
+        check("T7 成品档案类型为 finished", hit.get("material_type") == "finished",
+              f"type={hit.get('material_type')}")
+        check("T7 成品档案单位非空", bool(hit.get("unit")), f"unit={hit.get('unit')}")
+
     # ── T8 回查正式 BOM ──────────────────────────────────────
     print("\n── T8 回查正式 BOM（product_bom 真实数据）──")
     r = c.get(f"{API}/boms", params={"product_id": product_id, "page_size": 50})

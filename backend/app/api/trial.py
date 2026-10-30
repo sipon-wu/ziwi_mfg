@@ -318,6 +318,9 @@ async def convert_to_production(
             "product_id": result.get("product_id"),
             "bom": result.get("bom"),
             "route": result.get("route"),
+            # 成品物料档案：转产顺带把 products 的成品补进 materials，
+            # 否则「完工自动生成入库单」会因为缺档案一直 skipped。
+            "material": result.get("material"),
             "warnings": result.get("warnings", []),
         },
     }

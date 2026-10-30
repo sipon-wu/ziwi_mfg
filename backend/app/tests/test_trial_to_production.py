@@ -26,6 +26,9 @@ from app.services.trial_service import TrialService
 class FakeOrderRepo:
     def __init__(self, session):
         self.ctx = session
+        # material_sync 会拿 base_repo._session 新建 MaterialRepository；
+        # 这里的"连接"就是 ctx 字典，后续 create() 必然失败并走兜底分支。
+        self._session = session
         self._tenant_id = None
         self._write_org_id = None
         self.executed = []
@@ -162,6 +165,15 @@ def build(ctx=None):
         "product_id": 3, "product_name": "精密轴承座",
     })
     ctx.setdefault("reviews", [{"id": 1, "conclusion": "approved"}])
+
+    # 成品物料档案：默认"已存在"，让 _ensure_product_material 走 created=False 分支。
+    # 想验证自动补建时各用例自己覆盖 answers。
+    answers = ctx.setdefault("answers", [])
+    if not any("materials" in str(needle) for needle, _ in answers):
+        answers.append(("FROM materials", {
+            "id": 88, "code": "PRO-001", "name": "精密轴承座",
+            "spec": "ZCZ-200", "unit": "件", "material_type": "finished",
+        }))
 
     holder = {}
 

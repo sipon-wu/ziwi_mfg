@@ -110,7 +110,11 @@ async def test_skip_when_receipt_already_exists():
     assert "已有生产入库单" in out["reason"]
 
 
-async def test_skip_when_material_missing():
+async def test_skip_when_material_unbuildable():
+    """成品无档案时会先尝试自动补建（未 mock 的连接必然失败）→ 才 skipped。
+
+    补建成功路径见 ``test_material_sync.py::test_production_receipt_auto_creates_material``。
+    """
     s, _ = build(answers=[("FROM receipt_orders", None), ("FROM materials", None)])
     out = await s._raise_production_receipt(make_order())
     assert out["skipped"] is True
