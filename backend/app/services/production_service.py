@@ -481,6 +481,11 @@ class ProductionService:
             "received_qty": 0,
             "stored_qty": 0,
             "unit": material.get("unit") or "件",
+            # ★ 成品批次号 = 工单号。改造前这里不写 batch_no，成品入库后没有
+            #   任何批次实体 → 客诉来了查不到"这批货用了哪些原料"、想召回也
+            #   锁不住对象（台账 C-35）。离散制造"一工单一批"是通行做法，
+            #   同一工单分批完工时批次号相同、数量累加，正好符合批次语义。
+            "batch_no": order.get("wo_no") or f"WO{work_order_id}",
             "inspection_status": "pending",
             "remark": f"工单 {order.get('wo_no')} 完工自动生成",
         })

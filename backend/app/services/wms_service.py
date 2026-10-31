@@ -455,7 +455,9 @@ class ReceiptOrderService:
                 "quantity": delta,
                 "unit": item["unit"],
                 "unit_price": None,
-                "source_type": "purchase",
+                # 生产入库的流水不能标 purchase —— 追溯要按 source_type 区分
+                # "这批成品是买来的还是自家做的"，标错就查不出原料来源。
+                "source_type": order.get("source_type") or "purchase",
                 "source_doc_no": order["receipt_no"] if order else "",
                 "reference_type": "receipt_order",
                 "reference_id": item["receipt_id"],
@@ -563,7 +565,7 @@ class ReceiptOrderService:
                 "quantity": qty,
                 "unit": item["unit"],
                 "unit_price": None,
-                "source_type": "purchase",
+                "source_type": order.get("source_type") or "purchase",
                 "source_doc_no": order["receipt_no"] if order else "",
                 "reference_type": "receipt_order",
                 "reference_id": item["receipt_id"],
@@ -823,6 +825,15 @@ class IssueOrderService:
         order_data = {k: v for k, v in data.items() if v is not None}
         order_data.setdefault("status", "pending")
         order_data.setdefault("total_qty", sum(it.get("required_qty", 0) for it in items))
+        # 领料来源工单：前端不一定传（历史调用方只传 source_doc_no），这里反查补齐。
+        # 补这一列是为了让批次追溯有一条可靠的 JOIN 边 —— 只靠字符串工单号，
+        # 工单号一改或前端漏传，追溯链就断（台账 C-35）。
+        if not order_data.get("work_order_id") and order_data.get("source_doc_no"):
+            wo = await self.repo.query_one(
+                "SELECT id FROM work_orders WHERE wo_no = :no",
+                {"no": order_data["source_doc_no"]})
+            if wo:
+                order_data["work_order_id"] = wo["id"]
         order_id = await self.repo.create(order_data)
         for item in items:
             item["issue_id"] = order_id
@@ -920,28 +931,46 @@ class IssueOrderService:
                                                     r.get("location_id"), batch_no, created_by)
                         remaining -= take
             else:
-                # 显式指定库位/批次 → 解析正确的库存行 id
-                inv_row = None
+                # 显式指定库位/批次 → 解析正确的库存行
+                # ⚠️ 必须收集**全部**候选行再按可用量分摊，不能 find_one 取第一条：
+                # 同一批次会有多条库位行（待检区 0 行 + 正式库位有货行），
+                # find_one 不排序，取到 0 行就报"可用库存不足：现有 0.0"（台账 C-36）。
+                inv_rows = []
                 if location_id:
-                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id, location_id)
-                if not inv_row and batch_no:
+                    row = await self.inv_repo.find_one(
+                        item["material_id"], warehouse_id, location_id)
+                    if row:
+                        inv_rows = [row]
+                if not inv_rows and batch_no:
                     from app.repositories.wms_repo import BatchRepository
                     batch_repo = BatchRepository(self.item_repo._session)
                     if self.item_repo._tenant_id:
                         batch_repo.set_tenant_id(self.item_repo._tenant_id)
                     batch = await batch_repo.get_by_batch_no(item["material_id"], batch_no)
                     if batch:
-                        inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id, None, batch["id"])
-                if not inv_row:
-                    inv_row = await self.inv_repo.find_one(item["material_id"], warehouse_id)
-                if not inv_row:
+                        inv_rows = await self.inv_repo.find_batch_rows(
+                            item["material_id"], warehouse_id, batch["id"])
+                if not inv_rows:
+                    row = await self.inv_repo.find_one(item["material_id"], warehouse_id)
+                    if row:
+                        inv_rows = [row]
+                if not inv_rows:
                     raise ValueError(f"物料 {item['material_id']} 未找到对应库存记录")
-                avail = inv_row["quantity"] - inv_row["locked_qty"]
-                if avail < qty:
-                    raise ValueError(f"可用库存不足：现有 {avail}，需求 {qty}")
-                await self.inv_repo.stock_out(inv_row["id"], qty)
-                await self._create_issue_tx(tenant_id, item, order, -qty,
-                                            inv_row.get("location_id"), batch_no, created_by)
+                total_avail = sum(r["quantity"] - r["locked_qty"] for r in inv_rows)
+                if total_avail < qty:
+                    raise ValueError(f"可用库存不足：现有 {total_avail}，需求 {qty}")
+                remaining = qty
+                for r in inv_rows:
+                    if remaining <= 0:
+                        break
+                    avail = r["quantity"] - r["locked_qty"]
+                    take = min(remaining, avail)
+                    if take <= 0:
+                        continue
+                    await self.inv_repo.stock_out(r["id"], take)
+                    await self._create_issue_tx(tenant_id, item, order, -take,
+                                                r.get("location_id"), batch_no, created_by)
+                    remaining -= take
 
             await self.item_repo.update(item_id, {"issued_qty": qty, "pick_status": "picked"})
 

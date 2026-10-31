@@ -67,6 +67,9 @@ ROUTER_MODULE_MAP: Dict[str, str] = {
     "system":            MODULE_PLAT,
     "tenants":           MODULE_PLAT,
     "users":             MODULE_PLAT,
+    # 批次追溯归品质（M03）：客诉与召回都由质量部门发起，挂在品质模块下
+    # 权限才好一次性授给质检/质量工程师角色。
+    "trace":             "M03",
 }
 
 

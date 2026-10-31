@@ -203,6 +203,9 @@ class IssueOrderCreate(BaseModel):
     issue_type: str
     source_type: Optional[str] = None
     source_doc_no: Optional[str] = None
+    # 领料来源工单：不传时服务层会用 source_doc_no 反查工单号自动补齐，
+    # 保证批次追溯有一条可靠的 JOIN 边而不是字符串弱关联。
+    work_order_id: Optional[int] = None
     warehouse_id: int
     department_id: Optional[int] = None
     recipient: Optional[str] = None
@@ -489,6 +492,7 @@ class IssueOrderResponse(BaseModel):
     status: str = "pending"
     source_type: Optional[str] = None
     source_doc_no: Optional[str] = None
+    work_order_id: Optional[int] = None
     warehouse_id: int
     department_id: Optional[int] = None
     recipient: Optional[str] = None

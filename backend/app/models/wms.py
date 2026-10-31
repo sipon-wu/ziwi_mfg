@@ -239,6 +239,10 @@ class IssueOrder(Base):
     status        = Column(String(32), default="pending", comment="pending/picking/partially_issued/issued/cancelled")
     source_type   = Column(String(32), comment="wo/so/scrap/transfer")
     source_doc_no = Column(String(64), comment="来源单据号")
+    # ★ 领料来源工单：与 receipt_orders.work_order_id 对称。改造前领料单只有
+    #   一个 source_doc_no 字符串挂工单号，批次追溯只能靠字符串 JOIN ——
+    #   工单号改了、或前端没传，追溯链就断，召回查不出"这批原料用在哪台机上"。
+    work_order_id = Column(BigInteger, comment="领料来源工单ID")
     warehouse_id  = Column(BigInteger, nullable=False, comment="仓库ID")
     department_id = Column(BigInteger, comment="领用部门ID")
     recipient     = Column(String(64), comment="领料人")

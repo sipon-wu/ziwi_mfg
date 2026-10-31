@@ -328,6 +328,22 @@ class InventoryRepository(MultiTenantRepository):
             sql += " AND batch_id IS NULL"
         return await self.query_one(sql, params)
 
+    async def find_batch_rows(self, material_id: int, warehouse_id: int,
+                              batch_id: int) -> List[Dict]:
+        """某批次在该仓的**全部**可用库存行（按可用量降序）。
+
+        为什么不能用 ``find_one(..., batch_id=...)``：同一批次会散在多条库位行上
+        —— 待检区一行（上架后归 0）、正式库位一行（有货），``find_one`` 不排序，
+        取到的很可能就是那条 0 数量行 → 明明有货却报"可用库存不足：现有 0.0"。
+        台账 C-36。
+        """
+        return await self.query(
+            "SELECT * FROM inventory WHERE material_id = :mid AND warehouse_id = :wid "
+            "AND batch_id = :bid AND (quantity - locked_qty) > 0 "
+            "ORDER BY (quantity - locked_qty) DESC",
+            {"mid": material_id, "wid": warehouse_id, "bid": batch_id},
+        )
+
     async def upsert(self, data: dict) -> int:
         """原子化 upsert：先尝试更新现有记录，不存在则插入"""
         existing = await self.find_one(
@@ -661,7 +677,8 @@ class IssueOrderRepository(MultiTenantRepository):
 
     async def create(self, data: dict) -> int:
         cols = [c for c in ("tenant_id", "issue_no", "issue_type", "status", "source_type",
-                            "source_doc_no", "warehouse_id", "department_id", "recipient",
+                            "source_doc_no", "work_order_id", "warehouse_id",
+                            "department_id", "recipient",
                             "total_qty", "issued_qty", "created_by") if c in data]
         sql = "INSERT INTO issue_orders ({}) VALUES ({})".format(
             ", ".join(cols), ", ".join(f":{c}" for c in cols))
