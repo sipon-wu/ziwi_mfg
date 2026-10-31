@@ -1,0 +1,61 @@
+{
+  "ran_at": "2026-10-31T03:23:41.938Z",
+  "wo_id": 134,
+  "product": "PRO-UI-014261",
+  "results": [
+    {
+      "id": "U0",
+      "name": "登录成功",
+      "status": "PASS",
+      "detail": "mfg_admin"
+    },
+    {
+      "id": "U1-U3",
+      "name": "造数完成",
+      "status": "PASS",
+      "detail": "A=UI-A-014261 B=UI-B-014261 产品=PRO-UI-014261"
+    },
+    {
+      "id": "U4",
+      "name": "建大工单（必然缺料）",
+      "status": "PASS",
+      "detail": "id=134 planned=200"
+    },
+    {
+      "id": "U5",
+      "name": "详情页显示齐套状态（未检查）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "U6",
+      "name": "齐套预检弹窗列出缺料",
+      "status": "PASS",
+      "detail": "缺料 1/2"
+    },
+    {
+      "id": "U6b",
+      "name": "预检弹窗不提供强制下发",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "U7",
+      "name": "缺料下达被拦 → 弹缺料明细（含齐套率）",
+      "status": "PASS",
+      "detail": "齐套率 50%"
+    },
+    {
+      "id": "U8",
+      "name": "强制下发成功，状态=已下达 / 齐套=强制放行",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "U9",
+      "name": "无 JS 控制台报错",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

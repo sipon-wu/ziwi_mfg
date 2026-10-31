@@ -52,6 +52,9 @@ def test_derive_resource(path, expected):
     ("/api/v1/work-orders/{id}", "DELETE", "delete"),
     # 动作后缀细化：下达 ≠ 新建，判定 ≠ 修改
     ("/api/v1/work-orders/{id}/release", "POST", "execute"),
+    # 不带连字符后缀白名单的话，资源名会被推成 work_order_material_check，
+    # 拼出一个没有任何角色拥有的权限码 → 除通配 * 之外全员 403（C-44）
+    ("/api/v1/work-orders/{id}/material-check", "POST", "execute"),
     ("/api/v1/receipt-orders/{id}/cancel", "POST", "execute"),
     ("/api/v1/inspection-orders/{id}/judge", "PUT", "approve"),
     ("/api/v1/ncrs/{id}/dispose", "PUT", "approve"),
@@ -68,6 +71,14 @@ def test_derive_permission_code_uses_router_module():
         "/api/v1/work-orders/{id}/release", "POST", "app.api.production"
     )
     assert code == "M01:work_order:execute"
+
+    # 资源名必须收敛回 work_order，不能带着动作后缀一起进权限码
+    assert derive_permission_code(
+        "/api/v1/work-orders/{id}/material-check", "POST", "app.api.production"
+    ) == "M01:work_order:execute"
+    assert derive_permission_code(
+        "/api/v1/work-orders/{id}/material-check", "GET", "app.api.production"
+    ) == "M01:work_order:read"
 
     code = derive_permission_code(
         "/api/v1/inspection-orders/{id}/judge", "PUT", "app.api.quality"

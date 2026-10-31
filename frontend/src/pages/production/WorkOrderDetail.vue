@@ -27,7 +27,8 @@ interface MaterialCheckResult {
   total_materials: number
   ok_materials: number
   short_materials: number
-  kitting_rate: number
+  /** 无 BOM 时后端返回 null（"什么都没确认"不等于 100% 齐套） */
+  kitting_rate: number | null
   details: MaterialShortItem[]
 }
 
@@ -59,6 +60,8 @@ const busy = ref('')
 const showCheckDialog = ref(false)
 const materialCheckResult = ref<MaterialCheckResult | null>(null)
 const forceReason = ref('')
+// 同一个弹窗两用：释放拦截时是"要不要强制下发"，预检时只是"看看缺什么"
+const precheckOnly = ref(false)
 
 // 通用"原因输入"弹窗：暂停 / 强制完工 / 作废 共用
 const showReasonDialog = ref(false)
@@ -155,19 +158,48 @@ async function handleRelease(force = false) {
   try {
     const body = force ? { force_release: true, force_reason: forceReason.value } : {}
     const result = await post<ReleaseResult>(`/work-orders/${route.params.id}/release`, body)
-    const check = result?.material_check?.material_check_result
-    if (!force && check && check.short_materials > 0) {
-      // 缺料：弹窗列明细，让用户决定强制下发还是取消
-      materialCheckResult.value = check
-      showCheckDialog.value = true
-      return
-    }
     const bomErr = result?.bom_snapshot?.error
     showToast(bomErr ? '已下达（BOM 快照失败，请检查 BOM）' : '工单下达成功')
     showCheckDialog.value = false
     fetch()
   } catch (e: any) {
+    // 缺料被拦（400-0409）：后端不再"查完就放行"，必须走强制下发这条闸。
+    // 拦截响应里带着完整缺料明细，直接喂给同一个弹窗 —— 用户看到的是
+    // "缺哪几种料、各缺多少"，而不是一句干巴巴的"下达失败"。
+    if (errCode(e) === '400-0409') {
+      const check = e?.response?.data?.detail?.material_check
+      if (check) {
+        precheckOnly.value = false
+        materialCheckResult.value = check
+        showCheckDialog.value = true
+        return
+      }
+    }
     showToast(errMessage(e, '下达失败，请检查齐套性'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+/** 下达前先看一眼缺什么（改造前只有"下达"这一个入口，没下达就永远不知道） */
+async function runPrecheck() {
+  busy.value = 'precheck'
+  try {
+    const res = await post<any>(`/work-orders/${route.params.id}/material-check`)
+    const check: MaterialCheckResult | null = res?.material_check_result || null
+    const status = res?.material_check_status
+    if (status === 'no_bom' || !check) {
+      showToast('该产品未配置生效 BOM，无法判断齐套')
+    } else if ((check.short_materials || 0) > 0) {
+      precheckOnly.value = true
+      materialCheckResult.value = check
+      showCheckDialog.value = true
+    } else {
+      showToast(`物料齐全，齐套率 ${check.kitting_rate ?? '—'}%`)
+    }
+    fetch()
+  } catch (e: any) {
+    showToast(errMessage(e, '齐套检查失败'))
   } finally {
     busy.value = ''
   }
@@ -251,6 +283,19 @@ const statusMap: Record<string, string> = {
   paused: '已暂停', completed: '已完工', closed: '已关闭', cancelled: '已作废',
 }
 
+// 齐套结论用词：no_bom 不能说成"通过"，force_passed 要能一眼看出是硬着头皮下发的
+const checkStatusMap: Record<string, string> = {
+  pending: '未检查', passed: '齐套通过', failed: '缺料',
+  force_passed: '强制放行', no_bom: '未配置 BOM',
+}
+const checkStatus = computed(() => (order.value as any)?.material_check_status || 'pending')
+const checkTagType = computed(() => {
+  if (checkStatus.value === 'passed') return 'success'
+  if (checkStatus.value === 'failed') return 'danger'
+  if (checkStatus.value === 'force_passed') return 'warning'
+  return 'default'
+})
+
 const statusTagType = computed(() => {
   const s = order.value?.wo_status
   if (s === 'completed' || s === 'closed') return 'success'
@@ -279,6 +324,9 @@ function fmtTime(v?: string | null) {
           :value="`${order.planned_qty} / ${order.completed_qty} / ${order.scrap_qty}`" />
         <van-cell title="实际开工" :value="fmtTime(order.actual_start_at)" />
         <van-cell title="实际完工" :value="fmtTime(order.actual_end_at)" />
+        <van-cell title="齐套状态">
+          <van-tag :type="checkTagType">{{ checkStatusMap[checkStatus] || checkStatus }}</van-tag>
+        </van-cell>
       </van-cell-group>
 
       <div style="margin:16px;display:flex;flex-wrap:wrap;gap:8px">
@@ -291,6 +339,14 @@ function fmtTime(v?: string | null) {
           style="flex:1 1 45%"
           @click="runAction(a.action)">
           {{ a.label }}
+        </van-button>
+        <van-button
+          v-perm="'M01:work_order:execute'"
+          plain
+          :loading="busy === 'precheck'"
+          style="flex:1 1 100%"
+          @click="runPrecheck">
+          齐套预检（看缺什么）
         </van-button>
         <div v-if="!canOperate && actions.length" style="color:#969799;font-size:13px">
           当前状态可执行的操作需要「工单操作」权限（M01:work_order:execute），你的角色没有开通
@@ -309,14 +365,18 @@ function fmtTime(v?: string | null) {
       </van-cell-group>
     </div>
 
-    <!-- 齐套检查缺料对话框 -->
-    <van-dialog v-model:show="showCheckDialog" title="齐套检查 - 缺料明细" show-cancel-button
-      cancel-button-text="取消下达" confirm-button-text="强制下发"
+    <!-- 齐套缺料对话框：下达被拦时=「取消/强制下发」，预检时=只读看一眼 -->
+    <van-dialog v-model:show="showCheckDialog"
+      :title="precheckOnly ? '齐套预检 - 缺料明细' : '齐套检查 - 缺料明细'"
+      show-cancel-button
+      :show-confirm-button="!precheckOnly"
+      :cancel-button-text="precheckOnly ? '关闭' : '取消下达'"
+      confirm-button-text="强制下发"
       @confirm="handleForceRelease">
       <div style="padding:12px">
         <div v-if="materialCheckResult" style="margin-bottom:12px">
           <div style="display:flex; justify-content:space-between; margin-bottom:8px">
-            <van-tag type="warning">齐套率 {{ materialCheckResult.kitting_rate }}%</van-tag>
+            <van-tag type="warning">齐套率 {{ materialCheckResult.kitting_rate ?? '—' }}%</van-tag>
             <span style="font-size:13px;color:var(--van-text-color-2)">
               缺料 {{ materialCheckResult.short_materials }}/{{ materialCheckResult.total_materials }}
             </span>
@@ -332,7 +392,7 @@ function fmtTime(v?: string | null) {
             </template>
           </van-cell>
         </div>
-        <van-field v-model="forceReason" label="强制下发原因" type="textarea"
+        <van-field v-if="!precheckOnly" v-model="forceReason" label="强制下发原因" type="textarea"
           placeholder="请填写强制下发的原因" rows="2" />
       </div>
     </van-dialog>

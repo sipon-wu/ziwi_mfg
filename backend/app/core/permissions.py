@@ -71,6 +71,10 @@ EXECUTE_SUFFIXES: Set[str] = {
     "export", "move", "check", "sync", "ack", "calculate", "rollback",
     "reverse", "red-flush", "submit", "publish", "start", "stop", "reset",
     "reassign", "assign", "pause", "resume", "submit-inspection",
+    # 齐套检查：不加这条的话资源名会被推成 work_order_material_check，
+    # 权限码变成 M01:work_order_material_check:create —— 一个没有任何角色
+    # 拥有的码，除通配 * 之外全员 403（C-44 的配套新端点踩到过）
+    "material-check",
 }
 
 
