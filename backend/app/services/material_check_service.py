@@ -34,14 +34,20 @@ class MaterialCheckService:
     def __init__(self, production_repo: ProductionRepository,
                  bom_repo: BomRepository,
                  inventory_repo,
-                 product_repo=None):
+                 product_repo=None,
+                 substitute_repo=None):
         """``inventory_repo`` 必须是**WMS 的** ``wms_repo.InventoryRepository``
         （库存台账 ``inventory`` 表），不是遗留的 ``inventory_repo.InventoryRepository``
-        （``inventory_items`` 空表）。见模块文档。"""
+        （``inventory_items`` 空表）。见模块文档。
+
+        ``substitute_repo`` 可选（B-S6 替代料）。不注入时齐套检查行为与之前
+        完全一致 —— 替代是增强，不能变成没配替代料就跑不起来。
+        """
         self.production_repo = production_repo
         self.bom_repo = bom_repo
         self.inventory_repo = inventory_repo
         self.product_repo = product_repo
+        self.substitute_repo = substitute_repo
 
     async def check_material_availability(self, work_order_id: int) -> dict:
         """对指定工单执行齐套性检查。
@@ -99,9 +105,29 @@ class MaterialCheckService:
                 "is_ok": is_ok,
             })
 
+        # ── B-S6：缺料行附替代方案 ──
+        # ★只给建议，不改判定：替代料往往有工艺/客户认证差异
+        # （客户只允许用指定牌号的料是常态），系统替计划员拍板会把不该替代的
+        # 给替代了。判定仍是 failed，但界面能直接给出"用 X 顶 100 个就够了"，
+        # 计划员据此决定替代还是强制下发 —— 而不再是对着"缺 100"干瞪眼。
+        if self.substitute_repo is not None:
+            from app.services.substitute_service import SubstituteService
+            try:
+                plans = await SubstituteService(
+                    self.substitute_repo, self.inventory_repo).suggest(details)
+            except Exception:  # 替代是增强，算不出来不该让齐套检查失败
+                plans = {}
+            substitutable = 0
+            for d in details:
+                p = plans.get(d["material_code"])
+                if p:
+                    d["substitute"] = p
+                    if p.get("substitutable"):
+                        substitutable += 1
+
         total = len(details)
         short_count = total - ok_count
-        return {
+        out = {
             "work_order_id": work_order_id,
             "check_status": "passed" if short_count == 0 else "failed",
             "product_code": product_code,
@@ -112,6 +138,12 @@ class MaterialCheckService:
             "kitting_rate": round(ok_count / total * 100, 2) if total else 0.0,
             "details": details,
         }
+        if self.substitute_repo is not None:
+            out["substitutable_materials"] = substitutable
+            out["substitute_note"] = (
+                "缺料行的 substitute 字段为可替代方案（按 priority 依次消耗）；"
+                "替代需人工确认，不改变 check_status")
+        return out
 
     async def _active_bom(self, product_code: str):
         """返回 ``(该产品当前生效的最高版本 BOM 行, 失败原因)``。"""

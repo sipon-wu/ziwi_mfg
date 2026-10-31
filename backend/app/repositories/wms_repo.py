@@ -221,6 +221,83 @@ class MaterialRepository(MultiTenantRepository):
         )
 
 
+class MaterialSubstituteRepository(MultiTenantRepository):
+    """物料替代料（B-S6）"""
+
+    async def list_by_material(self, material_id: int = None,
+                               material_code: str = None,
+                               only_active: bool = False) -> List[Dict]:
+        sql = "SELECT * FROM material_substitutes WHERE 1=1"
+        params = {}
+        if material_id:
+            sql += " AND material_id = :mid"
+            params["mid"] = material_id
+        if material_code:
+            sql += " AND material_code = :mc"
+            params["mc"] = material_code
+        if only_active:
+            sql += " AND is_active = true"
+        # ★按优先级升序：缺料替代必须"先吃最优先的那一个"，
+        # 顺序乱了会先消耗掉不该动的替代料（如留给别的订单的专用料）。
+        sql += " ORDER BY priority ASC, id ASC"
+        return await self.query(sql, params)
+
+    async def list_by_codes(self, codes: List[str],
+                            only_active: bool = True) -> List[Dict]:
+        """按一批主料编码批量取替代关系（齐套检查一次查完，避免 N+1）。"""
+        if not codes:
+            return []
+        marks = ", ".join(f":c{i}" for i in range(len(codes)))
+        params = {f"c{i}": c for i, c in enumerate(codes)}
+        sql = f"SELECT * FROM material_substitutes WHERE material_code IN ({marks})"
+        if only_active:
+            sql += " AND is_active = true"
+        sql += " ORDER BY priority ASC, id ASC"
+        return await self.query(sql, params)
+
+    async def get(self, id: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM material_substitutes WHERE id = :id", {"id": id})
+
+    async def exists_pair(self, material_id: int, substitute_id: int,
+                          exclude_id: int = None) -> bool:
+        sql = ("SELECT id FROM material_substitutes "
+               "WHERE material_id = :m AND substitute_id = :s")
+        params = {"m": material_id, "s": substitute_id}
+        if exclude_id:
+            sql += " AND id != :eid"
+            params["eid"] = exclude_id
+        return await self.query_one(sql, params) is not None
+
+    async def create(self, data: dict) -> int:
+        # 与 MaterialRepository 同口径：模型上的 Python 侧 default 裸 SQL 拿不到，
+        # 漏写即 NULL —— priority NULL 会让 ORDER BY 把它排到最前（替代顺序乱），
+        # ratio NULL 会让换算比算不出来（缺口永远补不满）。
+        data.setdefault("priority", 100)
+        data.setdefault("ratio", 1.0)
+        data.setdefault("is_active", True)
+        for col in ("substitute_name", "remark"):
+            data.setdefault(col, None)
+        return await self.execute(
+            """INSERT INTO material_substitutes (tenant_id, material_id, material_code,
+               substitute_id, substitute_code, substitute_name, priority, ratio,
+               is_active, remark)
+               VALUES (:tenant_id, :material_id, :material_code,
+               :substitute_id, :substitute_code, :substitute_name, :priority, :ratio,
+               :is_active, :remark)""",
+            data,
+        )
+
+    async def update(self, id: int, data: dict) -> int:
+        sets = self._build_set_clause(data)
+        return await self.execute(
+            f"UPDATE material_substitutes SET {sets} WHERE id = :id", {**data, "id": id})
+
+    async def delete(self, id: int) -> int:
+        return await self.execute(
+            "DELETE FROM material_substitutes WHERE id = :id", {"id": id})
+
+
 # ============================================
 # 批次 Repo
 # ============================================

@@ -89,6 +89,50 @@ class Material(Base):
     updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class MaterialSubstitute(Base):
+    """物料替代料（B-S6）
+
+    「主料缺了，能不能用别的料顶上」这件事此前**完全没有数据载体**：
+    全库无替代料表、无替代逻辑，齐套检查算出缺料就是缺料，界面上只告诉
+    计划员"缺 100 个 A"，至于仓库里躺着 500 个能顶替 A 的 B，系统一概不知 ——
+    计划员只能靠翻物料表人肉找，找不到就走"强制下发"。
+
+    设计取舍：
+    - **只做一级替代，不做多级链**：A→B→C 这种链式替代看着强大，但会出现
+      "用 C 顶了 B 导致 B 本身缺料"这类级联副作用，且替代链一长，
+      用料追溯就断了（这批次到底用了什么谁也说不清）。真需要多级时
+      由计划员显式配一条 A→C 即可，链路始终只有一跳、可追溯。
+    - **冗余存 material_code / substitute_code**：BOM 与齐套检查全程按物料
+      **编码**走（``available_qty_by_codes`` 也是按编码汇总），存编码才能
+      在不 join materials 的情况下直接参与缺料计算（与 inspection_result
+      冗余 item_name 同一思路）。
+    - **ratio 表示"1 单位替代料可顶多少单位主料"**：替代料规格不同时
+      （如 1 卷 100m 替代 1 卷 50m）必须带换算比，否则算出来的
+      "够不够"是错的。
+    """
+    __tablename__ = "material_substitutes"
+
+    id                    = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id             = Column(String(50), nullable=False, comment="租户ID")
+    material_id           = Column(BigInteger, nullable=False, comment="主料ID")
+    material_code         = Column(String(64), nullable=False, comment="主料编码（冗余，按编码参与缺料计算）")
+    substitute_id         = Column(BigInteger, nullable=False, comment="替代料ID")
+    substitute_code       = Column(String(64), nullable=False, comment="替代料编码（冗余）")
+    substitute_name       = Column(String(128), comment="替代料名称（冗余，展示用）")
+    priority              = Column(Integer, default=100, comment="优先级，数字小者优先")
+    ratio                 = Column(Float, default=1.0, comment="1 单位替代料可顶多少单位主料")
+    is_active             = Column(Boolean, default=True, comment="启用状态")
+    remark                = Column(Text, comment="备注（替代条件/工艺约束）")
+    created_at            = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at            = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # 同一主料下同一替代料只能配一次；重复配会让"按优先级依次替代"算出双份
+        UniqueConstraint("tenant_id", "material_id", "substitute_id",
+                         name="uq_material_substitutes_tenant_pair"),
+    )
+
+
 # ============================================
 # 批次主数据
 # ============================================

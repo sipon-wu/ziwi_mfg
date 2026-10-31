@@ -10,7 +10,10 @@ from app.constants.work_order_states import (
 from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
 from app.repositories.basic_data_repo import ProductRepository
-from app.repositories.wms_repo import InventoryRepository as WmsInventoryRepository
+from app.repositories.wms_repo import (
+    InventoryRepository as WmsInventoryRepository,
+    MaterialSubstituteRepository,
+)
 from app.repositories.user_repo import UserRepository
 from app.repositories.organization_repo import OrganizationRepository
 from app.repositories.status_log_repo import StatusLogRepository
@@ -418,8 +421,13 @@ class ProductionService:
         bom_repo = BomRepository(self.repo._session).inherit_context_from(self.repo)
         inv_repo = WmsInventoryRepository(self.repo._session).inherit_context_from(self.repo)
         product_repo = ProductRepository(self.repo._session).inherit_context_from(self.repo)
+        # B-S6：注入替代料仓储，缺料行才会带可替代方案。
+        # 不加这一行齐套检查照旧能跑（substitute_repo 为 None 即关闭该增强）。
+        sub_repo = MaterialSubstituteRepository(
+            self.repo._session).inherit_context_from(self.repo)
         check_svc = MaterialCheckService(
-            self.repo, bom_repo, inv_repo, product_repo=product_repo)
+            self.repo, bom_repo, inv_repo,
+            product_repo=product_repo, substitute_repo=sub_repo)
         check_result = await check_svc.check_material_availability(id)
         return await check_svc.update_work_order_check_result(
             id, check_result,

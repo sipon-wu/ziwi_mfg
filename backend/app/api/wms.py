@@ -17,6 +17,7 @@ from app.repositories.wms_repo import (
     InventoryCountRepository, InventoryCountItemRepository,
     InventoryAlertRepository,
     MaterialRequestRepository, MaterialRequestItemRepository,
+    MaterialSubstituteRepository,
 )
 from app.services.wms_service import (
     WarehouseService, ZoneService, LocationService,
@@ -271,6 +272,108 @@ async def delete_material(mat_id: int, repo: MaterialRepository = Depends(get_te
 
 # `/materials/search` 已按"静态段先于动态段"的规则上移到 `/materials/{mat_id}` 之前
 # （原位置在下方，被 {mat_id} 吞掉 → 100% 422，C-60）。tests/test_route_shadowing.py 守着。
+
+
+# ============================================
+# 物料替代料 MaterialSubstitute（B-S6）
+# ============================================
+
+class SubstituteCreate(BaseModel):
+    material_id: int = Field(..., description="主料ID")
+    substitute_id: int = Field(..., description="替代料ID")
+    priority: int = Field(100, description="优先级，数字小者优先")
+    ratio: float = Field(1.0, gt=0, description="1 单位替代料可顶多少单位主料")
+    remark: Optional[str] = None
+
+
+class SubstituteUpdate(BaseModel):
+    priority: Optional[int] = None
+    ratio: Optional[float] = Field(None, gt=0)
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None
+
+
+@router.get("/material-substitutes")
+async def list_substitutes(
+    material_id: Optional[int] = Query(None),
+    material_code: Optional[str] = Query(None),
+    only_active: bool = Query(False),
+    repo: MaterialSubstituteRepository = Depends(
+        get_tenant_repo(MaterialSubstituteRepository, require_auth=True)),
+):
+    """替代料列表（按 priority 升序 —— 顺序就是替代顺序）。"""
+    data = await repo.list_by_material(material_id, material_code, only_active)
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/material-substitutes")
+async def create_substitute(
+    req: SubstituteCreate,
+    current_user: dict = Depends(get_current_user),
+    repo: MaterialSubstituteRepository = Depends(get_tenant_repo(MaterialSubstituteRepository)),
+):
+    """配一条替代关系。
+
+    ★编码一律由服务端按 material_id 反查，**不信客户端传的**：
+    让调用方传编码的话，配一条"编码写着 A、id 指向 B"的记录是分分钟的事，
+    而缺料计算全程按编码走 —— 一条错码就会让替代方案指向错误的物料，
+    且不报任何错（与 inspection_result 冗余 item_name 的教训同源）。
+    """
+    mat_repo = MaterialRepository(repo._session).inherit_context_from(repo)
+    main = await mat_repo.get(req.material_id)
+    if not main:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "主料不存在"})
+    sub = await mat_repo.get(req.substitute_id)
+    if not sub:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "替代料不存在"})
+    if req.material_id == req.substitute_id:
+        raise HTTPException(400, detail={"code": "400-0000",
+                                         "message": "不能把物料自己配成自己的替代料"})
+    if await repo.exists_pair(req.material_id, req.substitute_id):
+        raise HTTPException(400, detail={
+            "code": "400-0000",
+            "message": f"{main.get('code')} 已配置 {sub.get('code')} 为替代料，不可重复配置"})
+
+    row_id = await repo.create({
+        "tenant_id": current_user.get("tenant_id", "default"),
+        "material_id": req.material_id,
+        "material_code": main.get("code"),
+        "substitute_id": req.substitute_id,
+        "substitute_code": sub.get("code"),
+        "substitute_name": sub.get("name"),
+        "priority": req.priority,
+        "ratio": req.ratio,
+        "is_active": True,
+        "remark": req.remark,
+    })
+    return {"code": 0, "message": "替代料配置成功", "data": {"id": row_id}}
+
+
+@router.put("/material-substitutes/{sub_id}")
+async def update_substitute(
+    sub_id: int,
+    req: SubstituteUpdate,
+    repo: MaterialSubstituteRepository = Depends(get_tenant_repo(MaterialSubstituteRepository)),
+):
+    existing = await repo.get(sub_id)
+    if not existing:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "替代料配置不存在"})
+    data = req.model_dump(exclude_unset=True)
+    if not data:
+        return {"code": 0, "message": "无变更"}
+    await repo.update(sub_id, data)
+    return {"code": 0, "message": "替代料配置已更新"}
+
+
+@router.delete("/material-substitutes/{sub_id}")
+async def delete_substitute(
+    sub_id: int,
+    repo: MaterialSubstituteRepository = Depends(get_tenant_repo(MaterialSubstituteRepository)),
+):
+    affected = await repo.delete(sub_id)
+    if not affected:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "替代料配置不存在"})
+    return {"code": 0, "message": "替代料配置已删除"}
 
 
 # ============================================
