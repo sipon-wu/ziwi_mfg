@@ -30,6 +30,39 @@ def _bad_request(message: str, code: str = "400-0000") -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
+def _as_dt(value) -> Optional[datetime]:
+    """把"时间"归一成 naive datetime 再比较。
+
+    为什么必须显式归一：SQLite 的 DateTime 列经 ``_row_to_dict`` 出来是
+    **字符串**（``2026-11-01 00:31:49.365141``），而请求体里的 ``reported_at``
+    经 pydantic 解析是 ``datetime`` —— 两者直接 ``<`` 比较会抛 TypeError，
+    而报工接口因此返回 500，看起来像"传了时刻就崩"，排查方向完全跑偏
+    （C-B2 第一版实测即如此）。
+    PG 下取出来是 tz-aware，SQLite 下是 naive，另一侧也可能带时区 ——
+    统一按**本地时间**剥离 tzinfo 后比较，避免 aware/naive 混比再次崩溃。
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date):
+        dt = datetime(value.year, value.month, value.day)
+    elif isinstance(value, str):
+        s = value.strip().replace("T", " ")
+        dt = None
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return None
+    else:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
 class ProductionService:
     def __init__(self, repo: ProductionRepository):
         self.repo = repo
@@ -50,12 +83,67 @@ class ProductionService:
 
     async def create_work_order(self, data: dict, tenant_id: str) -> dict:
         data["tenant_id"] = tenant_id
+        warns = await self._validate_resources(data)
         order_id = await self.repo.create_work_order(data)
         # 必须回 id：不回的话前端建完工单拿不到 id，
         # 只能"建成功 → 回列表 → 搜索 → 再点进去"，缺一步跳不过去。
-        return {"message": "工单创建成功", "id": order_id, "wo_no": data.get("wo_no")}
+        return {"message": "工单创建成功", "id": order_id,
+                "wo_no": data.get("wo_no"), "warnings": warns}
+
+    async def _validate_resources(self, data: dict) -> list:
+        """建单/改单时校验工单挂的设备与工作中心（场景 C-E7）。
+
+        改造前工单表**根本没有设备/工作中心字段** —— 挂在哪台设备、哪个工作
+        中心做，系统不知道。于是"设备已报废却还在给它排产"这种事既拦不住
+        （没有可拦的对象），事后也查不出（工单上没有那条线索）。
+
+        两条硬规则：
+
+        - **停用/报废的工作中心与设备一律拒** —— 排产到一条已经停掉的线上，
+          开工当天才发现没地方做，而计划已经按它排下去了。
+        - **存在性必须校验** —— 传一个不存在的 id 也放行的话，界面上"所属
+          工作中心"一栏空白，等于这条关联从来没生效过。
+
+        故障/维修中的设备**只给 warning 不拦**：现场确实会把活先排到待修
+        设备上（等修好就做），硬拦只会逼人把工单挂到别的设备上——那条
+        "实际在哪台设备做的"信息从此就是错的，比不校验更糟。
+        """
+        wc_id = data.get("work_center_id")
+        warnings = []
+        if wc_id is not None:
+            row = await self.repo.query_one(
+                "SELECT id, name, is_active FROM work_centers WHERE id = :id",
+                {"id": wc_id})
+            if not row:
+                raise _bad_request(f"工作中心 {wc_id} 不存在或不属于本租户", "400-0011")
+            if row.get("is_active") is False or row.get("is_active") == 0:
+                raise _bad_request(
+                    f"工作中心「{row.get('name')}」已停用，不能挂工单；"
+                    f"请改挂启用的工作中心或先启用该工作中心", "400-0012")
+
+        eq_id = data.get("equipment_id")
+        if eq_id is not None:
+            row = await self.repo.query_one(
+                "SELECT id, equipment_name, status FROM equipment WHERE id = :id",
+                {"id": eq_id})
+            if not row:
+                raise _bad_request(f"设备 {eq_id} 不存在或不属于本租户", "400-0013")
+            if row.get("status") == "scrapped":
+                raise _bad_request(
+                    f"设备「{row.get('equipment_name')}」已报废/停用，不能挂工单",
+                    "400-0014")
+            if row.get("status") in ("fault", "maintenance"):
+                warnings.append(
+                    f"设备「{row.get('equipment_name')}」当前为"
+                    f"{'故障' if row.get('status') == 'fault' else '维修中'}，"
+                    f"工单已建但开工前需确认设备已恢复")
+        return warnings
 
     async def update_work_order(self, id: int, data: dict) -> dict:
+        # 改单同样要校验：把在制工单改挂到一条已停用的线上，
+        # 与新建时挂上去是同一个后果。
+        if "work_center_id" in data or "equipment_id" in data:
+            await self._validate_resources(data)
         await self.repo.update_work_order(id, data)
         return {"message": "更新成功"}
 
@@ -295,13 +383,45 @@ class ProductionService:
         return await self.change_status(id, "closed", operator_id, remark=remark)
 
     async def cancel_work_order(self, id: int, operator_id: int,
-                                reason: str = None) -> dict:
-        """作废：草稿/已下达/生产中/暂停 → cancelled。终态不可再流转。"""
+                                reason: str = None, force: bool = False,
+                                force_reason: str = None) -> dict:
+        """作废：草稿/已下达/生产中/暂停 → cancelled。终态不可再流转。
+
+        **已有产出的工单不能凭一句原因作废**（C-E5）。改造前只校验"原因必填"，
+        于是报了 16 件货的工单也能一句"客户取消了"就作废 ——
+        那些报工数据从此变成**孤儿**：工单是"没做过"，报工却记着做过，
+        两个口径同时存在且都对不上，计件工资、工时、物料消耗全部悬空。
+        而作废是终态，事后连改回来的路都没有。
+
+        与完工的 ``force`` 同范式：有产出时必须显式传 ``force=true`` 并说明
+        **这批产出怎么处理**（已入库 / 报废 / 转单），而不是把产出静默抹掉。
+        """
         if not reason:
             raise _bad_request("作废工单必须填写原因", "400-0004")
-        return await self.change_status(
-            id, "cancelled", operator_id, remark=f"action=cancel；原因：{reason}",
-        )
+
+        order = await self._require_order(id)
+        completed = order.get("completed_qty") or 0
+        scrap = order.get("scrap_qty") or 0
+        if completed + scrap > 0 and not force:
+            raise _bad_request(
+                f"该工单已有产出（合格 {completed} / 报废 {scrap}），"
+                f"作废会使这些报工数据成为孤儿；如确需作废请传 force=true "
+                f"并在 force_reason 中说明这批产出的处理方式",
+                "400-0009",
+            )
+
+        remark = f"action=cancel；原因：{reason}"
+        if force:
+            if not force_reason:
+                raise _bad_request(
+                    "强制作废已有产出的工单必须说明产出处理方式（force_reason）",
+                    "400-0010",
+                )
+            # 产出快照写进流水：事后要能回答"作废时到底做了多少"，
+            # 否则流水上只剩一句原因，产出事实随工单一起消失。
+            remark += (f"；强制作废原因：{force_reason}"
+                       f"；作废时产出快照：合格 {completed} / 报废 {scrap}")
+        return await self.change_status(id, "cancelled", operator_id, remark=remark)
 
     async def get_available_actions(self, id: int) -> dict:
         """当前状态下可执行的动作（供前端渲染按钮，避免前端各写一份判断）。"""
@@ -478,9 +598,12 @@ class ProductionService:
 
         wo_status = order.get("wo_status")
         if wo_status in REPORT_BLOCKED_STATUSES:
+            # 「暂停中」要单独给一句可执行的指引（恢复生产），
+            # 否则报错只说"不允许报工"，使用者不知道下一步该点哪里。
+            hint = ("请先恢复生产（/resume）再报工" if wo_status == "paused"
+                    else "请先下达工单（草稿）或该工单已收口（已关闭/已作废）")
             raise _bad_request(
-                f"工单当前状态为 {status_label(wo_status)}，不允许报工；"
-                f"请先下达工单（草稿）或该工单已收口（已关闭/已作废）",
+                f"工单当前状态为 {status_label(wo_status)}，不允许报工；{hint}",
                 "400-0007",
             )
 
@@ -514,6 +637,36 @@ class ProductionService:
         if planned > 0 and new_scrap > 0:
             scrap_rate = new_scrap / (new_completed + new_scrap) * 100
             warnings.append(f"当前报废率 {scrap_rate:.1f}%（{new_scrap}/{new_completed + new_scrap}）")
+
+        # C-E3 未派工报工：**不阻断，但必须说出来**。现场补报/代报很常见，
+        # 硬拦只会逼人先做一次形式派工（把真实缺口盖上一层合规的假象）；
+        # 但静默放行的结果是这张报工永远归不到责任人头上，
+        # 计件工资与班组绩效算不出来时没人知道问题出在这一步。
+        if not order.get("assignee_id") and not order.get("assigned_org_id"):
+            warnings.append(
+                "该工单尚未派工，本次报工未归属到具体责任人/班组"
+                "（计件与班组绩效将无法归集）"
+            )
+
+        # C-B2 报工时刻早于实际开工：真实的时序错乱必须拦（一个还没开工的
+        # 工单不可能有产出），但**补录**不能误伤 —— 补录昨天/前天的产量是
+        # 正常业务，故：显式传 `reported_at` 且早于开工 → 400（有意为之，
+        # 说不清为什么）；只填 `report_date` 且早于开工日期 → 仅告警。
+        started_at = _as_dt(order.get("actual_start_at"))
+        if started_at:
+            reported_at = _as_dt(data.get("reported_at"))
+            if reported_at and reported_at < started_at:
+                raise _bad_request(
+                    f"报工时刻 {reported_at} 早于工单实际开工时间 "
+                    f"{order.get('actual_start_at')}；请核对报工时间或先修正开工时间",
+                    "400-0008",
+                )
+            rd = _as_dt(data.get("report_date"))
+            if rd and rd.date() < started_at.date():
+                warnings.append(
+                    f"报工日期 {data.get('report_date')} 早于工单实际开工日期 "
+                    f"{started_at.date()}（如为补录请忽略）"
+                )
 
         ncr_id = None
         if scrap_qty > 0:

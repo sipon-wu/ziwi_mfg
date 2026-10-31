@@ -40,6 +40,9 @@ class CreateWorkOrderRequest(BaseModel):
     line_code: Optional[str] = None
     assignee_id: Optional[int] = None
     assigned_org_id: Optional[int] = None
+    # C-E7：工单挂的设备/工作中心（传了才校验启用状态，不传不逼人填）
+    equipment_id: Optional[int] = None
+    work_center_id: Optional[int] = None
     remark: Optional[str] = None
 
 
@@ -56,6 +59,8 @@ class UpdateWorkOrderRequest(BaseModel):
     priority: Optional[int] = None
     assignee_id: Optional[int] = None
     assigned_org_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    work_center_id: Optional[int] = None
     scheduled_start_at: Optional[datetime] = None
     scheduled_end_at: Optional[datetime] = None
     remark: Optional[str] = None
@@ -92,6 +97,9 @@ class CreateWorkReportRequest(BaseModel):
     defect_reason: Optional[str] = None
     labor_hours: float = 0
     machine_hours: float = 0
+    # 报工时刻（C-B2）。不传则落库 now()，且不参与"早于开工"的 400 校验 ——
+    # 补录昨天的产量是正常业务，不能因为没传时刻就被拒。
+    reported_at: Optional[datetime] = None
 
 
 class DailyReportRow(BaseModel):
@@ -225,6 +233,9 @@ class CompleteWorkOrderRequest(BaseModel):
 class CancelWorkOrderRequest(BaseModel):
     """作废工单。原因必填 —— 作废会让工单一动不动地消失，必须留痕。"""
     reason: str
+    # 已有产出时必须 force + 说明产出去向（C-E5），否则作废会让报工数据成孤儿
+    force: bool = False
+    force_reason: Optional[str] = None
 
 
 class WorkOrderActionItem(BaseModel):

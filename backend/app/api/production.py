@@ -197,9 +197,15 @@ async def cancel_work_order(
     current_user: dict = Depends(get_current_user),
     repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
 ):
-    """作废工单：草稿/已下达/生产中/已暂停 → 已作废（终态）。原因必填。"""
+    """作废工单：草稿/已下达/生产中/已暂停 → 已作废（终态）。原因必填。
+
+    **已有产出的工单**（C-E5）必须额外传 ``force=true`` + ``force_reason``
+    说明这批产出的处理方式，否则 400 —— 直接作废会让报工数据成为孤儿
+    （工单"没做过"、报工记着"做过"，两个口径都对不上）。
+    """
     result = await ProductionService(repo).cancel_work_order(
         order_id, current_user["id"], reason=req.reason,
+        force=req.force, force_reason=req.force_reason,
     )
     return {"code": 0, "message": result["message"], "data": result}
 

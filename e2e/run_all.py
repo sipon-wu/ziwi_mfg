@@ -42,6 +42,7 @@ DEFAULT_PROBES = [
     "trial_bom_diff_e2e",
     "aql_sampling_e2e",
     "material_substitute_e2e",
+    "work_order_edge_e2e",
     "batch_trace_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",

@@ -1,13 +1,13 @@
 from app.repositories.base import MultiTenantRepository
 from typing import Optional, List, Dict
-from datetime import date
+from datetime import date, datetime
 
 class ProductionRepository(MultiTenantRepository):
 
     # ==================== 工单 ====================
     async def list_work_orders(self, page: int = 1, page_size: int = 20,
                                 status: str = None, keyword: str = None) -> dict:
-        sql = "SELECT id, tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, priority, scheduled_start_at, scheduled_end_at, actual_start_at, actual_end_at, workshop, line_code, remark, created_at FROM work_orders WHERE 1=1"
+        sql = "SELECT id, tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, priority, scheduled_start_at, scheduled_end_at, actual_start_at, actual_end_at, workshop, line_code, remark, created_at, equipment_id, work_center_id FROM work_orders WHERE 1=1"
         params = {}
         if status:
             sql += " AND wo_status = :status"
@@ -30,9 +30,13 @@ class ProductionRepository(MultiTenantRepository):
         data = dict(data)
         data.setdefault("assignee_id", None)
         data.setdefault("assigned_org_id", None)
+        # 同上：设备/工作中心（C-E7）也要在唯一写入口兜住，
+        # 否则"加了列、加了校验、却写不进去"——校验通过、字段恒 NULL。
+        data.setdefault("equipment_id", None)
+        data.setdefault("work_center_id", None)
         return await self.execute(
-            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, material_check_status, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id)
-               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :completed_qty, :scrap_qty, :material_check_status, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id)""",
+            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, material_check_status, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id, equipment_id, work_center_id)
+               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :completed_qty, :scrap_qty, :material_check_status, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id, :equipment_id, :work_center_id)""",
             # ★带 default 的列必须在写入口兜住（C-64）。
             # 实测 205 行工单里 114 行 completed_qty/scrap_qty 是 NULL、65 行
             # material_check_status 是 NULL —— 而 model schema 声明的是 `int = 0`
@@ -74,7 +78,7 @@ class ProductionRepository(MultiTenantRepository):
                             work_order_id: int = None, report_date: str = None) -> dict:
         sql = """SELECT wr.id, wr.tenant_id, wr.work_order_id, wr.report_date, wr.reporter_id, 
                  wr.operation_code, wr.operation_name, wr.output_qty, wr.scrap_qty, 
-                 wr.defect_reason, wr.labor_hours, wr.status, wr.created_at,
+                 wr.defect_reason, wr.labor_hours, wr.status, wr.created_at, wr.reported_at,
                  wo.wo_no, wo.product_name
                  FROM work_reports wr
                  LEFT JOIN work_orders wo ON wo.id = wr.work_order_id
@@ -99,9 +103,13 @@ class ProductionRepository(MultiTenantRepository):
         )
 
     async def create_report(self, data: dict) -> int:
+        # reported_at 兜底必须在**唯一写入入口**做（C-B2）：
+        # 放到 Service 里会漏掉其它调用点，而报工时刻一旦漏写，
+        # "报工早于开工"就永远查不出来（列在、值是 NULL，与没列一样）。
+        data.setdefault("reported_at", datetime.now())
         new_id = await self.execute(
-            """INSERT INTO work_reports (tenant_id, work_order_id, report_date, reporter_id, operation_code, operation_name, input_qty, output_qty, scrap_qty, defect_reason, labor_hours, machine_hours, status)
-               VALUES (:tenant_id, :work_order_id, :report_date, :reporter_id, :operation_code, :operation_name, :input_qty, :output_qty, :scrap_qty, :defect_reason, :labor_hours, :machine_hours, 'submitted')""",
+            """INSERT INTO work_reports (tenant_id, work_order_id, report_date, reporter_id, operation_code, operation_name, input_qty, output_qty, scrap_qty, defect_reason, labor_hours, machine_hours, reported_at, status)
+               VALUES (:tenant_id, :work_order_id, :report_date, :reporter_id, :operation_code, :operation_name, :input_qty, :output_qty, :scrap_qty, :defect_reason, :labor_hours, :machine_hours, :reported_at, 'submitted')""",
             data
         )
         # 记录变更日志 — 同步到 M11

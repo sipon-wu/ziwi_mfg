@@ -60,8 +60,17 @@ WORK_ORDER_TRANSITIONS: Dict[str, FrozenSet[str]] = {
 
 TERMINAL_STATUSES: FrozenSet[str] = frozenset({"closed", "cancelled"})
 
-# 不允许再报工的状态：草稿还没下达；终态已经收口
-REPORT_BLOCKED_STATUSES: FrozenSet[str] = frozenset({"draft", "closed", "cancelled"})
+# 不允许再报工的状态：
+# - ``draft``      还没下达，谈不上"在哪个工序上产出"
+# - ``paused``     ★暂停 = 停机。停机期间本不该有人报工，放行的话
+#                  ①"暂停不计工时"成了一句空话（停着机照样有工时进账）
+#                  ②OEE/停机损失里的"停机时长"与产出对不上——同一段时间
+#                    既记了停机又记了产出，两个口径谁都不敢信
+#                  ③补录失控：先暂停再慢慢补报工，暂停就变成了万能后门
+# - ``closed``/``cancelled``  终态，已收口
+REPORT_BLOCKED_STATUSES: FrozenSet[str] = frozenset(
+    {"draft", "paused", "closed", "cancelled"}
+)
 
 # 状态中文名（前端 statusMap 的单一真相源，避免两处各写一份）
 STATUS_LABELS: Dict[str, str] = {
