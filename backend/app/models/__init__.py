@@ -9,7 +9,8 @@ from app.models.ppap import PpapLevel, PpapElementTemplate, PpapSubmission, Ppap
 from app.models.fmea import FmeaDocument, FmeaHierarchy, FmeaItem, FmeaAction, ControlPlan
 from app.models.dictionary import Dictionary, DictionaryItem
 from app.models.message import Message
-from app.models.approval import ApprovalTemplate, ApprovalInstance, ApprovalNode
+from app.models.approval import (ApprovalTemplate, ApprovalTemplateNode,
+                                ApprovalInstance, ApprovalNode)
 from app.models.team import Team, Employee
 from app.models.tpm import EquipmentCategory, Equipment, MaintenancePlan, MaintenanceTask, SparePart, SparePartInventory
 from app.models.quality import QcPointConfig, InspectionStandard, InspectionItem, InspectionOrder, InspectionResult, QualityReport, NcrRecord
@@ -54,7 +55,7 @@ __all__ = [
     "PpapLevel", "PpapElementTemplate", "PpapSubmission", "PpapSubmissionItem",
     "FmeaDocument", "FmeaHierarchy", "FmeaItem", "FmeaAction", "ControlPlan",
     "Dictionary", "DictionaryItem", "Message",
-    "ApprovalTemplate", "ApprovalInstance", "ApprovalNode",
+    "ApprovalTemplate", "ApprovalTemplateNode", "ApprovalInstance", "ApprovalNode",
     "AuditLog",
     "Team", "Employee",
     "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask", "SparePart", "SparePartInventory",
