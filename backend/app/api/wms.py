@@ -235,6 +235,16 @@ async def create_material(req: MaterialCreate, current_user: dict = Depends(get_
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 
+@router.get("/materials/search")
+async def search_materials(keyword: str = Query(...), limit: int = Query(20, le=100),
+    repo: MaterialRepository = Depends(get_tenant_repo(MaterialRepository, require_auth=True))):
+    # ★必须声明在 `/materials/{mat_id}` 之前：FastAPI 按注册顺序匹配，
+    # 否则 `search` 被当成 mat_id 解析 → 100% 422 int_parsing。
+    # 「物料搜索」从上线起就不可用，且报错形态看着像调用方传错参数（C-60）。
+    svc = MaterialService(repo)
+    data = await svc.search(keyword, limit)
+    return {"code": 0, "message": "success", "data": data}
+
 @router.get("/materials/{mat_id}")
 async def get_material(mat_id: int, repo: MaterialRepository = Depends(get_tenant_repo(MaterialRepository, require_auth=True))):
     svc = MaterialService(repo)
@@ -256,12 +266,8 @@ async def delete_material(mat_id: int, repo: MaterialRepository = Depends(get_te
     result = await svc.delete(mat_id)
     return {"code": 0, "message": "物料删除成功", "data": result}
 
-@router.get("/materials/search")
-async def search_materials(keyword: str = Query(...), limit: int = Query(20, le=100),
-    repo: MaterialRepository = Depends(get_tenant_repo(MaterialRepository, require_auth=True))):
-    svc = MaterialService(repo)
-    data = await svc.search(keyword, limit)
-    return {"code": 0, "message": "success", "data": data}
+# `/materials/search` 已按"静态段先于动态段"的规则上移到 `/materials/{mat_id}` 之前
+# （原位置在下方，被 {mat_id} 吞掉 → 100% 422，C-60）。tests/test_route_shadowing.py 守着。
 
 
 # ============================================
@@ -336,6 +342,15 @@ async def inventory_by_location(
 ):
     svc = InventoryService(repo)
     data = await svc.by_location(location_id)
+    return {"code": 0, "message": "success", "data": data}
+
+@router.get("/inventory/by-material")
+async def inventory_by_material(
+    material_id: int = Query(..., description="物料ID"),
+    repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+):
+    svc = InventoryService(repo)
+    data = await svc.by_material(material_id)
     return {"code": 0, "message": "success", "data": data}
 
 @router.get("/inventory/{inv_id}")
@@ -904,15 +919,10 @@ async def stock_by_location(warehouse_id: Optional[int] = Query(None),
 # 库存查询（按物料/按库位）
 # ============================================
 
-@router.get("/inventory/by-material")
-async def inventory_by_material(
-    material_id: int = Query(..., description="物料ID"),
-    repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
-):
-    svc = InventoryService(repo)
-    data = await svc.by_material(material_id)
-    return {"code": 0, "message": "success", "data": data}
-
+# 注意：`/inventory/by-material` 已按"静态段必须先于动态段"的规则上移到
+# `/inventory/{inv_id}` 之前（原位置在下方，被 {inv_id} 吞掉 → 100% 422，C-60）。
+# 新增同前缀的静态端点时务必放在 `{param}` 段落之前 —— 已有
+# tests/test_route_shadowing.py 守着这条。
 
 
 # ============================================
