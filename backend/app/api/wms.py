@@ -4,7 +4,10 @@ from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from typing import Optional
 from pydantic import BaseModel, Field
 from app.core.dependencies import get_current_user, get_tenant_repo
+from app.core.database import get_db
 from app.core.transaction import PostingError
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.audit_service import AuditService, AuditAction
 from app.repositories.wms_repo import (
     WarehouseRepository, WarehouseZoneRepository, WarehouseLocationRepository,
     MaterialRepository, BatchRepository,
@@ -660,6 +663,7 @@ async def cancel_issue_order(io_id: int, req: CancelOrderRequest,
     item_repo: IssueOrderItemRepository = Depends(get_tenant_repo(IssueOrderItemRepository, require_auth=True)),
     inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
     tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+    db: AsyncSession = Depends(get_db),
 ):
     """取消出库单（方案 B 状态感知红冲）。
 
@@ -668,17 +672,38 @@ async def cancel_issue_order(io_id: int, req: CancelOrderRequest,
     - 已是 cancelled：409 Already Cancelled
     """
     svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
+    audit = AuditService(db)
+    _audit_base = dict(
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("username"),
+        object_type="issue_order",
+        object_id=io_id,
+    )
     try:
         result = await svc.cancel_issue_order(
             io_id, req.reason,
             current_user.get("tenant_id", "default"),
             created_by=current_user.get("id"),
         )
-        return {"code": 0, "message": "出库单已取消", "data": result}
     except PostingError as e:
+        # ★红冲失败必须留痕：红冲是唯一能把已出库库存"变回去"的动作，
+        # 也是最容易被用来平账的口子。谁在什么时候试图冲哪张单、为什么没冲成，
+        # 事后必须查得到。
+        await audit.log_fail(AuditAction.WMS_REVERSE, message=e.message,
+                             after={"reason": req.reason}, **_audit_base)
         raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:
+        await audit.log_fail(AuditAction.WMS_REVERSE, message=str(e),
+                             after={"reason": req.reason}, **_audit_base)
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+    await audit.log(
+        AuditAction.WMS_REVERSE,
+        after={k: result.get(k) for k in ("reversed_qty", "tx_count", "status") if k in result},
+        message=f"红冲出库单：{req.reason or '（未填原因）'}",
+        **_audit_base)
+    return {"code": 0, "message": "出库单已取消", "data": result}
 
 
 # ============================================

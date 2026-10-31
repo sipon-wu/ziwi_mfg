@@ -1,6 +1,9 @@
 import logging
 from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_tenant_repo
+from app.services.audit_service import AuditService, AuditAction
 from app.repositories.tenant_repo import TenantRepository
 from app.repositories.user_repo import UserRepository
 from app.repositories.role_repo import RoleRepository
@@ -24,15 +27,35 @@ async def list_tenants(
 @router.post("")
 async def create_tenant(
     req: CreateTenantRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     repo: TenantRepository = Depends(get_tenant_repo(TenantRepository, require_auth=True)),
 ):
     svc = TenantService(repo)
     result = await svc.create(req.model_dump())
+    # 审计（A-S1）。★tenant_id 记**操作者**的租户，不是目标租户：
+    # 审计记录的是"谁做了什么"，属于操作者的行为轨迹；若记成目标租户的编码，
+    # 而真实 tenant_id 是服务端生成的 t_xxx（两者不同），这条审计会变成
+    # 谁都查不到的孤儿。目标对象放在 object_type/object_id 上。
+    # 失败不阻断业务（AuditService 内部吞异常）。
+    audit = AuditService(db)
+    await audit.log(
+        AuditAction.TENANT_CREATE,
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("username"),
+        object_type="tenant",
+        object_id=req.code,
+        after={"name": req.name, "code": req.code, "industry": req.industry},
+        message="开通租户",
+    )
     return {"code": 0, "message": "租户创建成功", "data": result}
 
 @router.post("/{tenant_id}/init-admin")
 async def init_tenant_admin(
     tenant_id: str, req: InitAdminRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     tenant_repo: TenantRepository = Depends(get_tenant_repo(TenantRepository, require_auth=True)),
     user_repo: UserRepository = Depends(get_tenant_repo(UserRepository, require_auth=True)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
@@ -48,10 +71,35 @@ async def init_tenant_admin(
     try:
         result = await svc.init_admin(tenant_id, req.username, req.password, req.real_name)
     except ValueError as e:
+        # ★失败也要留痕：谁在什么时候试图初始化过哪个租户的管理员 ——
+        # 这是"密码重置后门"被尝试的直接证据，比成功记录更该被看到。
+        audit = AuditService(db)
+        await audit.log_fail(
+            AuditAction.ADMIN_INIT,
+            message=str(e),
+            tenant_id=current_user.get("tenant_id"),
+            actor_id=current_user.get("id"),
+            actor_name=current_user.get("username"),
+            object_type="tenant",
+            object_id=tenant_id,
+            after={"username": req.username},
+        )
         raise HTTPException(status_code=409 if "已初始化" in str(e) or "已存在" in str(e) else 400,
                             detail={"code": "400-0000", "message": str(e)})
     logger.info("[A-S1] tenant=%s 初始化管理员 user_id=%s role_id=%s",
                 tenant_id, result.get("user_id"), result.get("role_id"))
+    audit = AuditService(db)
+    await audit.log(
+        AuditAction.ADMIN_INIT,
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("username"),
+        object_type="user",
+        object_id=result.get("user_id"),
+        after={"username": req.username, "role_id": result.get("role_id"),
+               "must_change_password": True},
+        message="初始化租户管理员",
+    )
     return {"code": 0, "message": "管理员初始化成功，首次登录需修改密码", "data": result}
 
 @router.get("/{tenant_id}")

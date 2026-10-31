@@ -145,9 +145,24 @@ def main():
         report("A-S1-14 改密后标志已清除", body(r).get("must_change_password") is False,
                f"must_change_password={body(r).get('must_change_password')}")
 
-    # ── A-S1-15 审计无处可写（刻意记为 GAP，不假装通）──
-    gap("A-S1-15 写审计：库里没有任何审计表（116 张表无 audit/操作日志类），"
-        "需先建通用审计表才能闭环 —— 记台账待拍板，不在本轮顺手建")
+    # ── A-S1-15 审计留痕（本轮已建通用审计表 audit_logs）──
+    # 用操作者(mfg_demo)会话查：审计按租户硬过滤，只有本租户的轨迹可见。
+    seen = set()
+    for act in ("tenant.create", "admin.init"):
+        rr = c.get(f"{API}/audit-logs", params={"action": act, "page_size": 50})
+        items = (data(rr) or {}).get("items") or []
+        if any(str(i.get("object_id")) in (str(tid), str(d.get("user_id")), f"E2E{tag}")
+               for i in items):
+            seen.add(act)
+    report("A-S1-15 ★开通租户与初始化管理员已留审计（audit_logs）",
+           len(seen) == 2, f"命中 {sorted(seen)}")
+
+    # 改密审计挂在新管理员自己名下、新租户下 —— 必须用管理员自己的会话才查得到
+    rr = c2.get(f"{API}/audit-logs", params={"action": "password.change", "page_size": 10})
+    items = (data(rr) or {}).get("items") or []
+    hit_pwd = any(str(i.get("object_id")) == str(d.get("user_id")) for i in items)
+    report("A-S1-16 ★改密已留审计（且按租户隔离，操作者看不到）", hit_pwd,
+           f"命中={hit_pwd} 条数={len(items)}")
 
     summary()
     return 0

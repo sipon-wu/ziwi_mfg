@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_tenant_repo
+from app.services.audit_service import AuditService, AuditAction
 from app.repositories.approval_repo import ApprovalRepository
 from app.schemas.approval import CreateApprovalTemplateRequest, CreateApprovalRequest, ApproveActionRequest
 from datetime import datetime, timezone
@@ -64,13 +67,24 @@ async def get_approval(
 async def approve_action(
     approval_id: int, req: ApproveActionRequest,
     current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     repo: ApprovalRepository = Depends(get_tenant_repo(ApprovalRepository)),
 ):
+    audit = AuditService(db)
+    _audit_base = dict(
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("username"),
+        object_type="approval_instance",
+        object_id=approval_id,
+    )
     nodes = await repo.list_nodes(approval_id)
 
     # 找当前用户待审批的节点（按 node_order 排序取第一个）
     pending = [n for n in nodes if n["status"] == "pending" and n.get("approver_id") == current_user["id"]]
     if not pending:
+        await audit.log_fail(AuditAction.APPROVAL_ACTION, message="没有待审批的节点",
+                             after={"attempt": req.action}, **_audit_base)
         raise HTTPException(400, detail={"code": "400-0000", "message": "没有待审批的节点"})
 
     # 取最小 order 的待批节点（必须按顺序）
@@ -80,6 +94,11 @@ async def approve_action(
     earlier_nodes = [n for n in nodes if n["node_order"] < current_node["node_order"]]
     for earlier in earlier_nodes:
         if earlier["status"] != "approved":
+            await audit.log_fail(
+                AuditAction.APPROVAL_ACTION,
+                message=f"前面的审批节点（顺序{earlier['node_order']}）尚未完成",
+                after={"attempt": req.action, "node_order": current_node["node_order"]},
+                **_audit_base)
             raise HTTPException(400, detail={
                 "code": "400-0000",
                 "message": f"前面的审批节点（顺序{earlier['node_order']}）尚未完成"
@@ -88,6 +107,13 @@ async def approve_action(
     # 更新当前节点状态
     now = datetime.now(timezone.utc)
     await repo.update_node(current_node["id"], {"status": req.action, "comment": req.comment, "operated_at": now})
+    await audit.log(
+        AuditAction.APPROVAL_ACTION,
+        before={"node_id": current_node["id"], "status": "pending",
+                "node_order": current_node["node_order"]},
+        after={"node_id": current_node["id"], "status": req.action, "comment": req.comment},
+        message=f"审批节点 {current_node['node_order']} {req.action}",
+        **_audit_base)
 
     if req.action == "reject":
         await repo.update_instance_status(approval_id, "rejected")

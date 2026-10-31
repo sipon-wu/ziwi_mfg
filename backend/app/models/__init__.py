@@ -44,6 +44,7 @@ from app.models.copilot import (
     MetricDefinition, CopilotDocChunk,
 )
 from app.models.api_key import ApiKey
+from app.models.audit import AuditLog
 
 __all__ = [
     "Tenant", "Organization", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
@@ -54,6 +55,7 @@ __all__ = [
     "FmeaDocument", "FmeaHierarchy", "FmeaItem", "FmeaAction", "ControlPlan",
     "Dictionary", "DictionaryItem", "Message",
     "ApprovalTemplate", "ApprovalInstance", "ApprovalNode",
+    "AuditLog",
     "Team", "Employee",
     "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask", "SparePart", "SparePartInventory",
     "QcPointConfig", "InspectionStandard", "InspectionItem", "InspectionOrder", "InspectionResult",

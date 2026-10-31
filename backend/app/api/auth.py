@@ -14,6 +14,7 @@ from app.core.security import create_local_token, verify_password
 from app.repositories.user_repo import UserRepository
 from app.repositories.role_repo import RoleRepository
 from app.services.auth_service import AuthService
+from app.services.audit_service import AuditService, AuditAction
 from app.schemas.auth import ChangePasswordRequest, LoginRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,6 +101,7 @@ async def get_me(
 async def change_password(
     req: ChangePasswordRequest,
     current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     repo: UserRepository = Depends(get_tenant_repo(UserRepository)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository)),
 ):
@@ -108,8 +110,34 @@ async def change_password(
     注意：仅修改 mfg 本地密码，cloud.ziwi.cn 密码请通过 cloud 接口修改。
     """
     svc = AuthService(repo, role_repo)
-    await svc.change_password(current_user["id"], req.old_password, req.new_password)
+    try:
+        await svc.change_password(current_user["id"], req.old_password, req.new_password)
+    except Exception as e:
+        # ★失败审计：谁在什么时候尝试改密没成功。**口令错误尝试**本身就是
+        # 安全事件，只记成功的审计会完全看不见这类行为。
+        audit = AuditService(db)
+        await audit.log_fail(
+            AuditAction.PASSWORD_CHANGE,
+            message=str(e),
+            tenant_id=current_user.get("tenant_id"),
+            actor_id=current_user["id"],
+            actor_name=current_user.get("username"),
+            object_type="user",
+            object_id=current_user["id"],
+        )
+        raise
     # A-S1 第三环：改密成功即清除「首登改密」标志。
     # 放在改密之后而不是之前：改密失败却把标志清了，等于给了一个永久免改密的旁路。
     cleared = await repo.clear_must_change_password(current_user["id"])
+    audit = AuditService(db)
+    await audit.log(
+        AuditAction.PASSWORD_CHANGE,
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user["id"],
+        actor_name=current_user.get("username"),
+        object_type="user",
+        object_id=current_user["id"],
+        after={"must_change_password_cleared": cleared},
+        message="修改密码",
+    )
     return {"code": 0, "message": "密码修改成功", "data": {"must_change_password_cleared": cleared}}
