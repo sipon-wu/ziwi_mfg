@@ -32,11 +32,25 @@ class RoleRepository(MultiTenantRepository):
         )
 
     async def create(self, data: dict) -> int:
+        """新建角色。
+
+        ★两处兜底（与 C-56「在唯一入口兜住，而不是每个调用点各补一次」同一做法）：
+        - `scope`：INSERT 里有 ``COALESCE(:scope, 'ALL')``，调用方不传就会
+          ``A value is required for bind parameter 'scope'``。与其要求每个调用点
+          都记得传，不如在这里兜 —— 不传即走默认 'ALL'。
+        - `is_system`：模型声明 ``default=False``，但列清单里没有它 → 永远落 NULL。
+          **这正是「固定列 INSERT 漏写带默认值的列」的第七次复发**
+          （C-34/C-48/C-50/C-56×2/C-57 之后）。改为：调用方显式给了才写。
+        """
+        params = dict(data)
+        params.setdefault("scope", None)
+        cols = "tenant_id, name, code, description, scope"
+        vals = ":tenant_id, :name, :code, :description, COALESCE(:scope, 'ALL')"
+        if "is_system" in params:
+            cols += ", is_system"
+            vals += ", COALESCE(:is_system, 0)"
         return await self.execute(
-            """INSERT INTO roles (tenant_id, name, code, description, scope)
-               VALUES (:tenant_id, :name, :code, :description, COALESCE(:scope, 'ALL'))""",
-            data
-        )
+            f"INSERT INTO roles ({cols}) VALUES ({vals})", params)
 
     async def update(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)
@@ -190,11 +204,32 @@ class RoleRepository(MultiTenantRepository):
         await self._replace_role_permissions(role_id, permission_ids)
 
     async def get_by_code(self, code: str) -> Optional[Dict]:
-        """按角色编码查询角色。"""
+        """按角色编码查询角色（**当前租户上下文内**）。"""
         return await self.query_one(
             "SELECT id, tenant_id, name, code, description, is_system, scope FROM roles WHERE code = :code",
             {"code": code},
         )
+
+    async def get_by_code_in_tenant(self, code: str, tenant_id: str) -> Optional[Dict]:
+        """按 (编码, 租户) 精确查角色 —— 绕开多租户自动注入（A-S1）。
+
+        ★为什么不能直接用 `get_by_code`：本类继承 MultiTenantRepository，SELECT 会自动
+        拼上**当前登录用户的** tenant_id。而"为新租户初始化管理员"时，操作者登录在
+        mfg_demo、目标是另一个新租户 —— 用 get_by_code 会把新租户的管理员绑到
+        **mfg_demo 的 admin 角色**上（实测 role_id=2 属于 mfg_demo）。
+
+        后果比"绑错一个角色"严重得多：两个租户从此**共用同一行角色定义** ——
+        改 mfg_demo 的 admin 权限会跨租户影响所有新租户的管理员，反之亦然。
+        跨租户写必须用 `self._session.execute` 直连（与 UserRepository.get 查角色同一范式）。
+        """
+        from sqlalchemy import text
+        result = await self._session.execute(
+            text("SELECT id, tenant_id, name, code, description, is_system, scope "
+                 "FROM roles WHERE code = :code AND tenant_id = :tid"),
+            {"code": code, "tid": tenant_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     async def count_users(self, role_id: int) -> int:
         """角色下挂了多少个用户。

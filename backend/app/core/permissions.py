@@ -80,6 +80,10 @@ EXECUTE_SUFFIXES: Set[str] = {
     # 权限码变成 M01:work_order_material_check:create —— 一个没有任何角色
     # 拥有的码，除通配 * 之外全员 403（C-44 的配套新端点踩到过）
     "material-check",
+    # 初始化管理员（A-S1）：不登记则资源名被推成 tenant_init_admin，
+    # 权限码 M00:tenant_init_admin:create 无人拥有 → 除通配 * 外全员 403，
+    # 且报错文案指向一个页面上根本不存在的权限项（与 C-45 同一形态，第三次）
+    "init-admin",
 }
 
 

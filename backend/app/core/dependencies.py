@@ -3,11 +3,14 @@ FastAPI 依赖注入：获取当前用户、获取 DB session、租户感知的 
 
 变更说明 (2026-07-12):
 - get_current_user: 增加本地 JWT 认证降级（子账号不走 cloud，走本地 bcrypt + HS256 JWT）
+
+变更说明 (A-S1):
+- get_current_user: 首登强制改密拦截 —— 标志为真的账号只能读、不能写（除改密/登出白名单）
 """
 
 from typing import Any, Callable, Dict, Optional, Type, TypeVar
 
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,11 +31,48 @@ T = TypeVar("T")
 
 security_scheme = HTTPBearer(auto_error=False)
 
+# ── A-S1: 首登强制改密 ──
+# 拦截口径：**只拦写操作**（POST/PUT/PATCH/DELETE），放行所有读。
+# 为什么不全拦（含 GET）：全拦的话用户一登录就撞墙，连"我是谁、我在哪个租户、
+# 去哪改密码"都看不到，只能面对一个 403 —— 那是把人挡在门外而不是引导他改密。
+# 拦写则不同：能看、不能动，改密是唯一被放行的写操作，链路自然收敛到改密上。
+_PWD_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_PWD_CHANGE_WHITELIST = frozenset({
+    "/api/v1/auth/change-password",   # 放行改密本身，否则死锁
+    "/api/v1/auth/logout",            # 放行登出，否则用户被关在系统里
+    "/api/v1/auth/me",                # 读，本就在放行范围内，显式列出以免后人误改
+})
+
+
+def _enforce_password_change(request: Optional[Request], user: Dict) -> None:
+    """持有临时密码时禁止一切写操作（A-S1 第三环）。
+
+    判据直接来自库里读出的 user 行，不在 JWT 里 —— 所以改密后**下一次请求即刻放行**，
+    不需要重新登录。代价是每个请求多一条极轻量的主表单行查询（get_current_user
+    本来就要查 users 行，这里只是把标志一起带出来）。
+    """
+    if not user.get("must_change_password"):
+        return
+    if request is None:            # 非 HTTP 上下文（单元测试直接调用依赖）→ 不拦
+        return
+    if request.method not in _PWD_WRITE_METHODS:
+        return
+    if request.url.path in _PWD_CHANGE_WHITELIST:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "403-PWD-CHANGE-REQUIRED",
+            "message": "当前为初始密码，首次登录必须先修改密码后才能继续操作",
+        },
+    )
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     x_tenant_id: str = Header(default=None, alias="X-Tenant-Id"),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """验证 JWT 并返回 mfg 本地用户信息（支持 cloud RS256 + 本地 HS256 双通道）。
 
@@ -138,6 +178,8 @@ async def get_current_user(
         repo.set_tenant_id(effective_tenant)
     user["tenant_id"] = effective_tenant
     user["auth_type"] = "local"
+    # A-S1: 首登改密拦截（cloud 分支不拦 —— 密码归 cloud 管，mfg 无权要求改）
+    _enforce_password_change(request, user)
     return user
 
 

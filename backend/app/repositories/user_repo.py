@@ -50,6 +50,75 @@ class UserRepository(MultiTenantRepository):
             row["org_ids"] = ids
             row["org_name"] = None  # 组织名称依赖 B3 的 organizations 表，本轮占位
 
+    async def exists_username_in_tenant(self, username: str, tenant_id: str) -> bool:
+        """判断用户名在**指定租户**内是否已存在 —— 绕开多租户自动注入（A-S1）。
+
+        与 count_by_tenant 同理：`get_with_password` 走 query_one 会被拼上操作者
+        的 tenant_id，跨租户查重时永远查不到目标租户的行。
+        """
+        from sqlalchemy import text
+        result = await self._session.execute(
+            text("SELECT 1 FROM users WHERE username = :u AND tenant_id = :tid LIMIT 1"),
+            {"u": username, "tid": tenant_id},
+        )
+        return result.first() is not None
+
+    async def count_by_tenant(self, tenant_id: str) -> int:
+        """统计指定租户下的用户数 —— 绕开多租户自动注入（A-S1）。
+
+        ★不能用 `query_one("... WHERE tenant_id = :tid")`：本类继承
+        MultiTenantRepository，会自动再拼一个**当前登录用户**的 tenant_id，
+        于是查的是"操作者所在租户"的人数，而不是目标租户的 ——
+        "该租户是否已初始化过管理员"这道闸会因此永远判定为没初始化过，
+        等于给"重置他人密码"留了一个不需要身份校验的后门。
+        """
+        from sqlalchemy import text
+        result = await self._session.execute(
+            text("SELECT COUNT(*) AS c FROM users WHERE tenant_id = :tid"),
+            {"tid": tenant_id},
+        )
+        row = result.first()
+        return int(row[0]) if row else 0
+
+    async def _attach_must_change_password(self, row: Dict) -> None:
+        """回填首登改密标志（A-S1）。
+
+        ★刻意**不**放进 `_USER_COLUMNS`：与 `cloud_uuid` 同一顾虑（见文件头注释）——
+        若某个老库还没跑 `20261101_user_must_change_password.py`，把列名拼进公共
+        SELECT 会让**登录主路径**直接 `no such column`，那是 P0 级事故。
+        宁可降级（拿不到就当 False，首登改密不生效），也不能让登录挂掉。
+        """
+        from sqlalchemy import text
+        row["must_change_password"] = False
+        try:
+            result = await self._session.execute(
+                text("SELECT must_change_password FROM users WHERE id = :id"),
+                {"id": row["id"]},
+            )
+            val = result.scalar()
+        except Exception:
+            return  # 列不存在（老库未迁移）→ 保持 False，优雅降级
+        row["must_change_password"] = bool(val) if val is not None else False
+
+    async def clear_must_change_password(self, user_id: int) -> int:
+        """改密成功后清除标志（A-S1 第三环）。
+
+        只清自己这一行，不碰他人；列不存在时返回 0（不抛，避免改密主流程因老库失败）。
+        """
+        from sqlalchemy import text
+        try:
+            res = await self._session.execute(
+                text("UPDATE users SET must_change_password = 0 WHERE id = :id"),
+                {"id": user_id},
+            )
+        except Exception:
+            return 0
+        # ★必须做类型收敛再往外传：rowcount 在部分驱动/测试替身下不是 int
+        # （MagicMock 之类的真值对象会被原样塞进响应体 → jsonable_encoder 递归爆栈）。
+        # 凡是"从驱动拿到的数"进响应体之前都要收成 int/bool，不能信它自带类型。
+        n = getattr(res, "rowcount", 0)
+        return int(n) if isinstance(n, int) else 0
+
     async def get(self, id: int) -> Optional[Dict]:
         user = await self.query_one(
             f"SELECT {self._USER_COLUMNS} FROM users WHERE id = :id",
@@ -58,6 +127,7 @@ class UserRepository(MultiTenantRepository):
         if not user:
             return None
         await self._attach_org_ids([user])
+        await self._attach_must_change_password(user)
         # 跨DB兼容：单独查询角色（避免 PostgreSQL 专属 array_agg）
         # 使用 execute() 直连 session 绕过 MultiTenantRepository 的自动 tenant_id 注入
         # （因为 JOIN 多表会导致 ambiguous column name）
@@ -144,6 +214,12 @@ class UserRepository(MultiTenantRepository):
         base_cols = ("tenant_id, username, password_hash, real_name, email, phone, primary_org_id")
         base_placeholders = (":tenant_id, :username, :password_hash, :real_name, "
                              ":email, :phone, :primary_org_id")
+        # A-S1: 首登改密标志。列可能尚未在老库中补出，故与 cloud_uuid 同策略——
+        # 只在调用方**显式要求**时写入，避免无条件写列让普通建户 500。
+        if data.get("must_change_password"):
+            params["must_change_password"] = 1
+            base_cols += ", must_change_password"
+            base_placeholders += ", :must_change_password"
         cloud_uuid = data.get("cloud_uuid")
         if cloud_uuid:
             base_cols += ", cloud_uuid"

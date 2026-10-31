@@ -37,8 +37,14 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
         if not verify_password(req.password, user.get("password_hash", "")):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
+        # A-S1 第三环：把「首登必须改密」标志回传给前端。
+        # 前端据此弹改密弹窗 —— 不回传的话，用户会被后端的写操作拦截挡住却不知道为什么。
+        must_change = bool(user.get("must_change_password"))
         token = create_local_token(user["id"], user["tenant_id"])
-        return {"access_token": token, "token_type": "bearer", "refresh_token": ""}
+        return {
+            "access_token": token, "token_type": "bearer", "refresh_token": "",
+            "must_change_password": must_change,
+        }
 
     # ── cloud 代理登录（原有逻辑） ──
     async with httpx.AsyncClient(timeout=15) as client:
@@ -103,4 +109,7 @@ async def change_password(
     """
     svc = AuthService(repo, role_repo)
     await svc.change_password(current_user["id"], req.old_password, req.new_password)
-    return {"code": 0, "message": "密码修改成功"}
+    # A-S1 第三环：改密成功即清除「首登改密」标志。
+    # 放在改密之后而不是之前：改密失败却把标志清了，等于给了一个永久免改密的旁路。
+    cleared = await repo.clear_must_change_password(current_user["id"])
+    return {"code": 0, "message": "密码修改成功", "data": {"must_change_password_cleared": cleared}}

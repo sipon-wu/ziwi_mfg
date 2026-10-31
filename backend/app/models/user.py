@@ -21,6 +21,16 @@ class User(Base):
     # ── B7: 用户主组织归属（组织树由 B3 的 organizations 表承载，本轮仅存 ID）──
     primary_org_id = Column(BigInteger, comment="主组织ID（指向 organizations.id，见任务 B3）")
 
+    # ── A-S1: 首登强制改密 ──
+    # 语义：True 表示该账号持有的是「初始/重置出来的临时密码」，必须改密后才能动业务数据。
+    # 由「初始化管理员」与「管理员重置他人密码」两条路径置 True；改密成功后清 False。
+    # 判定时机：get_current_user 每次请求读库判定（不进 JWT）——改密后立刻生效，无需重新登录。
+    # 之所以不放 JWT：放了就必须"改密后强制重登"才能让标志失效，凭白增加一轮登录摩擦。
+    must_change_password = Column(
+        Boolean, default=False, nullable=False,
+        comment="是否必须修改密码（初始密码首登强制改密）",
+    )
+
     # cloud.ziwi.cn 统一身份：JWT sub(UUID)。
     # 注意：本列**不进** UserRepository._USER_COLUMNS 公共查询清单（见 user_repo.py 顶部注释），
     # 以免本地 SQLite 老库未补列时炸掉登录/列表路径；仅 cloud 登录分支按需使用。

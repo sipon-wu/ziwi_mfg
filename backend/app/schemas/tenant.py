@@ -29,6 +29,19 @@ class CreateTenantRequest(BaseModel):
     region: Optional[str] = None
 
 
+class InitAdminRequest(BaseModel):
+    """A-S1: 为已开通租户初始化管理员账号。
+
+    开通租户（POST /tenants）与初始化管理员分开成两步，是为了让"建租户"和
+    "发初始密码"这两件事能被分别审计 —— 后者会经邮件/微信转交到客户手上，
+    是整条链上唯一"密码离开系统"的环节。
+    """
+
+    username: str = Field(..., description="管理员登录名（租户内唯一）")
+    password: str = Field(..., min_length=8, description="初始密码，至少 8 位；首登必须修改")
+    real_name: Optional[str] = Field(None, description="管理员姓名")
+
+
 class UpdateTenantRequest(BaseModel):
     name: Optional[str] = None
     contact_name: Optional[str] = None

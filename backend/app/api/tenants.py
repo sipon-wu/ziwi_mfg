@@ -2,8 +2,11 @@ import logging
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.tenant_repo import TenantRepository
+from app.repositories.user_repo import UserRepository
+from app.repositories.role_repo import RoleRepository
 from app.services.tenant_service import TenantService
-from app.schemas.tenant import CreateTenantRequest, UpdateTenantRequest, SetModulesRequest
+from app.schemas.tenant import (CreateTenantRequest, UpdateTenantRequest, SetModulesRequest,
+                                InitAdminRequest)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,30 @@ async def create_tenant(
     svc = TenantService(repo)
     result = await svc.create(req.model_dump())
     return {"code": 0, "message": "租户创建成功", "data": result}
+
+@router.post("/{tenant_id}/init-admin")
+async def init_tenant_admin(
+    tenant_id: str, req: InitAdminRequest,
+    tenant_repo: TenantRepository = Depends(get_tenant_repo(TenantRepository, require_auth=True)),
+    user_repo: UserRepository = Depends(get_tenant_repo(UserRepository, require_auth=True)),
+    role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
+):
+    """A-S1: 为新租户初始化管理员账号。
+
+    ★路由位置：`/init-admin` 是静态段，必须声明在 `/{tenant_id}` 之后也无妨——
+    它挂在更长的路径上（多一层），不会被 `{tenant_id}` 吞（见 test_route_shadowing.py）。
+
+    建账号 + 绑 admin 角色 + 置首登改密标志（True）。租户已初始化过则 409。
+    """
+    svc = TenantService(tenant_repo, user_repo=user_repo, role_repo=role_repo)
+    try:
+        result = await svc.init_admin(tenant_id, req.username, req.password, req.real_name)
+    except ValueError as e:
+        raise HTTPException(status_code=409 if "已初始化" in str(e) or "已存在" in str(e) else 400,
+                            detail={"code": "400-0000", "message": str(e)})
+    logger.info("[A-S1] tenant=%s 初始化管理员 user_id=%s role_id=%s",
+                tenant_id, result.get("user_id"), result.get("role_id"))
+    return {"code": 0, "message": "管理员初始化成功，首次登录需修改密码", "data": result}
 
 @router.get("/{tenant_id}")
 async def get_tenant(
