@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
-from app.repositories.tpm_repo import TpmRepository
+from app.repositories.tpm_repo import TpmRepository, EquipmentDowntimeRepository
 from app.services.tpm_service import TpmService
 from app.schemas.tpm import (
     CreateEquipmentRequest,
@@ -184,3 +184,43 @@ async def delete_spare_part(
     svc = TpmService(repo)
     result = await svc.delete_spare_part(part_id)
     return {"code": 0, "message": "删除成功"}
+
+
+# ============================================================
+# 设备停机记录（台账 B-12）
+# ============================================================
+
+@router.get("/downtimes")
+async def list_downtimes(
+    equipment_id: int = Query(None, description="按设备过滤"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    repo: EquipmentDowntimeRepository = Depends(
+        get_tenant_repo(EquipmentDowntimeRepository, require_auth=True)),
+):
+    """停机记录列表 —— OEE 可用率与"故障停了多久"的唯一数据源。
+
+    改造前系统里没有这张表：设备只有 status，能知道"此刻故障"，
+    但不知道从何时开始、停了多久、影响了哪张工单。
+    """
+    data = await repo.list(equipment_id=equipment_id, page=page, page_size=page_size)
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.put("/downtimes/{dt_id}")
+async def update_downtime(
+    dt_id: int,
+    payload: dict,
+    repo: EquipmentDowntimeRepository = Depends(
+        get_tenant_repo(EquipmentDowntimeRepository, require_auth=True)),
+):
+    """修正停机记录（补录 / 报障时间填错）。
+
+    停机时间靠人工上报，填错是常态；不能改的话 OEE 可用率会一直错下去。
+    只接受 ``started_at`` / ``ended_at`` / ``downtime_type`` / ``reason``。
+    """
+    affected = await repo.update_record(dt_id, payload)
+    if not affected:
+        raise HTTPException(404, detail={"code": "404-0000",
+                                         "message": "停机记录不存在或无可改字段"})
+    return {"code": 0, "message": "停机记录已更新", "data": {"affected": affected}}

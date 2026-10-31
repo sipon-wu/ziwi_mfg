@@ -1,6 +1,11 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from datetime import date, datetime
+
+# 设备状态取值，与 models/tpm.py 的 Equipment.status 注释一致。
+# 改造前这两处都没有 status：**设备状态既不能在建时给、也不能改**
+# —— 台账上的 running/fault 是死的，OEE 可用率与设备看板全依赖它。
+EQUIPMENT_STATUS = Literal["running", "idle", "maintenance", "fault", "scrapped"]
 
 
 class EquipmentResponse(BaseModel):
@@ -27,6 +32,9 @@ class CreateEquipmentRequest(BaseModel):
     install_date: Optional[str] = None
     location: Optional[str] = None
     power_kw: Optional[float] = None
+    # 建时就允许指定（默认 idle）。改造前不带这个字段，INSERT 里也没有
+    # status 列 → 新设备 status 落 NULL，设备看板与 OEE 直接失去分母。
+    status: EQUIPMENT_STATUS = "idle"
 
 
 class MaintenanceTaskResponse(BaseModel):
@@ -98,6 +106,10 @@ class UpdateEquipmentRequest(BaseModel):
     install_date: Optional[str] = None
     location: Optional[str] = None
     power_kw: Optional[float] = None
+    # ★ 改造前没有这一项：设备状态**根本无法通过 API 修改**。
+    #   仓库层 `update_equipment` 是通用 SET，传了就能改 —— 是 schema 挡住的。
+    #   结果安灯报故障、维修完工、报废处置全都没法把状态落到台账上。
+    status: Optional[EQUIPMENT_STATUS] = None
 
 
 class CreateSparePartRequest(BaseModel):

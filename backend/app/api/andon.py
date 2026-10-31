@@ -38,8 +38,17 @@ async def create_call(
     data["caller_id"] = current_user["id"]
     # 生成呼叫编号：ANDON-YYYYMMDD-序号 (简化为时间戳)
     data["call_no"] = f"ANDON-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    call_id = await repo.create_call(data)
-    return {"code": 0, "message": "安灯呼叫已创建", "data": {"id": call_id}}
+    # 走 Service 而不是 repo：设备类安灯要联动物备状态、工单暂停、停机记录
+    result = await AndonService(repo).create_call(data)
+    msg = "安灯呼叫已创建"
+    linked = result.get("linked") or {}
+    if linked.get("equipment_status"):
+        msg += f"，设备已转 {linked['equipment_status']}"
+    if linked.get("work_order_status") == "paused":
+        msg += "，受影响工单已暂停"
+    if linked.get("error"):
+        msg += f"（联动失败：{linked['error']}）"
+    return {"code": 0, "message": msg, "data": result}
 
 
 @router.get("/calls/{call_id}")
@@ -79,11 +88,21 @@ async def update_call_status(
         extra["resolution"] = req.resolution
     elif action == "escalated":
         extra["escalation_level"] = (call.get("escalation_level") or 0) + 1
+    # 供 Service 做恢复联动时知道是谁处置的
+    extra["resolved_by"] = extra.get("resolved_by") or current_user["id"]
 
-    affected = await repo.update_call_status(call_id, action, **extra)
-    if affected == 0:
+    result = await AndonService(repo).update_call_status(call_id, action, extra)
+    if not result.get("affected"):
         raise HTTPException(404, detail={"code": "404-0000", "message": "安灯呼叫不存在"})
-    return {"code": 0, "message": f"安灯状态已更新为 {action}"}
+    msg = f"安灯状态已更新为 {action}"
+    restored = result.get("restored") or {}
+    if restored.get("downtime_minutes") is not None:
+        msg += f"，停机 {restored['downtime_minutes']} 分钟"
+    if restored.get("rescheduled_end_at"):
+        msg += f"，计划完工顺延至 {restored['rescheduled_end_at']}"
+    if restored.get("error"):
+        msg += f"（恢复联动失败：{restored['error']}）"
+    return {"code": 0, "message": msg, "data": result}
 
 
 @router.get("/calls/{call_id}/responses")

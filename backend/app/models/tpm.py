@@ -104,3 +104,32 @@ class SparePartInventory(Base):
     operator_id = Column(BigInteger)
     remark = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EquipmentDowntime(Base):
+    """设备停机记录 —— 停机时长与 OEE 可用率的唯一来源（台账 B-12）。
+
+    改造前设备只有 ``status`` 一个字段：能知道"现在故障"，但
+    - 不知道**从什么时候开始**、**停了多久** → OEE 可用率没有分母；
+    - 不知道**影响哪些工单** → 排产计划不会顺延，交期照旧；
+    - 故障处理完没有任何历史 → 反复出问题的设备看不出来。
+
+    由安灯（``call_type='equipment'``）自动开/关，也允许手工补录：
+    ``ended_at`` 为空即"仍在停机"，同一台设备同时只应有一条未关闭记录。
+    """
+
+    __tablename__ = "equipment_downtimes"
+
+    id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id        = Column(String(50), nullable=False)
+    equipment_id     = Column(BigInteger, nullable=False, comment="设备ID")
+    work_order_id    = Column(BigInteger, comment="受影响工单（安灯带上时）")
+    andon_call_id    = Column(BigInteger, comment="来源安灯呼叫")
+    started_at       = Column(DateTime(timezone=True), nullable=False, comment="停机开始")
+    ended_at         = Column(DateTime(timezone=True), comment="停机结束，空=仍在停机")
+    duration_minutes = Column(Float, comment="停机分钟数（关闭时计算）")
+    downtime_type    = Column(String(32), default="fault",
+                              comment="fault/setup/material/plan/other")
+    reason           = Column(Text)
+    resolved_by      = Column(BigInteger)
+    created_at       = Column(DateTime(timezone=True), server_default=func.now())
