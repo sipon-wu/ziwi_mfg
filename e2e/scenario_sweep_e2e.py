@@ -323,6 +323,54 @@ def main():
                     report("E-B1-9 两条流水分属两个仓",
                            whs_tx == sorted([src_wh, tgt_wh.get("id")]), f"{whs_tx}")
 
+    # ══════════════ F-S4 设备维修工单 + 停机时长 ══════════════
+    print("\n── F-S4 设备维修工单 → 停机时长统计 ──")
+    r = c.get(f"{API}/equipment", params={"page_size": 20})
+    eqs = (data(r).get("items") if isinstance(data(r), dict) else data(r)) or []
+    eq = next((e for e in eqs if (e.get("status") or "") != "maintenance"), None)
+    report("F-S4-1 取到可用设备", eq is not None,
+           f"{len(eqs)} 台，选中 id={eq and eq.get('id')} status={eq and eq.get('status')}")
+
+    if eq:
+        r = c.post(f"{API}/maintenance-tasks", json={
+            "equipment_id": eq.get("id"), "task_type": "repair",
+            "description": f"E2E 维修工单{tag}", "priority": 5})
+        task_id = data(r).get("id")
+        report("F-S4-2 可建维修工单", r.status_code == 200 and bool(task_id),
+               f"status={r.status_code} {msg(r)[:80] if r.status_code != 200 else ''}")
+
+        if task_id:
+            r = c.put(f"{API}/maintenance-tasks/{task_id}/start")
+            st = data(r)
+            report("F-S4-3 维修开工（设备转 maintenance + 开停机记录）",
+                   r.status_code == 200 and bool(st.get("downtime_id")),
+                   f"downtime_id={st.get('downtime_id')} "
+                   f"eq_status={st.get('equipment_status')}")
+
+            r = c.put(f"{API}/maintenance-tasks/{task_id}/complete",
+                      json={"result": "E2E 修复完成", "cost": 0})
+            fin = data(r)
+            report("F-S4-4 维修完工（关停机算时长）", r.status_code == 200,
+                   f"status={r.status_code} {msg(r)[:80] if r.status_code != 200 else ''}")
+
+            r = c.get(f"{API}/downtimes", params={"equipment_id": eq.get("id"),
+                                                  "page_size": 20})
+            dts = (data(r).get("items") if isinstance(data(r), dict) else data(r)) or []
+            want_id = st.get("downtime_id")
+            mine = next((d for d in dts if d.get("id") == want_id), None)
+            report("F-S4-5 停机记录可查（按开工返回的 downtime_id 定位）",
+                   mine is not None,
+                   f"{len(dts)} 条停机记录，找 id={want_id}")
+            if mine:
+                report("F-S4-6 停机已关闭并算出时长",
+                       mine.get("ended_at") is not None
+                       and (mine.get("duration_minutes") or 0) >= 0,
+                       f"duration={mine.get('duration_minutes')} 分")
+                # 维修 = 故障停机，不能记成保养（否则 OEE 可用率虚高）
+                report("F-S4-7 维修停机类型为 fault（改造前写死 maintenance，越界值）",
+                       mine.get("downtime_type") == "fault",
+                       f"downtime_type={mine.get('downtime_type')}")
+
     return summary()
 
 

@@ -259,7 +259,9 @@ async def test_start_task_sets_equipment_maintenance_and_opens_downtime(session)
     assert await _equipment_status(session, 1) == "maintenance"
 
     dt = await EquipmentDowntimeRepository(session).find_open(1)
-    assert dt and dt["downtime_type"] == "maintenance"
+    # 计划保养属**计划停机** → plan。改造前这里写死 "maintenance"，
+    # 一个不在模型声明取值域（fault/setup/material/plan/other）里的值
+    assert dt and dt["downtime_type"] == "plan"
     assert dt["reason"].startswith("保养任务")
     # 未指定工单 → 明确告知没做排产调整，而不是假装调过
     assert res["work_order_status"] is None and "未指定" in res["note"]

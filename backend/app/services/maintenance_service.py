@@ -172,8 +172,15 @@ class MaintenanceService:
                     "work_order_id": task.get("work_order_id"),
                     "andon_call_id": None,
                     "started_at": now,
-                    "downtime_type": "maintenance",
-                    "reason": f"保养任务 {task.get('task_no') or task_id}",
+                    # 停机类型必须落在模型声明的取值域内
+                    # （fault/setup/material/plan/other）。改造前这里写死的
+                    # "maintenance" **不在域里**：按类型聚合时凭空多出一个幽灵
+                    # 分类，而真正的"计划停机"反倒统计不到 —— OEE 可用率一旦
+                    # 落地就会发现分母对不上。维修（repair）同样被记成保养，
+                    # 把**故障停机**混进计划停机，可用率只会更难看地虚高。
+                    "downtime_type": self._downtime_type(task.get("task_type")),
+                    "reason": f"{'维修' if task.get('task_type') == 'repair' else '保养'}"
+                              f"任务 {task.get('task_no') or task_id}",
                 })
 
             # ③ 受影响工单暂停（只有显式指定才动，理由见模块文档）
@@ -188,6 +195,17 @@ class MaintenanceService:
             logger.warning("保养开工联动失败 task=%s err=%s", task_id, exc)
             out["error"] = f"{type(exc).__name__}: {exc}"
         return out
+
+    @staticmethod
+    def _downtime_type(task_type: str) -> str:
+        """保养/维修任务类型 → 停机类型（必须落在模型声明的取值域内）。
+
+        - ``repair`` → ``fault``：修的是坏了的设备，属**故障停机**。
+          记成计划停机会让 OEE 可用率虚高（故障停机本该计入损失）。
+        - 其余（maintenance / inspection / daily / weekly …）→ ``plan``：
+          按计划执行的保养与点检属**计划停机**。
+        """
+        return "fault" if task_type == "repair" else "plan"
 
     async def complete_task(self, task_id: int, data: dict = None,
                             actor_id: int = None) -> Dict:
