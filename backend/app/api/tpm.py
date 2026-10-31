@@ -9,6 +9,7 @@ from app.schemas.tpm import (
     CreateMaintenanceTaskRequest,
     CreateMaintenancePlanRequest,
     CreateSparePartRequest,
+    ConsumeSparePartRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["M02-TPM"])
@@ -271,6 +272,42 @@ async def delete_spare_part(
     svc = TpmService(repo)
     result = await svc.delete_spare_part(part_id)
     return {"code": 0, "message": "删除成功"}
+
+
+@router.post("/spare-parts/{part_id}/consume")
+async def consume_spare_part(
+    part_id: int, req: ConsumeSparePartRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """备件领用（场景 F-S5）：扣库存 + 写流水 + 挂维修单。
+
+    - 库存不足 → 400（备件不做欠料出库）
+    - 挂了维修单但单不存在 → 400（避免"界面显示关联、实际挂空"）
+    """
+    svc = TpmService(repo)
+    try:
+        result = await svc.consume_spare_part(
+            part_id, req.qty, req.maintenance_task_id, req.remark,
+            operator_id=current_user.get("id"),
+        )
+        msg = f"领用成功，剩余 {result['after_qty']}"
+        if result.get("below_min_stock"):
+            msg += "（已低于安全库存）"
+        return {"code": 0, "message": msg, "data": result}
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+
+@router.get("/spare-parts/{part_id}/movements")
+async def list_spare_part_movements(
+    part_id: int,
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """备件出入库流水 —— 领用的留痕，对账时看"什么时候从几变到几、因为哪张单"。"""
+    svc = TpmService(repo)
+    return {"code": 0, "message": "success",
+            "data": await svc.list_spare_part_movements(part_id)}
 
 
 # ============================================================

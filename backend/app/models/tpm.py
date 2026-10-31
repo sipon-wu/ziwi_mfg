@@ -101,6 +101,7 @@ class SparePartInventory(Base):
     __tablename__ = "spare_part_inventories"
 
     id = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False, comment="租户ID")
     part_id = Column(BigInteger, nullable=False)
     change_type = Column(String(20), comment="in/out/adjust")
     qty = Column(Integer, nullable=False)

@@ -308,6 +308,150 @@ def main():
                    f"{len(txs)} 条 voucher_no={cn_no} "
                    + (f"type={txs[0].get('transaction_type')}" if txs else ""))
 
+    # ══════════════ E-E3 红冲已出库单据 ══════════════
+    print("\n── E-E3 红冲已出库单据（原标注：需审批+留痕 ⚠️）──")
+    io_no = f"IO-{tag}"
+    r = c.post(f"{API}/wms/issue-orders", json={
+        "issue_no": io_no,
+        "issue_type": "production",
+        "source_type": "wo",
+        "warehouse_id": wh["id"],
+        "items": [{
+            "line_no": 1,
+            "material_id": mat["id"],
+            "required_qty": 5,
+            "issued_qty": 0,
+            "unit": mat.get("unit") or "PCS",
+            "location_id": (loc or {}).get("id"),
+        }],
+    })
+    io_id = data(r).get("id")
+    report("E-E3-1 出库单可创建", r.status_code == 200 and bool(io_id),
+           f"issue_no={io_no} {msg(r) if r.status_code != 200 else ''}")
+
+    io_item = None
+    if io_id:
+        r = c.get(f"{API}/wms/issue-orders/{io_id}")
+        io_item = (data(r).get("items") or [{}])[0].get("id")
+    report("E-E3-2 出库单可读回明细", bool(io_item), f"item_id={io_item}")
+
+    if io_item:
+        def inv_state():
+            """该物料的**逐行**库存快照 —— 只看某个库位的合计会漏掉"加错行"。
+
+            C-59 就是这么被撞出来的：总数回到原值、接口报 reversed_qty=5，
+            但货被加到了另一行（无批次残留行），原批次少的没回来。
+            所以这里必须逐行比，不能比合计。
+            """
+            rr = c.get(f"{API}/wms/inventory", params={"page": 1, "page_size": 100})
+            return {x["id"]: float(x.get("quantity") or 0)
+                    for x in rows_of(rr) if x.get("material_id") == mat["id"]}
+
+        pre_rows = inv_state()
+        pre = sum(pre_rows.values())
+
+        r = c.post(f"{API}/wms/issue-order-items/{io_item}/issue",
+                   json={"issued_qty": 5})
+        report("E-E3-3 出库过账成功", r.status_code == 200,
+               msg(r) if r.status_code != 200 else "issued_qty=5")
+
+        mid_rows = inv_state()
+        mid_qty = sum(mid_rows.values())
+        report("E-E3-4 过账后库存真的减少", mid_qty < pre,
+               f"{pre:g} → {mid_qty:g}")
+
+        # ★红冲
+        r = c.post(f"{API}/wms/issue-orders/{io_id}/cancel",
+                   json={"reason": f"E-E3 复核红冲 {tag}"})
+        d = data(r)
+        report("E-E3-5 已出库单据可红冲", r.status_code == 200,
+               f"{msg(r)[:100] if r.status_code != 200 else d}")
+
+        post_rows = inv_state()
+        post = sum(post_rows.values())
+        report("E-E3-6 ★红冲后库存回到过账前", abs(post - pre) < 0.001,
+               f"{mid_qty:g} → {post:g}（过账前 {pre:g}）")
+        # ★逐行回位：总数对但加错行 = 批次账错乱（C-59）
+        drift = {k: (pre_rows.get(k), post_rows.get(k))
+                 for k in set(pre_rows) | set(post_rows)
+                 if abs((pre_rows.get(k) or 0) - (post_rows.get(k) or 0)) > 0.001}
+        report("E-E3-6b ★逐行回到原值（不得把货加到别的行）", not drift,
+               "全部回位" if not drift else f"未回位的行: {drift}")
+
+        r = c.get(f"{API}/wms/inventory-transactions",
+                  params={"page": 1, "page_size": 100})
+        txs = [x for x in rows_of(r) if str(x.get("voucher_no") or "") == io_no
+               or str(x.get("source_doc_no") or "") == io_no]
+        kinds = {t.get("transaction_type") for t in txs}
+        report("E-E3-7 ★红冲留痕：同一单号下既有 issue 又有冲销流水",
+               len(kinds) >= 2,
+               f"{len(txs)} 条，类型={sorted(k for k in kinds if k)}")
+
+        r = c.get(f"{API}/wms/issue-orders/{io_id}")
+        st = (data(r) or {}).get("status")
+        report("E-E3-8 单据状态置为已取消", st == "cancelled", f"status={st}")
+
+        # 重复红冲应被拒（幂等）
+        r = c.post(f"{API}/wms/issue-orders/{io_id}/cancel",
+                   json={"reason": "重复红冲"})
+        report("E-E3-9 重复红冲被拒（不可重复冲销）", r.status_code >= 400,
+               f"HTTP {r.status_code} {msg(r)[:70]}")
+
+    # ══════════════ F-S5 备件领用 → 库存扣减（关联维修单） ══════════════
+    print("\n── F-S5 备件领用 → 库存扣减（原标注：备件空 ⚠️）──")
+    sp_code = f"SP-{tag}"
+    r = c.post(f"{API}/spare-parts", json={
+        "part_code": sp_code, "part_name": f"复核备件{tag}",
+        "unit": "个", "current_stock": 20, "min_stock": 5})
+    sp_id = data(r).get("id")
+    report("F-S5-1 备件主数据可创建", r.status_code == 200 and bool(sp_id),
+           f"part_code={sp_code} {msg(r) if r.status_code != 200 else ''}")
+
+    if sp_id:
+        # 找一张维修任务用于关联
+        r = c.get(f"{API}/maintenance-tasks", params={"page": 1, "page_size": 5})
+        tasks = rows_of(r)
+        task_id = (tasks[0].get("id") if tasks else None)
+        report("F-S5-2 可拿到维修任务用于关联", bool(task_id), f"task_id={task_id}")
+
+        r = c.post(f"{API}/spare-parts/{sp_id}/consume",
+                   json={"qty": 6, "maintenance_task_id": task_id,
+                         "remark": f"F-S5 复核领用 {tag}"})
+        d = data(r)
+        report("F-S5-3 备件可领用", r.status_code == 200,
+               f"{msg(r)[:100] if r.status_code != 200 else d}")
+
+        r = c.get(f"{API}/spare-parts", params={"page": 1, "page_size": 100})
+        rows = rows_of(r)
+        now = next((x for x in rows if x.get("id") == sp_id), {})
+        report("F-S5-4 ★领用后库存真的扣减", (now.get("current_stock") or 0) == 14,
+               f"20 → {now.get('current_stock')}（期望 14）")
+
+        r = c.get(f"{API}/spare-parts/{sp_id}/movements")
+        mv = rows_of(r)
+        hit = [m for m in mv if (m.get("reference_type") == "maintenance_task"
+                                 and str(m.get("reference_id")) == str(task_id))]
+        report("F-S5-5 ★流水留痕且挂上了维修单", bool(hit),
+               f"{len(mv)} 条流水，命中 {len(hit)} 条 "
+               + (f"before={hit[0].get('before_qty')} after={hit[0].get('after_qty')}"
+                  if hit else ""))
+
+        # 库存不足不得领成负数
+        r = c.post(f"{API}/spare-parts/{sp_id}/consume", json={"qty": 9999})
+        report("F-S5-6 ★库存不足被拒（不得领成负数）", r.status_code >= 400,
+               f"HTTP {r.status_code} {msg(r)[:70]}")
+
+        r = c.get(f"{API}/spare-parts", params={"page": 1, "page_size": 100})
+        now = next((x for x in rows_of(r) if x.get("id") == sp_id), {})
+        report("F-S5-7 被拒后库存未被改动", (now.get("current_stock") or 0) == 14,
+               f"current_stock={now.get('current_stock')}")
+
+        # 挂不存在的维修单应被拒
+        r = c.post(f"{API}/spare-parts/{sp_id}/consume",
+                   json={"qty": 1, "maintenance_task_id": 999999})
+        report("F-S5-8 挂不存在的维修单被拒（不挂空引用）",
+               r.status_code >= 400, f"HTTP {r.status_code} {msg(r)[:70]}")
+
     return summary()
 
 

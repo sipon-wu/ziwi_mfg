@@ -161,11 +161,51 @@ class TpmRepository(MultiTenantRepository):
         return await self.query_page("SELECT * FROM spare_parts ORDER BY part_code", page=page, page_size=page_size)
 
     async def create_spare_part(self, data: dict) -> int:
+        # 同一形态（C-34/C-48/C-50/C-56/C-57 已复发六次）：模型 default 只在 ORM 侧，
+        # 裸 SQL 不补 → 漏写即 NULL/缺绑定参数。这里在唯一写入口兜住。
+        data.setdefault("spec", None)
+        data.setdefault("unit", None)
+        data.setdefault("location", None)
+        data.setdefault("current_stock", 0)
+        data.setdefault("min_stock", 0)
+        data.setdefault("max_stock", 0)
         return await self.execute(
-            "INSERT INTO spare_parts (tenant_id, part_code, part_name, spec, unit, current_stock, min_stock, location) "
-            "VALUES (:tenant_id, :part_code, :part_name, :spec, :unit, :current_stock, :min_stock, :location)",
+            "INSERT INTO spare_parts (tenant_id, part_code, part_name, spec, unit, current_stock, min_stock, max_stock, location) "
+            "VALUES (:tenant_id, :part_code, :part_name, :spec, :unit, :current_stock, :min_stock, :max_stock, :location)",
             data,
         )
+
+    async def get_spare_part(self, id: int) -> Optional[Dict]:
+        return await self.query_one("SELECT * FROM spare_parts WHERE id = :id", {"id": id})
+
+    async def add_spare_part_inventory(self, data: dict) -> int:
+        # 子表 tenant_id 由调用方上下文显式写入（缺列时基类 SELECT 注入会
+        # no such column: spare_part_inventories.tenant_id）
+        payload = {"tenant_id": self._tenant_id, **data}
+        data = payload
+        """备件出入库流水（F-S5 领用的留痕）。
+
+        流水表带 before/after 快照 —— 备件没有独立台账，只有 ``spare_parts``
+        上的一个 ``current_stock`` 数字；不记快照的话，事后对账只能看到
+        "现在是几"，看不到"什么时候从几变到几、因为哪张维修单"。
+        """
+        data.setdefault("reference_type", None)
+        data.setdefault("reference_id", None)
+        data.setdefault("operator_id", None)
+        data.setdefault("remark", None)
+        return await self.execute(
+            """INSERT INTO spare_part_inventories
+               (tenant_id, part_id, change_type, qty, before_qty, after_qty,
+                reference_type, reference_id, operator_id, remark)
+               VALUES (:tenant_id, :part_id, :change_type, :qty, :before_qty, :after_qty,
+                :reference_type, :reference_id, :operator_id, :remark)""",
+            data,
+        )
+
+    async def list_spare_part_inventories(self, part_id: int) -> List[Dict]:
+        return await self.query(
+            "SELECT * FROM spare_part_inventories WHERE part_id = :pid ORDER BY id DESC",
+            {"pid": part_id})
 
     async def update_spare_part(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)

@@ -61,6 +61,10 @@ ADD_COLUMNS = [
     ("inventory_count_items", "tenant_id", "VARCHAR(50)"),
     ("material_request_items", "tenant_id", "VARCHAR(50)"),
     ("approval_nodes", "tenant_id", "VARCHAR(50)"),
+    # 补记（C-58）：备件领用上线时又踩到同一形态 —— spare_part_inventories
+    # 同样没有该列，读流水直接 no such column。第一次扫描时它 0 行，
+    # 归进了"平台/未使用表"而漏掉。**0 行不代表没坏，只代表坑还没轮到踩。**
+    ("spare_part_inventories", "tenant_id", "VARCHAR(50)"),
 ]
 
 # 子表归属一律继承父单：明细不该有自己的租户，跟父单走才不会漂
@@ -77,6 +81,10 @@ BACKFILL = [
      "UPDATE approval_nodes SET tenant_id = ("
      " SELECT i.tenant_id FROM approval_instances i WHERE i.id = approval_nodes.approval_id"
      ") WHERE tenant_id IS NULL AND approval_id IS NOT NULL"),
+    ("spare_part_inventories",
+     "UPDATE spare_part_inventories SET tenant_id = ("
+     " SELECT p.tenant_id FROM spare_parts p WHERE p.id = spare_part_inventories.part_id"
+     ") WHERE tenant_id IS NULL AND part_id IS NOT NULL"),
 ]
 
 
@@ -99,6 +107,7 @@ async def _enforce_not_null(conn, engine, table: str, column: str) -> None:
     # 元数据是懒注册的：不 import 模型模块，Base.metadata 里查不到这些表
     import app.models.wms  # noqa: F401
     import app.models.approval  # noqa: F401
+    import app.models.tpm  # noqa: F401
 
     dialect = engine.dialect.name
     if dialect != "sqlite":

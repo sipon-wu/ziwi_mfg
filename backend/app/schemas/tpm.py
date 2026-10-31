@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Any, Literal
 from datetime import date, datetime
 
@@ -128,3 +128,15 @@ class CreateSparePartRequest(BaseModel):
     current_stock: int = 0
     min_stock: int = 0
     location: Optional[str] = None
+
+
+class ConsumeSparePartRequest(BaseModel):
+    """备件领用（场景 F-S5）。
+
+    ``maintenance_task_id`` 可选但强烈建议给：备件成本要归到具体那次维修上，
+    不挂单的话"这台设备这次修花了多少备件"永远算不出来。给了就必须存在。
+    """
+
+    qty: int = Field(..., gt=0, description="领用数量（必须为正）")
+    maintenance_task_id: Optional[int] = None
+    remark: Optional[str] = None
