@@ -10,6 +10,7 @@ from app.constants.wms_constants import (
     INSPECTION_PENDING, INSPECTION_QUALIFIED, INSPECTION_DISQUALIFIED,
     normalize_inspection_status,
     ZONE_TYPE_INSPECTION,
+    COUNT_DIFF_RATE_THRESHOLD,
 )
 from app.repositories.wms_repo import (
     WarehouseRepository, WarehouseZoneRepository, WarehouseLocationRepository,
@@ -938,6 +939,8 @@ class IssueOrderService:
 
         修复：原显式路径误把 ``item_id``（出库明细 id）当作库存行 id 传入 ``stock_out``，
         此处统一解析为正确的库存行 ``id``。
+        修复：原显式路径误把 ``item_id``（出库明细 id）当作库存行 id 传入 ``stock_out``，
+        此处统一解析为正确的库存行 ``id``。
         """
         item = await self.item_repo.get(item_id)
         if not item:
@@ -951,6 +954,15 @@ class IssueOrderService:
         qty = data.get("issued_qty", item["required_qty"])
         location_id = data.get("from_location_id")
         batch_no = data.get("batch_no")
+
+        # E-B3 过期批次拦截。改造前 ``expiry_date`` 列一直在，但**没有任何代码
+        # 读它**：批次过期照常拣选、照常出库，「先进先出」防住的是「压住不放」，
+        # 防不住「放到过期」—— 而这恰恰是 FIFO 要解决的另一半问题。
+        # 取法：显式指定的批次 / 自动拣选命中的批次，在**扣减之前**统一校验；
+        # 自动拣选的 SQL（``find_available_batches``）同步排除过期批次，
+        # 否则它会把过期批排到最前面（FIFO 恰恰按入库时间排，越老越可能过期）。
+        today = date.today()
+        await self._reject_expired_batch(item, batch_no, today)
         warehouse_id = order["warehouse_id"] if order else None
         # 本次实际出库的批次（跨批次时会有多条）。过账后回写到单据行，见下方说明。
         used_batches: List[str] = []
@@ -1071,7 +1083,18 @@ class IssueOrderService:
                                                 r.get("location_id"), used, created_by)
                     remaining -= take
 
-            patch = {"issued_qty": qty, "pick_status": "picked"}
+            # E-E6 部分出库必须**行级可区分**，不能一律标 ``picked``：
+            # 领 20 只出 12 时明细行若写 picked，列表上这条就是"已拣完"，
+            # 欠的那 8 个从此没人看得见 —— 单据级虽然有 PARTIALLY_ISSUED，
+            # 但那是**汇总**（多行合计），行级一假，补拣就得逐行对着流水翻。
+            # 数量也要**累计**而不是覆盖：同一行多次出库（分批拣）时，
+            # 覆盖写法会让 issued_qty 只记最后一次，与流水对不上。
+            required = item.get("required_qty") or 0
+            new_issued = (item.get("issued_qty") or 0) + qty
+            patch = {
+                "issued_qty": new_issued,
+                "pick_status": "picked" if new_issued >= required else "partial",
+            }
             # 把**实际出库批次**回写到单据行。改造前这里只写数量与拣选状态，
             # batch_no 永远是 NULL —— 于是「工单 → 原料批」这条追溯边从来没通过
             # （追溯只能查到"由哪张工单产出"，查不到"用了哪些原料"）。
@@ -1092,6 +1115,35 @@ class IssueOrderService:
                 "issued_qty": total_issued, "status": new_status,
             })
         return {"item_id": item_id, "qty": qty, "order_status": new_status}
+
+    async def _reject_expired_batch(self, item: dict, batch_no, today) -> None:
+        """显式指定批次出库时的过期校验（E-B3）。
+
+        自动拣选在 SQL 里已经排除过期批（``find_available_batches`` /
+        ``find_available_rows``），但**显式指定**批次是绕开拣选的，
+        不拦的话等于给"点名出过期货"留了一扇门 —— 而且这扇门开在
+        最需要盯着的地方：敢点名过期批的，多半正是不想让系统拦的人。
+        """
+        if not batch_no:
+            return
+        from app.repositories.wms_repo import BatchRepository
+        batch_repo = BatchRepository(self.item_repo._session)
+        if self.item_repo._tenant_id:
+            batch_repo.set_tenant_id(self.item_repo._tenant_id)
+        batch = await batch_repo.get_by_batch_no(item["material_id"], batch_no)
+        exp = (batch or {}).get("expiry_date")
+        if not exp:
+            return
+        # SQLite 的 Date 列经 _row_to_dict 出来是字符串；PG 是 date ——
+        # 归一成 date 再比（与 _as_dt 同一坑，只是这次是日期不是时刻）。
+        if isinstance(exp, date):
+            exp_d = exp
+        else:
+            exp_d = datetime.strptime(str(exp)[:10], "%Y-%m-%d").date()
+        if exp_d < today:
+            raise ValueError(
+                f"批次 {batch_no} 已过期（到期日 {exp_d}），不能出库；"
+                f"如需处置请走报废/退换流程")
 
     async def _create_issue_tx(self, tenant_id: str, item: dict, order: dict,
                                qty: float, from_location_id, batch_no, created_by: int = None) -> None:
@@ -1344,13 +1396,45 @@ class InventoryCountService:
 
         return {"item_id": item_id, "system_qty": item["system_qty"], "count_qty": count_qty, "diff_qty": diff_qty}
 
-    async def adjust(self, id: int, tenant_id: str, created_by: int = None) -> dict:
-        """盘盈盘亏调整：将差异写入库存"""
+    async def adjust(self, id: int, tenant_id: str, created_by: int = None,
+                     force: bool = False, force_reason: str = None) -> dict:
+        """盘盈盘亏调整：将差异写入库存。
+
+        E-E5 差异率阈值守卫：任一行 ``|diff| / system_qty`` 超过
+        ``COUNT_DIFF_RATE_THRESHOLD``（10%）时，调整**必须**显式
+        ``force=true`` + 说明。改造前只要盘点单完成、每行填了差异原因，
+        账面 100 实盘 2（差 98%）也能一路绿灯 —— 差异原因必填防的是
+        「说不清为什么不符」，防不住「差异大到离谱」。这么大的差异更
+        可能是**盘错对象**（把甲当成乙盘了）而不是真实损耗，静默调整
+        会把甲的账记到乙头上，下次盘甲时又是一笔对不上的差。
+        """
         count = await self.repo.get(id)
         if not count:
             raise ValueError(f"盘点单不存在: {id}")
         if count["status"] != "completed":
             raise ValueError("只有已完成的盘点单才能调整")
+
+        items = await self.item_repo.list_by_count(id)
+        over = []
+        for item in items:
+            if item["diff_qty"] and item["diff_qty"] != 0:
+                system_qty = item.get("system_qty") or 0
+                # 账面为 0 的行差异率按"有无差异"算（除零），
+                # 有差异即视为超阈值 —— 凭空多出来的货同样要有人担责。
+                rate = (abs(item["diff_qty"]) / system_qty) if system_qty else 1.0
+                if rate > COUNT_DIFF_RATE_THRESHOLD:
+                    over.append((item, rate))
+        if over and not force:
+            detail = "；".join(
+                f"物料 {it['material_id']} 差异 {it['diff_qty']:g}"
+                f"（账面 {(it.get('system_qty') or 0):g}，差异率 {rate:.0%}）"
+                for it, rate in over)
+            raise ValueError(
+                f"存在 {len(over)} 行差异率超过 "
+                f"{COUNT_DIFF_RATE_THRESHOLD:.0%} 的明细：{detail}。"
+                f"如确认差异属实请传 force=true 并说明")
+        if over and force and not force_reason:
+            raise ValueError("强制调整超阈值差异必须填写说明（force_reason）")
 
         from app.repositories.wms_repo import InventoryRepository, InventoryTransactionRepository
         inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)

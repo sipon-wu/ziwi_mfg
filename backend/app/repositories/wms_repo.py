@@ -1,5 +1,7 @@
 """M20 仓储管理（WMS）模块 — Repository 层"""
 from typing import Optional, Dict, List
+from datetime import date
+
 from app.repositories.base import MultiTenantRepository
 
 
@@ -583,14 +585,21 @@ class InventoryRepository(MultiTenantRepository):
         改为"任意可用行，但排除已锁定批次"——历史 NULL 行照样取得到。
         ``WHERE is_locked`` 不带字面量：PG 的 boolean 与 SQLite 的 0/1 都合法。
         """
+        # E-B3：过期批次同步排除（与锁定同语义——过期与锁定都是"这货不能用"）。
+        # expiry_date 为空表示**不控制效期**，不能按过期处理。
+        # ⚠️不能用 SQL 的 ``CURRENT_DATE``：它是 **UTC** 口径，本地时区跨零点
+        # 后会差一天（实测：本地 11-01 01:00 时 UTC 仍是 10-31，到期日 10-31
+        # 被判成"没过期"照常出库）。``:today`` 由调用方按**业务本地时区**传入。
         return await self.query(
             "SELECT * FROM inventory "
             "WHERE material_id = :mid AND warehouse_id = :wid "
             "AND (quantity - locked_qty) > 0 "
             "AND (batch_id IS NULL OR batch_id NOT IN "
-            "     (SELECT id FROM batches WHERE is_locked)) "
+            "     (SELECT id FROM batches WHERE is_locked "
+            "      OR (expiry_date IS NOT NULL AND expiry_date < :today))) "
             "ORDER BY (quantity - locked_qty) DESC",
-            {"mid": material_id, "wid": warehouse_id},
+            {"mid": material_id, "wid": warehouse_id,
+             "today": date.today().isoformat()},
         )
 
     async def find_available_batches(self, material_id: int, warehouse_id: int,
@@ -601,6 +610,9 @@ class InventoryRepository(MultiTenantRepository):
                        manual → 返回全部可用（由调用方/人工选择）
         """
         order_dir = "ASC" if pick_strategy == "fifo" else "DESC"
+        # E-B3：过期批次必须排除。FIFO 按入库时间排，越老的批次**越可能过期**，
+        # 不排除的话过期批会被排在最前面先出 —— 系统自动拣选变成"优先把过期货
+        # 发出去"。到期**当天**仍可出（expiry_date < today 才算过期）。
         sql = f"""SELECT i.*, b.batch_no, b.manufacture_date, b.created_at as batch_created_at
                    FROM inventory i
                    JOIN batches b ON b.id = i.batch_id
@@ -609,8 +621,10 @@ class InventoryRepository(MultiTenantRepository):
                      AND (i.quantity - i.locked_qty) > 0
                      AND b.is_locked IS NOT TRUE
                      AND b.status = 'active'
+                     AND (b.expiry_date IS NULL OR b.expiry_date >= :today)
                    ORDER BY b.created_at {order_dir}"""
-        return await self.query(sql, {"mid": material_id, "wid": warehouse_id})
+        return await self.query(sql, {"mid": material_id, "wid": warehouse_id,
+                                      "today": date.today().isoformat()})
 
     async def resolve_inspection_location(self, tenant_id: str, warehouse_id: int) -> int:
         """解析（必要时惰性创建）待检区库位，返回 location_id。

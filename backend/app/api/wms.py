@@ -38,6 +38,7 @@ from app.schemas.wms import (
     ReceiptOrderCreate, ReceiptOrderUpdate, ReceiptOrderItemUpdate,
     IssueOrderCreate, IssueOrderUpdate, IssueOrderItemUpdate,
     InventoryCountCreate, InventoryCountUpdate, InventoryCountItemUpdate,
+    InventoryCountAdjustRequest,
     InventoryAlertCreate, InventoryAlertUpdate,
     MaterialRequestCreate, MaterialRequestUpdate,
 )
@@ -879,13 +880,21 @@ async def record_count_item(item_id: int, req: InventoryCountItemUpdate,
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
 
 @router.post("/inventory-counts/{count_id}/adjust")
-async def adjust_inventory_count(count_id: int, current_user: dict = Depends(get_current_user),
+async def adjust_inventory_count(count_id: int,
+    req: InventoryCountAdjustRequest = None,
+    current_user: dict = Depends(get_current_user),
     repo: InventoryCountRepository = Depends(get_tenant_repo(InventoryCountRepository, require_auth=True)),
     item_repo: InventoryCountItemRepository = Depends(get_tenant_repo(InventoryCountItemRepository, require_auth=True)),
 ):
+    """盘盈盘亏调整。任一行差异率超 10%（E-E5）时必须 ``force=true`` +
+    ``force_reason`` 说明，否则 400 —— 巨额差异更可能是盘错对象而不是
+    真实损耗，静默调整会把账记到别的物料头上。"""
+    req = req or InventoryCountAdjustRequest()
     svc = InventoryCountService(repo, item_repo)
     try:
-        result = await svc.adjust(count_id, current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
+        result = await svc.adjust(count_id, current_user.get("tenant_id", "default"),
+                                  created_by=current_user.get("id"),
+                                  force=req.force, force_reason=req.force_reason)
         return {"code": 0, "message": "盘点调整完成", "data": result}
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})

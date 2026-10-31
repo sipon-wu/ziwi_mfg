@@ -267,6 +267,12 @@ class InventoryCountItemUpdate(BaseModel):
     remark: Optional[str] = None
 
 
+class InventoryCountAdjustRequest(BaseModel):
+    """盘点调整（E-E5）。存在超阈值差异行时必须 force + 说明。"""
+    force: bool = False
+    force_reason: Optional[str] = None
+
+
 # ============================================
 # 库存预警
 # ============================================

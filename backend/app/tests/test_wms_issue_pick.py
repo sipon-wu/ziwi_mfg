@@ -36,9 +36,11 @@ async def inv_repo():
             " quantity NUMERIC, locked_qty NUMERIC DEFAULT 0,"
             " last_transaction_at TEXT)"
         ))
-        # find_available_rows 会子查询排除锁定批次，内存库必须有这张表
+        # find_available_rows 会子查询排除锁定/过期批次，内存库必须有这张表
+        # （C-69 起子查询新增 expiry_date 列，极简表必须跟着补）
         await conn.execute(text(
-            "CREATE TABLE batches (id INTEGER PRIMARY KEY, is_locked BOOLEAN)"
+            "CREATE TABLE batches (id INTEGER PRIMARY KEY, is_locked BOOLEAN,"
+            " expiry_date TEXT)"
         ))
         # 同一物料同一仓库的 5 条库存行：
         #   id=1 待检区，已被取消清空 → 可用 0
