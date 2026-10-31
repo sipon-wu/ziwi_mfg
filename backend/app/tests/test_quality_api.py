@@ -402,11 +402,13 @@ class TestInspectionOrderAPI:
         resp = await async_client.get("/api/v1/inspection-orders/999")
         assert resp.status_code == 404
 
+    @patch("app.repositories.production_repo.ProductionRepository.get_work_order")
     @patch("app.api.quality.InspectionOrderRepository.get_max_order_no")
     @patch("app.api.quality.InspectionOrderRepository.create_inspection_order")
-    async def test_create(self, mock_create, mock_max, async_client):
+    async def test_create(self, mock_create, mock_max, mock_wo, async_client):
         mock_max.return_value = None  # 无前缀记录 → 生成 0001
         mock_create.return_value = 1
+        mock_wo.return_value = {"id": 100}  # D-E5：关联工单存在性校验
         payload = {"order_type": "inspection", "work_order_id": 100}
         resp = await async_client.post("/api/v1/inspection-orders", json=payload)
         assert resp.status_code == 200
@@ -415,6 +417,18 @@ class TestInspectionOrderAPI:
         today_prefix = f"QC-{date.today().strftime('%Y%m%d')}-"
         assert saved["order_no"] == f"{today_prefix}0001"
         assert saved["tenant_id"] == "default"
+
+    @patch("app.repositories.production_repo.ProductionRepository.get_work_order")
+    @patch("app.api.quality.InspectionOrderRepository.create_inspection_order")
+    async def test_create_ghost_work_order_rejected(
+            self, mock_create, mock_wo, async_client):
+        """D-E5：关联不存在的工单 → 400，且不得落库"""
+        mock_wo.return_value = None
+        resp = await async_client.post("/api/v1/inspection-orders", json={
+            "order_type": "inspection", "work_order_id": 999})
+        assert resp.status_code == 400
+        assert "工单" in resp.json()["detail"]["message"]
+        mock_create.assert_not_called()
 
     @patch("app.api.quality.InspectionOrderRepository.get_max_order_no")
     @patch("app.api.quality.InspectionOrderRepository.create_inspection_order")

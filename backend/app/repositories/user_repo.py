@@ -195,6 +195,29 @@ class UserRepository(MultiTenantRepository):
         await self._write_org_links(user_id, tenant_id, primary_org_id, extra_org_ids)
         return user_id
 
+    async def sync_user_roles(self, user_id: int, role_ids: List[int]) -> dict:
+        """全量同步用户角色（D-B2）。
+
+        背景：``CreateUserRequest.role_ids`` 在 schema 与接口文档里都声明支持，
+        但 Service/Repo 此前**从未消费** —— 建户时静默丢弃，新用户一个角色
+        都没有，登录后任何带权限码的接口一律 403（实测品质录明细即踩中）。
+        静默丢参是最坏的形态：调用方以为配好了，实际没配。
+
+        - 目标集合 = 传入的 role_ids（去重、去 None）
+        - 先删后插，幂等；租户隔离按本 repo 的 tenant 上下文
+        """
+        scope_tenant = self._tenant_id or "default"
+        target = list(dict.fromkeys(r for r in (role_ids or []) if r is not None))
+        await self.execute(
+            "DELETE FROM user_roles WHERE user_id = :uid AND tenant_id = :tid",
+            {"uid": user_id, "tid": scope_tenant})
+        for rid in target:
+            await self.execute(
+                "INSERT INTO user_roles (user_id, role_id, tenant_id) "
+                "VALUES (:uid, :rid, :tid)",
+                {"uid": user_id, "rid": rid, "tid": scope_tenant})
+        return {"role_ids": target, "synced": len(target)}
+
     async def _insert_user(self, tenant_id: str, data: dict, email: Optional[str],
                            primary_org_id: Optional[int]) -> int:
         """INSERT users。

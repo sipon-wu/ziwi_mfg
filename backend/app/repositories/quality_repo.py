@@ -252,21 +252,24 @@ class InspectionResultRepository(MultiTenantRepository):
         看得到单头、看不到明细。调用方已在 data 里给了 ``org_id`` 时以调用方为准
         （``MultiTenantRepository._inject_org_owner`` 检测到列已存在就不再覆盖）。
         """
+        # created_by 进固定列 INSERT 后，没传它的旧调用方（实验室模块等）会
+        # 缺绑定参数 500 → 缺省补 None，归属由 API 层显式传入才生效。
+        data = {"created_by": None, **data}
         if data.get("org_id") is None:
             return await self.execute(
                 "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
-                "spec_value, measured_value, deviation, unit, result, remark) "
+                "spec_value, measured_value, deviation, unit, result, remark, created_by) "
                 "VALUES (:tenant_id, :order_id, "
                 "(SELECT org_id FROM inspection_order WHERE id = :order_id), "
                 ":item_id, :item_name, :spec_value, "
-                ":measured_value, :deviation, :unit, :result, :remark)",
+                ":measured_value, :deviation, :unit, :result, :remark, :created_by)",
                 data,
             )
         return await self.execute(
             "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
-            "spec_value, measured_value, deviation, unit, result, remark) "
+            "spec_value, measured_value, deviation, unit, result, remark, created_by) "
             "VALUES (:tenant_id, :order_id, :org_id, :item_id, :item_name, :spec_value, "
-            ":measured_value, :deviation, :unit, :result, :remark)",
+            ":measured_value, :deviation, :unit, :result, :remark, :created_by)",
             data,
         )
 

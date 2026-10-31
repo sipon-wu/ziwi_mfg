@@ -390,6 +390,19 @@ class BatchRepository(MultiTenantRepository):
             {"id": id, "reason": reason},
         )
 
+    async def unlock(self, id: int) -> int:
+        """解除批次冻结（D-B3：IQC 判 REJ 后改判合格/让步时回滚锁批）。
+
+        lock_reason 不清空而追加解锁说明：锁/解全程留痕，事后能查出
+        "这批被谁锁过、又因为什么解开"。
+        """
+        return await self.execute(
+            "UPDATE batches SET is_locked = FALSE, status = 'active', "
+            "lock_reason = COALESCE(lock_reason, '') || ' → 已解锁' "
+            "WHERE id = :id",
+            {"id": id},
+        )
+
 
 # ============================================
 # 库存台账 Repo

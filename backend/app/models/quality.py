@@ -112,6 +112,9 @@ class InspectionResult(Base):
     unit = Column(String(20))
     result = Column(String(10), comment="PASS/FAIL")
     remark = Column(Text)
+    # ★ 录入人归属（D-B2）：同一检验单可由多名检验员分工录明细，
+    #   没有这一列，出了问题追溯不到是谁录的。
+    created_by = Column(BigInteger, comment="录入人 user id")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -192,10 +192,12 @@ class TestRolePermissionsAndScope:
 class TestUserOrg:
     """用户主组织 + 兼任组织"""
 
+    @patch("app.api.users.UserRepository.sync_user_roles")
     @patch("app.api.users.UserRepository.create")
-    async def test_create_user_with_org(self, mock_create, async_client):
-        """POST /users 带 org_id 与 org_ids 时传入 repo（同时带 role_ids）"""
+    async def test_create_user_with_org(self, mock_create, mock_sync_roles, async_client):
+        """POST /users 带 org_id 与 org_ids 时传入 repo；role_ids 走 sync_user_roles（D-B2）"""
         mock_create.return_value = 1
+        mock_sync_roles.return_value = {"role_ids": [3], "synced": 1}
         resp = await async_client.post("/api/v1/users", json={
             "username": "op1", "password": "pass123", "real_name": "操作工",
             "org_id": 10, "org_ids": [10, 11], "role_ids": [3],
@@ -204,6 +206,9 @@ class TestUserOrg:
         saved = mock_create.call_args[0][0]
         assert saved["org_id"] == 10
         assert saved["org_ids"] == [10, 11]
+        # role_ids 不再静默丢弃：进 sync_user_roles 而非 users 表 INSERT
+        assert "role_ids" not in saved
+        mock_sync_roles.assert_called_once_with(1, [3])
 
     @patch("app.api.users.UserRepository.create")
     async def test_create_user_email_lowered(self, mock_create, async_client):

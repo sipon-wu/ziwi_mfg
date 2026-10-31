@@ -171,12 +171,16 @@ class PpapSubmissionItemRepository(MultiTenantRepository):
         )
 
     async def create_item(self, data: dict) -> int:
+        # 固定列 INSERT：调用方只给了 4 个键时，缺任何一个绑定参数都会
+        # InvalidRequestError 500（D-E7 实测踩中）→ 缺省补 None。
+        params = {"file_path": None, "file_name": None,
+                  "assignee_id": None, "remark": None, **data}
         return await self.execute(
             "INSERT INTO ppap_submission_items (tenant_id, submission_id, element_id, status, "
             "file_path, file_name, assignee_id, remark) "
             "VALUES (:tenant_id, :submission_id, :element_id, :status, "
             ":file_path, :file_name, :assignee_id, :remark)",
-            data,
+            params,
         )
 
     async def update_item(self, id: int, data: dict) -> int:

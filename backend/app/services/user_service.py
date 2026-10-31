@@ -16,15 +16,22 @@ class UserService:
         return await self.user_repo.get(id)
 
     async def create(self, data: dict) -> dict:
+        # D-B2: role_ids 单独消费（repo 的 INSERT 是固定列，传进去会被静默丢弃）
+        role_ids = data.pop("role_ids", None)
         data["password_hash"] = hash_password(data.pop("password"))
         # create 走 INSERT ... RETURNING id，返回值即新用户 PK
         user_id = await self.user_repo.create(data)
-        return {"affected": 1, "id": user_id}
+        result = {"affected": 1, "id": user_id}
+        if role_ids is not None:
+            result["roles"] = await self.user_repo.sync_user_roles(user_id, role_ids)
+        return result
 
     async def update(self, id: int, data: dict) -> dict:
         # B9: 组织归属字段不参与 users 表通用 SET（由 user_organizations 单独维护）
         org_id = data.pop("org_id", None)
         org_ids = data.pop("org_ids", None)
+        # D-B2: 角色变更同样走同步（不进 users 表 SET）
+        role_ids = data.pop("role_ids", None)
         if "password" in data:
             data["password_hash"] = hash_password(data.pop("password"))
 
@@ -39,6 +46,8 @@ class UserService:
                 primary = await self.user_repo.update(id, {"primary_org_id": sync["primary_org_id"]})
                 result["affected"] = (result["affected"] or 0) + (primary or 0)
             result["org"] = sync
+        if role_ids is not None:
+            result["roles"] = await self.user_repo.sync_user_roles(id, role_ids)
         return result
 
     async def delete(self, id: int) -> dict:

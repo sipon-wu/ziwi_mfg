@@ -545,8 +545,12 @@ class ReceiptOrderService:
                 "created_by": created_by,
             })
             # ③ 明细：实收数量 + 进入待检
+            # ★ batch_no 必须落到明细行（D-B3）：此前只用于待检区入账和流水，
+            #   明细行上的 batch_no 始终是 NULL → IQC 判 REJ 时取不到批次号，
+            #   冻结批次、NCR 定位批次全断链（"判了不合格却不知道锁哪批"）。
             await self.item_repo.update(item_id, {
                 "received_qty": new_received,
+                "batch_no": batch_no,
                 "inspection_status": data.get("inspection_status", "待检"),
             })
             # ④ 入库单：pending → inspecting（已在 inspecting 则保持）

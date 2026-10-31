@@ -352,6 +352,18 @@ async def create_order(
     data["tenant_id"] = current_user.get("tenant_id", "default")
     if not data.get("result"):
         data["result"] = "pending"
+    # ── D-E5：关联不存在的工单 → 400 ─────────────────────────
+    # 不校验的话，检验单指向幽灵工单：过程检验的产出数无处回写、
+    # 追溯链从工单查检验单也查不到，单子成了无主孤儿。
+    if data.get("work_order_id"):
+        from app.repositories.production_repo import ProductionRepository
+        wo_repo = ProductionRepository(repo._session)
+        if repo.tenant_id:
+            wo_repo.set_tenant_id(repo.tenant_id)
+        if not await wo_repo.get_work_order(data["work_order_id"]):
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": f"关联的工单不存在: {data['work_order_id']}"})
     data = await _resolve_sampling_plan(repo, data)
     # 自动生成检验单号: QC-YYYYMMDD-NNNN
     today_prefix = f"QC-{date.today().strftime('%Y%m%d')}-"
@@ -423,6 +435,10 @@ async def judge_order(
                     "message": (f"已录入 {len(results)} 条检验结果，其中不合格 "
                                 f"{defect_count} 项，超过允收数 Ac={order['ac']}"
                                 f"（Re={order['re']}），按 GB/T 2828.1 不能判合格")})
+
+    # D-B3：记下改判前的结论 —— 从 REJ 改判合格/让步时要把
+    # REJ 的副作用（锁批 + 自动 NCR）一并回滚，否则状态泄漏。
+    old_result = order.get("result")
 
     updates = {"result": req.result}
     if req.remark:
@@ -531,10 +547,45 @@ async def judge_order(
             )
             ncr_id = created["id"]
 
+    # ── D-B3：REJ 改判合格/让步 → 回滚副作用 ──────────────────
+    # REJ 时锁了批次、开了 NCR；改判后若不撤，"判定是合格、货却锁着、
+    # 评审单还挂着"，三个口径互相矛盾。改判必须让副作用跟着走。
+    ncr_cancelled = None
+    batch_unlocked = None
+    if old_result == "REJ" and req.result != "REJ":
+        if receipt_item and receipt_item.get("batch_no") and order.get("material_id"):
+            from app.repositories.wms_repo import BatchRepository
+            batch_repo = BatchRepository(repo._session)
+            if repo.tenant_id:
+                batch_repo.set_tenant_id(repo.tenant_id)
+            batch = await batch_repo.get_by_batch_no(
+                order.get("material_id"), receipt_item["batch_no"])
+            if batch and batch.get("is_locked"):
+                await batch_repo.unlock(batch["id"])
+                batch_unlocked = True
+            else:
+                batch_unlocked = False
+        ncr_repo2 = NcrRepository(repo._session)
+        ncr_repo2.set_tenant_id(repo.tenant_id)
+        existing = await ncr_repo2.get_by_source(
+            order.get("order_type") or "inspection", order_id)
+        if existing:
+            if existing.get("status") not in ("closed", "cancelled"):
+                await ncr_repo2.update(existing["id"], {
+                    "status": "cancelled",
+                    "disposition_at": datetime.now(timezone.utc),
+                    "disposition_remark": (
+                        f"检验单 {order.get('order_no')} 改判为 {req.result}，"
+                        "自动评审单作废"),
+                })
+            ncr_cancelled = existing["id"]
+
     return {"code": 0, "message": f"判定为 {req.result}",
             "data": {"ncr_id": ncr_id, "receipt_item_id": order.get("receipt_item_id"),
                      "receipt_inspection_status": receipt_status,
                      "batch_locked": batch_locked,
+                     "batch_unlocked": batch_unlocked,
+                     "ncr_cancelled": ncr_cancelled,
                      "sampling_guard": sampling_guard}}
 
 
@@ -553,9 +604,13 @@ async def list_results(
 @router.post("/inspection-results")
 async def create_result(
     req: CreateInspectionResultRequest,
+    current_user: dict = Depends(get_current_user),
     repo: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
 ):
-    result = await repo.create_result({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
+    # D-B2：写入录入人归属 —— 同一检验单多名检验员分工录明细时可追溯到人
+    result = await repo.create_result({**req.model_dump(),
+                                       "tenant_id": repo.tenant_id or "default",
+                                       "created_by": current_user.get("id")})
     return {"code": 0, "message": "创建成功"}
 
 

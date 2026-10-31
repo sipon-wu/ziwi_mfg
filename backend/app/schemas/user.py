@@ -42,6 +42,8 @@ class UpdateUserRequest(BaseModel):
     """变更主组织：写入 users.primary_org_id 并同步 user_organizations"""
     org_ids: Optional[List[int]] = None
     """全量兼任组织（与 org_id 合并为目标集合，其余旧关联被删除）"""
+    role_ids: Optional[List[int]] = None
+    """全量同步角色（D-B2：与创建对齐，传 [] 即清空全部角色）"""
 
 
 class UserOrgResponse(BaseModel):
