@@ -308,6 +308,7 @@ class InventoryCountItem(Base):
     __tablename__ = "inventory_count_items"
 
     id          = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id   = Column(String(50), nullable=False, comment="租户ID")
     count_id    = Column(BigInteger, nullable=False, comment="盘点单ID")
     material_id = Column(BigInteger, nullable=False, comment="物料ID")
     location_id = Column(BigInteger, comment="库位ID")
@@ -368,6 +369,7 @@ class MaterialRequestItem(Base):
     __tablename__ = "material_request_items"
 
     id               = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id        = Column(String(50), nullable=False, comment="租户ID")
     request_id       = Column(BigInteger, nullable=False, comment="申请单ID")
     line_no          = Column(Integer, nullable=False, comment="行号")
     material_id      = Column(BigInteger, nullable=False, comment="物料ID")

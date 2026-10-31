@@ -25,7 +25,13 @@ class ApprovalRepository(MultiTenantRepository):
         return await self.execute("UPDATE approval_instances SET status = :status WHERE id = :id", {"status": status, "id": id})
 
     async def create_node(self, data: dict) -> int:
-        return await self.execute("INSERT INTO approval_nodes (approval_id, node_order, approver_id, node_type) VALUES (:approval_id, :node_order, :approver_id, :node_type)", data)
+        # approval_nodes 是子表，tenant_id 由调用方上下文显式写入；
+        # 缺这一列时基类的 SELECT 注入会直接 no such column: approval_nodes.tenant_id。
+        payload = {"tenant_id": self._tenant_id, **data}
+        payload.setdefault("node_type", "approve")
+        return await self.execute(
+            "INSERT INTO approval_nodes (tenant_id, approval_id, node_order, approver_id, node_type) "
+            "VALUES (:tenant_id, :approval_id, :node_order, :approver_id, :node_type)", payload)
 
     async def list_nodes(self, approval_id: int) -> List[Dict]:
         return await self.query("SELECT * FROM approval_nodes WHERE approval_id = :aid ORDER BY node_order", {"aid": approval_id})

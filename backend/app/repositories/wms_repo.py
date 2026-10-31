@@ -599,6 +599,16 @@ class InventoryTransactionRepository(MultiTenantRepository):
         return await self.query_page(sql, params, page, page_size)
 
     async def create(self, data: dict) -> int:
+        # 唯一写入口统一兜底：调用方给不齐的列一律补 None/0。
+        # 这些列在模型上要么是 nullable 无 default，要么 default 只存在于 ORM 侧；
+        # 裸 SQL 下缺失即 "A value is required for bind parameter 'xxx'"。
+        # 与其在每个调用点（收货/上架/移位/盘点调整/报废…）各补一次漏，
+        # 不如在唯一入口兜住 —— 新增调用方不会再踩同一个坑。
+        for col in ("org_id", "from_location_id", "to_location_id", "batch_id",
+                    "batch_no", "unit_price", "source_type", "source_doc_no",
+                    "reference_type", "reference_id", "remark", "created_by"):
+            data.setdefault(col, None)
+        data.setdefault("unit", "")
         return await self.execute(
             """INSERT INTO inventory_transactions (tenant_id, transaction_type, voucher_no, material_id,
                warehouse_id, from_location_id, to_location_id, batch_id, batch_no, quantity, unit,
@@ -824,6 +834,14 @@ class InventoryCountRepository(MultiTenantRepository):
         )
 
     async def create(self, data: dict) -> int:
+        # 模型上的 default=0 只在 ORM 侧生效，裸 SQL 不会补 → 不写就是
+        # "A value is required for bind parameter 'counted_items'"（盘点单创建 100% 500）。
+        # 汇总三列在建单时恒为 0，由 record_count / adjust 后续推进。
+        data.setdefault("total_items", 0)
+        data.setdefault("counted_items", 0)
+        data.setdefault("diff_items", 0)
+        data.setdefault("zone_id", None)
+        data.setdefault("created_by", None)
         return await self.execute(
             """INSERT INTO inventory_counts (tenant_id, count_no, count_type, status, warehouse_id, zone_id,
                count_date, total_items, counted_items, diff_items, created_by)
@@ -855,12 +873,26 @@ class InventoryCountItemRepository(MultiTenantRepository):
         )
 
     async def create(self, data: dict) -> int:
+        # tenant_id 必须显式进列清单：基类 execute() 只给 UPDATE/DELETE 注入
+        # tenant_id 条件，INSERT 一向由应用层自己写。而 SELECT 侧基类会自动拼
+        # `ci.tenant_id = :_tenant_id` —— 表里没这一列时读必炸（no such column）。
+        payload = {"tenant_id": self._tenant_id, **data}
+        # 同上：入库方只给 material_id/system_qty，其余列靠模型 default 是补不出来的。
+        # 实盘数量与差异在 record_count 时才有意义，建单阶段一律为空/0。
+        payload.setdefault("location_id", None)
+        payload.setdefault("batch_no", None)
+        payload.setdefault("system_qty", 0)
+        payload.setdefault("count_qty", None)
+        payload.setdefault("diff_qty", None)
+        payload.setdefault("diff_reason", None)
+        payload.setdefault("status", "pending")
+        payload.setdefault("remark", None)
         return await self.execute(
-            """INSERT INTO inventory_count_items (count_id, material_id, location_id, batch_no,
+            """INSERT INTO inventory_count_items (tenant_id, count_id, material_id, location_id, batch_no,
                system_qty, count_qty, diff_qty, diff_reason, status, remark)
-               VALUES (:count_id, :material_id, :location_id, :batch_no,
+               VALUES (:tenant_id, :count_id, :material_id, :location_id, :batch_no,
                :system_qty, :count_qty, :diff_qty, :diff_reason, :status, :remark)""",
-            data,
+            payload,
         )
 
     async def batch_create(self, items: list) -> int:
@@ -1002,12 +1034,18 @@ class MaterialRequestItemRepository(MultiTenantRepository):
         )
 
     async def create(self, data: dict) -> int:
+        # 同 inventory_count_items：子表 tenant_id 由调用方上下文显式写入
+        payload = {"tenant_id": self._tenant_id, **data}
+        for col in ("line_no", "approved_qty", "issued_qty", "operation_seq",
+                    "requirement_date", "remark"):
+            payload.setdefault(col, None)
+        payload.setdefault("required_qty", 0)
         return await self.execute(
-            """INSERT INTO material_request_items (request_id, line_no, material_id, required_qty, approved_qty,
+            """INSERT INTO material_request_items (tenant_id, request_id, line_no, material_id, required_qty, approved_qty,
                issued_qty, unit, operation_seq, requirement_date, remark)
-               VALUES (:request_id, :line_no, :material_id, :required_qty, :approved_qty,
+               VALUES (:tenant_id, :request_id, :line_no, :material_id, :required_qty, :approved_qty,
                :issued_qty, :unit, :operation_seq, :requirement_date, :remark)""",
-            data,
+            payload,
         )
 
     async def batch_create(self, items: list) -> int:

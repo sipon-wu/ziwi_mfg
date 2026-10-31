@@ -30,6 +30,7 @@ class ApprovalInstance(Base):
 class ApprovalNode(Base):
     __tablename__ = "approval_nodes"
     id = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False, comment="租户ID")
     approval_id = Column(BigInteger, nullable=False, comment="审批实例ID")
     node_order = Column(Integer, nullable=False, comment="节点顺序")
     approver_id = Column(BigInteger, comment="审批人ID")

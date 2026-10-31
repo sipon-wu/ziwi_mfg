@@ -1274,10 +1274,20 @@ class InventoryCountService:
             raise ValueError("盘点数量不能为空")
 
         diff_qty = count_qty - item["system_qty"]
+        # 差异原因必填（场景 E-S4）：盘盈盘亏是要进损益的，没有原因的调整单
+        # 在复盘时无从下手 —— "账实不符"这件事本身不可疑，可疑的是说不清为什么不符。
+        # 只在真有差异时强制；无差异的行不需要编理由。
+        reason = (data.get("diff_reason") or "").strip()
+        if diff_qty != 0 and not reason:
+            raise ValueError(
+                f"存在差异 {diff_qty:g}（账面 {item['system_qty']:g} / 实盘 {count_qty:g}），"
+                f"必须填写差异原因"
+            )
+
         await self.item_repo.update(item_id, {
             "count_qty": count_qty,
             "diff_qty": diff_qty,
-            "diff_reason": data.get("diff_reason"),
+            "diff_reason": reason or None,
             "status": "counted",
         })
 
@@ -1306,10 +1316,16 @@ class InventoryCountService:
 
         items = await self.item_repo.list_by_count(id)
         adjust_count = 0
+        skipped = []
         for item in items:
             if item["diff_qty"] and item["diff_qty"] != 0 and item.get("status") == "counted":
                 if item["diff_qty"] > 0:
-                    inv_repo.stock_in(
+                    # ★必须 await：此前这里写成了 inv_repo.stock_in(...) 而没等它，
+                    # 协程从未被调度 —— 盘盈调整"成功"返回、流水也记了 +N，
+                    # 库存却一个数没加。**账实不符比不生效更糟**：流水说加了、
+                    # 库存没加，对账时两侧都查不出所以然（盘亏那条有 await，
+                    # 所以只有盘盈静默失效 —— 更难被发现）。
+                    await inv_repo.stock_in(
                         tenant_id=tenant_id,
                         material_id=item["material_id"],
                         warehouse_id=count["warehouse_id"],
@@ -1319,13 +1335,29 @@ class InventoryCountService:
                         batch_no=item.get("batch_no"),
                     )
                 else:
-                    existing = await inv_repo.find_one(
-                        item["material_id"], count["warehouse_id"],
-                        item.get("location_id"),
+                    # 不能用 find_one(..., batch_id=None)：它会额外拼
+                    # `batch_id IS NULL`，而批次管理的库存根本没有这种行 →
+                    # 带批次的货盘亏时**静默跳过**（与 C-52 移位同一坑）。
+                    # 在该库位挑可用量最大的那行扣减。
+                    rows = await inv_repo.query(
+                        """SELECT * FROM inventory
+                           WHERE material_id = :mid AND warehouse_id = :wid
+                           ORDER BY (quantity - COALESCE(locked_qty, 0)) DESC""",
+                        {"mid": item["material_id"], "wid": count["warehouse_id"]},
                     )
+                    rows = [r for r in rows
+                            if item.get("location_id") is None
+                            or r.get("location_id") == item["location_id"]]
+                    existing = rows[0] if rows else None
                     if existing:
                         abs_qty = abs(item["diff_qty"])
                         await inv_repo.stock_out(existing["id"], abs_qty)
+                    else:
+                        skipped.append({
+                            "item_id": item["id"],
+                            "material_id": item["material_id"],
+                            "reason": "该库位无可用库存行，盘亏未扣减",
+                        })
 
                 await tx_repo.create({
                     "tenant_id": tenant_id,
@@ -1333,7 +1365,9 @@ class InventoryCountService:
                     "voucher_no": count["count_no"],
                     "material_id": item["material_id"],
                     "warehouse_id": count["warehouse_id"],
-                    "location_id": item["location_id"],
+                    # 盘盈记"入到哪"、盘亏记"从哪出"，追溯时才看得出方向
+                    "to_location_id": item["location_id"] if item["diff_qty"] > 0 else None,
+                    "from_location_id": item["location_id"] if item["diff_qty"] < 0 else None,
                     "batch_no": item.get("batch_no"),
                     "quantity": item["diff_qty"],
                     "unit": "",
@@ -1348,7 +1382,11 @@ class InventoryCountService:
                 adjust_count += 1
 
         await self.repo.update(id, {"status": "adjusted"})
-        return {"adjusted_count": adjust_count}
+        result = {"adjusted_count": adjust_count}
+        # 跳过的行必须回传而不是静默吞掉：调用方以为调平了，实际没动
+        if skipped:
+            result["skipped"] = skipped
+        return result
 
 
 # ============================================
