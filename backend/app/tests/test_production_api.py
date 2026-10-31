@@ -202,7 +202,11 @@ class TestM07MaterialCheck:
         assert result["material_check"]["material_check_status"] == "passed"
 
     async def test_release_with_insufficient_inventory(self, async_client):
-        """库存不足时返回缺料明细（material_check_status=failed）"""
+        """库存不足时**拦下不下达**（400 + 缺料明细）。
+
+        改造前这里查完就放行（"此时工单仍会下发"），``force_release`` 是个没人读的
+        死参数 —— 缺料也能开工（场景清单 P1-4 / 台账 C-44）。
+        """
         with (
             patch("app.repositories.production_repo.ProductionRepository.get_work_order") as mock_get_wo,
             patch("app.repositories.production_repo.ProductionRepository.change_status") as mock_cs,
@@ -233,18 +237,19 @@ class TestM07MaterialCheck:
                 "material_check_result": mock_check.return_value,
             }
             resp = await async_client.post("/api/v1/work-orders/1/release", json={})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["code"] == 0
-        result = data["data"]
-        # 此时工单仍会下发（状态变更为 released），但 material_check 会报告缺料
-        assert result["material_check"]["material_check_status"] == "failed"
-        # 验证缺料明细
-        details = result["material_check"]["material_check_result"]["details"]
-        shortage = [d for d in details if not d["is_ok"]]
-        assert len(shortage) == 1
+
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "400-0409"
+        # 明细必须随拦截一起返回，否则前端只能说"缺料"却列不出缺什么
+        check = detail["material_check"]
+        assert check["short_materials"] == 1
+        shortage = [d for d in check["details"] if not d["is_ok"]]
         assert shortage[0]["material_code"] == "MAT002"
         assert shortage[0]["short_qty"] == 40
+        # 被拦回去不能留下"已下达"的痕迹
+        mock_cs.assert_not_called()
+        mock_snap.assert_not_called()
 
     async def test_release_with_force_release(self, async_client):
         """库存不足时 force_release=true 强制下发（material_check_status=force_passed）"""
@@ -292,7 +297,11 @@ class TestM07MaterialCheck:
         assert call_kwargs is not None
 
     async def test_release_kitting_rate_calculation(self, async_client):
-        """齐套率计算正确性验证（2/4 齐套 = 50%）"""
+        """齐套率计算正确性验证（2/4 齐套 = 50%）。
+
+        缺料会被拦成 400，所以齐套率从拦截返回的明细里读 —— 口径仍是同一个
+        ``check_material_availability`` 的产出。
+        """
         with (
             patch("app.repositories.production_repo.ProductionRepository.get_work_order") as mock_get_wo,
             patch("app.repositories.production_repo.ProductionRepository.change_status") as mock_cs,
@@ -326,9 +335,8 @@ class TestM07MaterialCheck:
                 "material_check_result": mock_check.return_value,
             }
             resp = await async_client.post("/api/v1/work-orders/1/release", json={})
-        assert resp.status_code == 200
-        result = resp.json()["data"]
-        check = result["material_check"]["material_check_result"]
+        assert resp.status_code == 400
+        check = resp.json()["detail"]["material_check"]
         assert check["total_materials"] == 4
         assert check["ok_materials"] == 2
         assert check["short_materials"] == 2

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.production_repo import ProductionRepository
 from app.services.production_service import ProductionService
@@ -13,6 +13,7 @@ from app.schemas.production import (
     UpdateWorkOrderRequest,
 )
 from datetime import date
+import json
 
 router = APIRouter(prefix="/api/v1", tags=["M01-生产管理"])
 
@@ -84,6 +85,49 @@ async def release_work_order(
         force_reason=req.force_reason,
     )
     return {"code": 0, "message": "工单下达处理完成", "data": result}
+
+
+@router.post("/work-orders/{order_id}/material-check")
+async def run_material_check(
+    order_id: int,
+    force_release: bool = Query(False),
+    force_reason: str = Query(None),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """单独跑一次齐套性检查并回写工单（不改工单状态）。
+
+    改造前只有「下达」这一个入口会触发齐套检查，而且它读的是一张空表
+    （``inventory_items``），任何工单一律「全部缺料」（台账 C-44）。
+    车间现在可以在下达前先看缺料明细。
+    """
+    data = await ProductionService(repo).run_material_check(
+        order_id, force_release=force_release, force_reason=force_reason)
+    return {"code": 0, "message": "齐套检查完成", "data": data}
+
+
+@router.get("/work-orders/{order_id}/material-check")
+async def get_material_check(
+    order_id: int,
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """回读工单上一次齐套检查的结论（未查过时 status=pending）。"""
+    order = await repo.get_work_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail={
+            "code": "404-0000", "message": "工单不存在"})
+    raw = order.get("material_check_result")
+    parsed = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = None
+    return {"code": 0, "message": "success", "data": {
+        "work_order_id": order_id,
+        "material_check_status": order.get("material_check_status") or "pending",
+        "material_check_result": parsed,
+    }}
+
 
 @router.post("/work-orders/{order_id}/start")
 async def start_work_order(

@@ -30,7 +30,10 @@ class WorkOrder(Base):
     line_code = Column(String(100), comment="产线编码")
     remark = Column(Text, comment="备注")
     # M07 齐套性检查字段
-    material_check_status = Column(String(20), default="pending", comment="齐套状态: pending/passed/failed/force_passed")
+    # no_bom = 该产品没有生效 BOM。改造前这种情况返回 "passed / 100%"，
+    # 等于把「什么都没确认」说成「齐套通过」（台账 C-44）。
+    material_check_status = Column(String(20), default="pending",
+                                   comment="齐套状态: pending/passed/failed/force_passed/no_bom")
     material_check_result = Column(Text, comment="缺料明细（JSON）")
 
     __table_args__ = (

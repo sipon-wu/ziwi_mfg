@@ -9,7 +9,8 @@ from app.constants.work_order_states import (
 )
 from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
-from app.repositories.inventory_repo import InventoryRepository
+from app.repositories.basic_data_repo import ProductRepository
+from app.repositories.wms_repo import InventoryRepository as WmsInventoryRepository
 from app.services.material_sync import ensure_finished_material
 from app.services.bom_service import BomService
 from app.services.material_check_service import MaterialCheckService
@@ -238,34 +239,50 @@ class ProductionService:
             "material_check": None,
         }
 
-        # 1. 执行 BOM 快照（M02）
+        # 派生仓储先建好，供下面两个环节共用（BOM 快照 + 齐套检查）
+        bom_repo = BomRepository(self.repo._session).inherit_context_from(self.repo)
+
+        # 1. 齐套性检查（M07）—— 必须**先**跑，因为缺料要在这里拦下来。
+        #    放在快照之后的话，一张被拦回去的工单会留下一条孤立的 BOM 快照。
+        check = None
         try:
-            bom_repo = BomRepository(self.repo._session).inherit_context_from(self.repo)
+            check = await self.run_material_check(
+                id, force_release=force_release, force_reason=force_reason)
+            result["material_check"] = check
+        except Exception as e:  # noqa: BLE001
+            result["material_check"] = {"error": str(e), "check_status": "failed"}
+
+        # 1.5 缺料拦截（台账 C-44 / 场景清单 P1-4「缺料也能开工」）
+        #    改造前这里查完就放行，``force_release`` 是个**没有任何代码读取的死参数**：
+        #    齐套率恒 0% 也没人管，红灯常亮等于没有红灯。
+        #    now：failed 直接 400 拦回去，确需下发必须显式 force_release（回写
+        #    force_passed，天然留痕）。``no_bom`` 不拦 —— 没配 BOM 不等于缺料，
+        #    拦它只会让新租户什么都下不下去。
+        check_status = (check or {}).get("material_check_status")
+        if check_status == "failed":
+            short = check.get("material_check_result") or {}
+            raise HTTPException(status_code=400, detail={
+                "code": "400-0409",
+                "message": ("物料未齐套，工单不能下达："
+                            f"{short.get('short_materials', 0)}/{short.get('total_materials', 0)} "
+                            "种物料库存不足。确需先下达请勾选强制下发并填写原因。"),
+                "material_check": short,
+            })
+
+        # 2. 执行 BOM 快照（M02）
+        try:
             bom_svc = BomService(bom_repo)
             snapshot = await bom_svc.snapshot_bom(id, tenant_id)
             result["bom_snapshot"] = {"id": snapshot.get("id"), "bom_version": snapshot.get("bom_version")}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             result["bom_snapshot"] = {"error": str(e)}
-
-        # 2. 执行齐套性检查（M07）
-        try:
-            inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)
-            check_svc = MaterialCheckService(self.repo, bom_repo, inv_repo)
-            check_result = await check_svc.check_material_availability(id)
-            update_result = await check_svc.update_work_order_check_result(
-                id, check_result,
-                force_release=force_release,
-                force_reason=force_reason,
-            )
-            result["material_check"] = update_result
-        except Exception as e:
-            result["material_check"] = {"error": str(e), "check_status": "failed"}
 
         # 3. 变更工单状态（走统一状态机，保证流水 remark 格式一致）
         change = await self.change_status(
             id, "released", operator_id,
             remark=(f"action=release；齐套状态: "
-                    f"{result.get('material_check', {}).get('material_check_status', 'unknown')}"),
+                    f"{(result.get('material_check') or {}).get('material_check_status', 'unknown')}"
+                    + (f"；强制原因: {force_reason}" if force_reason else "")),
         )
         result["status_change"] = {"from": change["from_status"], "to": change["to_status"]}
 
@@ -273,6 +290,35 @@ class ProductionService:
 
     async def get_status_logs(self, id: int) -> list:
         return await self.repo.get_status_logs(id)
+
+    # ==================== 齐套性检查（M07） ====================
+    async def run_material_check(self, id: int, force_release: bool = False,
+                                 force_reason: str = None) -> dict:
+        """只跑齐套检查并回写工单，**不改工单状态**。
+
+        单独抽出来有两个原因：
+        1. 下达（release）与"手动查一次齐套"必须走同一段取数逻辑，
+           否则又会出现"页面上看到的和下达时判断的不是一回事"；
+        2. 车间想在下达前先看缺料明细——改造前只有下达这一个入口，
+           没下达就永远不知道缺什么。
+
+        库存取 **WMS 的 inventory 台账**，不是遗留的 ``inventory_items``
+        —— 后者与收发货流程无关、实测 0 行，会让每次检查都「全部缺料」（C-44）。
+        """
+        order = await self.repo.get_work_order(id)
+        if not order:
+            raise HTTPException(status_code=404, detail={
+                "code": "404-0000", "message": "工单不存在"})
+
+        bom_repo = BomRepository(self.repo._session).inherit_context_from(self.repo)
+        inv_repo = WmsInventoryRepository(self.repo._session).inherit_context_from(self.repo)
+        product_repo = ProductRepository(self.repo._session).inherit_context_from(self.repo)
+        check_svc = MaterialCheckService(
+            self.repo, bom_repo, inv_repo, product_repo=product_repo)
+        check_result = await check_svc.check_material_availability(id)
+        return await check_svc.update_work_order_check_result(
+            id, check_result,
+            force_release=force_release, force_reason=force_reason)
 
     # ==================== 报工 ====================
     async def list_reports(self, page: int = 1, page_size: int = 20,

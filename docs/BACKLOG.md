@@ -73,6 +73,20 @@
 | C-41 | **SPC 控制图计算 100% 500：查询读不存在的列 + 缺 bind 参数** | 本批 | 三处一起坏：①`get_inspection_data_for_xbar_r` / `get_inspection_data_for_p_np` 查 `io.product_id`，而 `inspection_order` 只有 `material_id`（离散制造里"产品"就是一条物料档案，见 `material_sync`）→ `no such column: io.product_id`；②`batch_insert_points` 的列清单是全量的，但 xbar_r 的点没有 `p_value`/`np_value`、p/np 的点没有 `xbar`/`r` → `A value is required for bind parameter 'p_value'` 整批炸；③`tenant_id`/`chart_type`/`dimension_key` 明明是方法入参，却还要调用方重复塞进每条点里。修：列名改 `io.material_id`、缺列按 None 补齐、三个上下文列由仓储自动补。顺带把取数排序改成 `created_at, io.id, ir.id` —— SQLite 的 `created_at` 只有秒级精度，同秒并列时子组边界每次都不同，同一批数据能算出两张不同的控制图。注：`capability_analysis` 早已因同一个列名问题改过取数路径，但**没回头修仓储里的这两条查询** |
 | C-42 | **NCR 处置完 SPC 侧毫无反应 —— X5 的"工艺调整"没有任何载体** | 本批 | 判完处置（让步/返工/报废/挑选/退货），控制图上那几点永远飘红、控制限还是判异前那一套，"已调整工艺参数"这句话在系统里查不到任何结果。新增 `SpcAdjustService`，在 `NcrService.advance` 的 `disposed` 分支对 `source_type='spc'` 的单子回写三件事：①该维度未处理告警全部置 `acknowledged_at/by`；②把 `is_anomaly=TRUE` 的点置 `excluded` 并写明剔除原因（NCR 单号）——**不能把异常子组留在控制限里**，否则等于把不良吸收进标准，控制限越算越宽、图永远不再报异；③用剔除后的点重算并**落一行新的** `spc_control_limits`（沿用旧图 USL/LSL），新行即新的生效标准。取舍：剔完不足 2 组就**不写**控制限，如实回报"数据不足未重算"（写一组假标准比不重算更糟）；算出来和现有那条完全一致则复用，不攒重复行；失败不阻断 NCR 推进（与 C-32 建下游单据同一取舍）。顺带把 `NOW()` 从 3 处仓储 SQL 里清掉（`spc_alerts.acknowledged_at`、`fmea_actions.completed_at`、`ppap_submissions` 的到期判断），`INTERVAL '30 days'` 改为 Python 侧算好传入，并把 `NOW()` / `INTERVAL '...'` 加进方言静态闸 |
 | C-43 | **判异规则把索引写死成"序列末尾" → 整张图所有点都被标成异常；告警一条都写不进库** | 本批 | 两个叠在一起的缺陷：①`nelson_rules` 里 `idx = len(all_points) - 1` 与传入的 `point` 无关，规则 2~7 又都取 `all_points[-N:]` —— 逐点调用时**每个点看到的都是序列末尾那一段**，同一批规则被重复判定 N 次，实测 13 个子组会一个不落地全被标成 `is_anomaly`，后续"剔除特殊原因"直接把整张图剔光、控制限再也无法重算；②`anomalies.extend(triggered)` 只有 `rule_no`/`description`/`severity`，**没有 `subgroup_no`**，而 `api/spc.py` 靠 `anomaly.get("subgroup_no", 0)` 回查数据点 → 恒为 0 → 查不到 → `dp_id` 为 None → **告警从来没被写入过**（"判异只飘红"其实连飘红都没有，告警列表恒空）。修：`nelson_rules` 加 `index` 参数并用「以当前点结尾的窗口」替代尾部切片（省略时仍按最后一点处理，兼容既有调用）；组装 anomalies 时带上 `subgroup_no`。另修告警无幂等：重算会重复判异，同一子组同一规则原本会攒出双份告警、已闭环的还会被"重新打开" → 新增 `find_alert` 判重。`spc_ncr_loop_e2e` **20 段通 / 0 段断** |
+| C-44 | **齐套检查读错两张表 → 缺料拦截退化成"永远亮红灯"；而且查完根本不拦**（场景 X4 / 清单 P1-4、C-E6） | 本批 | ①②是取数错、③是拦截缺失，三者叠加的净效果是「齐套检查这个功能等于不存在」。①**BOM 全租户通吃**：SQL 只按 `tenant_id` 过滤，注释写着"使用 product_code 搜索"但条件里根本没有 `product_code` —— 一张工单会把租户里**所有产品**的 BOM 行都算进来。实测某产品真实 BOM 2 行，齐套检查列出 **23 种物料**（`['M-001','M-002','M-001','M-002','M-001'...]`）。②**库存读的是一张死表**：`inventory_items` 与 WMS 收发货流程毫无关系、实测 0 行 → 可用量恒 0、齐套率恒 0%、状态恒 `failed`。③**查完就放行**：`release_work_order` 拿到 `failed` 照样 `change_status → released`，`force_release` 是个**没有任何代码读取的死参数** —— 缺料也能开工。修：`_active_bom` 改走 `product_code → 产品档案 → BomRepository.get_active_by_date(今日)`（只取该产品生效的最高版本）；库存改走 `wms_repo.InventoryRepository.available_qty_by_codes`（多库位多批次 `quantity - locked_qty` 求和、排除冻结批次、JOIN 上 `tenant_id` 对齐防跨租户串数）；`release` 在 `failed` 时抛 400（`400-0409`，附缺料明细），`force_release` 才放行并记 `force_passed`。**顺手纠正一个语义**：无 BOM 原本返回 `passed / 100%`（"未配置BOM物料清单，跳过齐套检查"）—— 「什么都没确认」被说成「齐套通过」，现改为 `no_bom` 且 `kitting_rate=None`。**无 BOM 不拦**（没配 BOM ≠ 缺料，拦它会让新租户一单都下不下去）。另新增 `POST/GET /work-orders/{id}/material-check`：改造前只有「下达」一个入口，没下达就永远不知道缺什么。`material_check_e2e` **21 段通 / 0 段断** |
+
+### "读错表/读错范围"专项（C-44 暴露的缺陷形态）
+
+比"报错"更贵的一类是**静默读错**：接口 200、字段齐全、界面正常渲染，只是数据是别的范围/另一张表的。已发生三次，症状都是"某个功能一直给出恒定值"：
+
+| 位置 | 读错什么 | 表现 |
+|---|---|---|
+| `material_check_service` | 不按产品过滤 BOM | 一张工单列出全租户 23 种物料（C-44） |
+| `material_check_service` | 读遗留空表 `inventory_items` | 可用量恒 0 → 齐套率恒 0%（C-44） |
+| `spc_repo` | 读 `inspection_order.product_id`（不存在） | 这不是静默，是 500（C-41） |
+
+判据：**接口通了不等于功能通了**。见 BACKLOG 顶部"验证顺序"——先跑真实链路看数字，再读代码解释。
+
 
 ### 硬编码 INSERT 列清单专项（C-34 / C-39 共性，**已复发三次**）
 

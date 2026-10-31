@@ -1,21 +1,31 @@
 """M07 齐套性检查 — Service 层核心算法
 
 检查流程：
-1. 获取工单信息
-2. 调用 bom_service 获取当前生效 BOM 物料清单
-3. 遍历物料，查询库存可用量
-4. 计算缺料数量 = 需求数量 × (1 + 损耗率) - 可用库存
-5. 计算齐套率 = 齐套物料数 / 总物料数
-6. 返回完整检查结果
+1. 拿工单（``product_code`` + ``planned_qty``）
+2. ``product_code`` → 产品档案 → **该产品**当前生效的最高版本 BOM
+3. 逐行算需求：计划数量 × 单件用量 × (1 + 损耗率)
+4. 从 **WMS 库存台账**汇总每个物料的可用量（多库位多批次求和、排除冻结批次）
+5. 齐套率 = 齐套物料数 / 总物料数
+
+改造前的两处硬缺陷（台账 C-44）
+--------------------------------
+1. **BOM 取数全租户通吃**：SQL 只按 ``tenant_id`` 过滤，注释写着"使用 product_code
+   搜索"但条件里根本没有 ``product_code`` —— 一张工单会把租户里**所有产品**的
+   BOM 行都算进来。实测某产品真实 BOM 只有 2 行，齐套检查却列出 23 种物料。
+2. **库存读的是一张死表**：``inventory_items`` 与 WMS 收发货流程毫无关系，
+   实测 0 行。于是"可用库存"恒为 0、齐套率恒 0%、状态恒 ``failed`` ——
+   缺料拦截退化成一个永远亮红灯的牌子，用户只能一路"强制下发"。
+
+顺带明确一个语义：**没有 BOM 不等于齐套通过**。改造前无 BOM 时返回
+``passed / 100%``，那是在撒谎（"未配置BOM物料清单，跳过齐套检查"）。
+现在返回 ``no_bom``，``kitting_rate`` 为 ``None``（不是 100）。
 """
 import json
-import math
 from datetime import date
 from typing import Dict, List, Optional
 
-from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
-from app.repositories.inventory_repo import InventoryRepository
+from app.repositories.production_repo import ProductionRepository
 
 
 class MaterialCheckService:
@@ -23,150 +33,108 @@ class MaterialCheckService:
 
     def __init__(self, production_repo: ProductionRepository,
                  bom_repo: BomRepository,
-                 inventory_repo: InventoryRepository):
+                 inventory_repo,
+                 product_repo=None):
+        """``inventory_repo`` 必须是**WMS 的** ``wms_repo.InventoryRepository``
+        （库存台账 ``inventory`` 表），不是遗留的 ``inventory_repo.InventoryRepository``
+        （``inventory_items`` 空表）。见模块文档。"""
         self.production_repo = production_repo
         self.bom_repo = bom_repo
         self.inventory_repo = inventory_repo
+        self.product_repo = product_repo
 
     async def check_material_availability(self, work_order_id: int) -> dict:
         """对指定工单执行齐套性检查。
 
-        Args:
-            work_order_id: 工单 ID
-
         Returns:
-            dict: 包含齐套检查结果的字典
-                {
-                    "work_order_id": int,
-                    "check_status": str,       # passed / failed
-                    "total_materials": int,
-                    "ok_materials": int,
-                    "short_materials": int,
-                    "kitting_rate": float,     # 0-100
-                    "details": [
-                        {
-                            "material_code": str,
-                            "material_name": str,
-                            "required_qty": float,
-                            "available_qty": float,
-                            "short_qty": float,
-                            "unit": str,
-                            "is_ok": bool,
-                        }
-                    ]
-                }
+            dict: ``work_order_id`` / ``check_status``（passed/failed/no_bom）/
+            ``total_materials`` / ``ok_materials`` / ``short_materials`` /
+            ``kitting_rate``（无 BOM 时为 None）/ ``details`` / ``message``
         """
-        # 1. 获取工单信息
         order = await self.production_repo.get_work_order(work_order_id)
         if not order:
             raise ValueError(f"工单不存在: {work_order_id}")
 
-        product_code = order.get("product_code", "")
+        product_code = (order.get("product_code") or "").strip()
         planned_qty = order.get("planned_qty") or 0
 
-        # 2. 获取 BOM 物料清单
-        # 通过 product_id 获取 BOM，先查找 product_id
-        # 这里简化：使用 product_code 搜索 product_bom 表
-        boms = await self.bom_repo.query(
-            """SELECT pb.* FROM product_bom pb
-               WHERE pb.is_active = true
-               AND pb.tenant_id = :tid
-               AND pb.version = (SELECT MAX(pb2.version) FROM product_bom pb2
-                                  WHERE pb2.product_id = pb.product_id AND pb2.is_active = true)
-               ORDER BY pb.product_id, pb.material_code""",
-            {"tid": order.get("tenant_id", "")},
-        )
-
+        boms, reason = await self._active_bom(product_code)
         if not boms:
             return {
                 "work_order_id": work_order_id,
-                "check_status": "passed",
+                "check_status": "no_bom",
                 "total_materials": 0,
                 "ok_materials": 0,
                 "short_materials": 0,
-                "kitting_rate": 100.0,
+                # 没有 BOM 时"齐套率 100%"是假结论：什么都不能确认
+                "kitting_rate": None,
                 "details": [],
-                "message": "未配置BOM物料清单，跳过齐套检查",
+                "message": reason or "该产品未配置生效 BOM，无法判断齐套",
             }
 
-        # 3. 收集所有物料编码，批量查询库存
-        material_codes = [b["material_code"] for b in boms if isinstance(b, dict)]
-        inventory_map = {}
-        if material_codes:
-            inventory_items = await self.inventory_repo.batch_get_by_codes(material_codes)
-            for item in inventory_items:
-                inventory_map[item["material_code"]] = item
+        codes = [b["material_code"] for b in boms if b.get("material_code")]
+        available = await self.inventory_repo.available_qty_by_codes(codes) if codes else {}
 
-        # 4. 遍历物料计算缺料
         details = []
         ok_count = 0
-        short_count = 0
-
         for bom in boms:
-            if not isinstance(bom, dict):
-                continue
-            material_code = bom.get("material_code", "")
-            material_name = bom.get("material_name", "")
-            qty_per_unit = float(bom.get("qty_per_unit") or 1)
+            material_code = bom.get("material_code") or ""
+            qty_per_unit = float(bom.get("qty_per_unit") or 0)
             scrap_rate = float(bom.get("scrap_rate") or 0)
-            unit = bom.get("unit", "")
-
             # 需求数量 = 计划数量 × 单件用量 × (1 + 损耗率)
             required_qty = planned_qty * qty_per_unit * (1 + scrap_rate / 100.0)
-
-            # 可用库存
-            inv = inventory_map.get(material_code)
-            available_qty = float(inv.get("available_qty") or 0) - float(inv.get("locked_qty") or 0) if inv else 0
-
-            # 缺料数量
-            short_qty = max(0, required_qty - available_qty)
+            avail_qty = float(available.get(material_code) or 0)
+            short_qty = max(0.0, required_qty - avail_qty)
             is_ok = short_qty <= 0
-
+            if is_ok:
+                ok_count += 1
             details.append({
                 "material_code": material_code,
-                "material_name": material_name,
+                "material_name": bom.get("material_name") or "",
                 "required_qty": round(required_qty, 4),
-                "available_qty": round(max(0, available_qty), 4),
+                "available_qty": round(avail_qty, 4),
                 "short_qty": round(short_qty, 4),
-                "unit": unit,
+                "unit": bom.get("unit") or "",
+                "is_key_material": bool(bom.get("is_key_material")),
                 "is_ok": is_ok,
             })
 
-            if is_ok:
-                ok_count += 1
-            else:
-                short_count += 1
-
-        # 5. 计算齐套率
         total = len(details)
-        kitting_rate = round((ok_count / total * 100) if total > 0 else 100, 2)
-
-        check_status = "passed" if short_count == 0 else "failed"
-
+        short_count = total - ok_count
         return {
             "work_order_id": work_order_id,
-            "check_status": check_status,
+            "check_status": "passed" if short_count == 0 else "failed",
+            "product_code": product_code,
+            "bom_version": boms[0].get("version"),
             "total_materials": total,
             "ok_materials": ok_count,
             "short_materials": short_count,
-            "kitting_rate": kitting_rate,
+            "kitting_rate": round(ok_count / total * 100, 2) if total else 0.0,
             "details": details,
         }
 
+    async def _active_bom(self, product_code: str):
+        """返回 ``(该产品当前生效的最高版本 BOM 行, 失败原因)``。"""
+        if not product_code:
+            return [], "工单没有产品编码，无法定位 BOM"
+        if self.product_repo is None:
+            return [], "未注入产品档案仓储，无法按编码定位产品"
+        product = await self.product_repo.get_product_by_code(product_code)
+        if not product:
+            return [], f"产品编码 {product_code} 在产品档案中不存在，无法定位 BOM"
+        boms = await self.bom_repo.get_active_by_date(product["id"], date.today())
+        if not boms:
+            return [], f"产品 {product_code} 未配置生效 BOM，无法判断齐套"
+        return boms, None
+
     async def update_work_order_check_result(self, work_order_id: int,
-                                              check_result: dict,
-                                              force_release: bool = False,
-                                              force_reason: str = None) -> dict:
-        """更新工单的齐套检查结果。
+                                             check_result: dict,
+                                             force_release: bool = False,
+                                             force_reason: str = None) -> dict:
+        """把检查结果回写到工单。
 
-        Args:
-            work_order_id: 工单 ID
-            check_result: check_material_availability() 的返回结果
-            force_release: 是否强制下发（缺料时）
-            force_reason: 强制下发原因
-
-        Returns:
-            dict: 更新后的齐套状态
+        ``force_release`` 只对**真的缺料**（failed）生效；``no_bom`` 不是缺料，
+        也不该被记成"强制通过"—— 那种情况下强制下发没有任何意义。
         """
         check_status = check_result.get("check_status", "pending")
 
@@ -174,12 +142,10 @@ class MaterialCheckService:
             check_status = "force_passed"
 
         result_json = json.dumps(check_result, ensure_ascii=False, default=str)
-
         await self.production_repo.update_work_order(work_order_id, {
             "material_check_status": check_status,
             "material_check_result": result_json,
         })
-
         return {
             "work_order_id": work_order_id,
             "material_check_status": check_status,

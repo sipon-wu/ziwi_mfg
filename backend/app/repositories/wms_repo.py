@@ -332,6 +332,42 @@ class InventoryRepository(MultiTenantRepository):
             sql += " AND batch_id IS NULL"
         return await self.query_one(sql, params)
 
+    async def available_qty_by_codes(self, material_codes: List[str]) -> Dict[str, float]:
+        """按物料编码汇总**真实可用量**（一个物料会散在多库位、多批次行上）。
+
+        改造前齐套检查（``MaterialCheckService``）读的是 ``inventory_items``
+        —— 一张与 WMS 收发货流程**完全无关**的遗留表，实测 0 行。于是任何工单
+        一 release，"可用库存"全是 0、齐套率恒 0%、状态恒 ``failed``：
+        缺料拦截变成一块永远亮红灯的牌子（台账 C-44）。
+
+        - 可用量 = ``quantity - locked_qty`` 逐行求和（不是取某一行）
+        - 排除被冻结的批次：IQC 判 REJ / 召回归档的货不能算进齐套
+        - ``batch_id IS NULL`` 的物料级库存行照算（未做批次管理的物料）
+        """
+        if not material_codes:
+            return {}
+        clauses = ", ".join(f":c{i}" for i in range(len(material_codes)))
+        params = {f"c{i}": code for i, code in enumerate(material_codes)}
+        # JOIN 条件里必须带上 tenant 对齐：`query()` 的自动注入只限定**主表**
+        # （materials m），被 JOIN 的 inventory 不受限。material_id 虽然全局自增，
+        # 但靠"自增就不会撞"来保证隔离是运气不是设计 —— 一旦某天主键换成雪花/复用，
+        # 这里就会把别的租户的库存算进本租户的齐套率。
+        rows = await self.query(
+            "SELECT m.code AS material_code, "
+            "COALESCE(SUM(i.quantity - COALESCE(i.locked_qty, 0)), 0) AS available_qty "
+            "FROM materials m "
+            "LEFT JOIN inventory i ON i.material_id = m.id "
+            "     AND i.tenant_id = m.tenant_id "
+            "LEFT JOIN batches b ON b.id = i.batch_id "
+            "     AND b.tenant_id = m.tenant_id "
+            f"WHERE m.code IN ({clauses}) "
+            "AND (i.id IS NULL OR i.batch_id IS NULL "
+            "     OR COALESCE(b.is_locked, FALSE) = FALSE) "
+            "GROUP BY m.code",
+            params,
+        )
+        return {r["material_code"]: float(r["available_qty"] or 0) for r in rows}
+
     async def find_batch_rows(self, material_id: int, warehouse_id: int,
                               batch_id: int) -> List[Dict]:
         """某批次在该仓的**全部**可用库存行（按可用量降序）。
