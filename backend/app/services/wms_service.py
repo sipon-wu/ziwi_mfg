@@ -873,6 +873,8 @@ class IssueOrderService:
         location_id = data.get("from_location_id")
         batch_no = data.get("batch_no")
         warehouse_id = order["warehouse_id"] if order else None
+        # 本次实际出库的批次（跨批次时会有多条）。过账后回写到单据行，见下方说明。
+        used_batches: List[str] = []
 
         async with posting_scope(self.inv_repo._session):
             if not location_id and not batch_no:
@@ -898,6 +900,8 @@ class IssueOrderService:
                         take = min(remaining, avail)
                         if take > 0:
                             await self.inv_repo.stock_out(batch_inv["id"], take)
+                            if batch_inv.get("batch_no"):
+                                used_batches.append(batch_inv["batch_no"])
                             await self._create_issue_tx(tenant_id, item, order, -take,
                                                         batch_inv.get("location_id"),
                                                         batch_inv.get("batch_no"), created_by)
@@ -927,8 +931,14 @@ class IssueOrderService:
                         if take <= 0:
                             continue
                         await self.inv_repo.stock_out(r["id"], take)
+                        # 流水必须记**库存行实际所属批次**，不能记请求里的 batch_no：
+                        # 自动拣选/未指定批次时它是 None，记 None 等于把批号弄丢，
+                        # 事后追溯再也说不清"这批料出给谁了"。
+                        used = r.get("batch_no") or batch_no
+                        if used:
+                            used_batches.append(used)
                         await self._create_issue_tx(tenant_id, item, order, -take,
-                                                    r.get("location_id"), batch_no, created_by)
+                                                    r.get("location_id"), used, created_by)
                         remaining -= take
             else:
                 # 显式指定库位/批次 → 解析正确的库存行
@@ -968,11 +978,25 @@ class IssueOrderService:
                     if take <= 0:
                         continue
                     await self.inv_repo.stock_out(r["id"], take)
+                    # 同上：记库存行自己的批号，而不是请求参数
+                    used = r.get("batch_no") or batch_no
+                    if used:
+                        used_batches.append(used)
                     await self._create_issue_tx(tenant_id, item, order, -take,
-                                                r.get("location_id"), batch_no, created_by)
+                                                r.get("location_id"), used, created_by)
                     remaining -= take
 
-            await self.item_repo.update(item_id, {"issued_qty": qty, "pick_status": "picked"})
+            patch = {"issued_qty": qty, "pick_status": "picked"}
+            # 把**实际出库批次**回写到单据行。改造前这里只写数量与拣选状态，
+            # batch_no 永远是 NULL —— 于是「工单 → 原料批」这条追溯边从来没通过
+            # （追溯只能查到"由哪张工单产出"，查不到"用了哪些原料"）。
+            #
+            # 跨批次时**不写**：一列装不下多条，挑一条写进去反而误导。
+            # 多批次的事实留在流水里（每次扣减一行，各带自己的批号）。
+            distinct = {b for b in used_batches if b}
+            if len(distinct) == 1:
+                patch["batch_no"] = distinct.pop()
+            await self.item_repo.update(item_id, patch)
 
             # 更新汇总
             items = await self.item_repo.list_by_issue(item["issue_id"])

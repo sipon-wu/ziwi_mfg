@@ -49,6 +49,12 @@ TABLES = [
     "CREATE TABLE inventory (id INTEGER PRIMARY KEY, tenant_id TEXT,"
     " material_id INTEGER, warehouse_id INTEGER, location_id INTEGER,"
     " batch_id INTEGER, batch_no TEXT, quantity NUMERIC, locked_qty NUMERIC, unit TEXT)",
+    # 追溯的上游主口径读库存流水（过账事实）。造数里留空 → 走单据行回退路径，
+    # 正好覆盖"老数据没有流水仍能查"这条兜底。
+    "CREATE TABLE inventory_transactions (id INTEGER PRIMARY KEY, tenant_id TEXT,"
+    " transaction_type TEXT, voucher_no TEXT, material_id INTEGER,"
+    " warehouse_id INTEGER, quantity NUMERIC, batch_no TEXT,"
+    " reference_type TEXT, reference_id INTEGER)",
 ]
 
 

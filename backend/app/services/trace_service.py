@@ -104,9 +104,32 @@ class TraceService:
     async def _wo_inputs(self, wo: Dict) -> List[Dict]:
         """工单投入的原料批次。
 
-        ``work_order_id`` 优先；历史单据没这一列时退回 ``source_doc_no`` 字符串匹配
-        —— 追溯链允许"老数据弱关联仍然能查"，但不再新增弱关联。
+        主口径读**库存流水**（``inventory_transactions``）——那才是过账事实：
+        每扣减一次库存就落一行，批号一定在流水上。
+
+        改造前只读 ``issue_order_items.batch_no``，而 ``issue_item`` 过账时
+        **从不回写这一列** → 自动拣选（最常见路径）与显式指定批次两条路径下它
+        都是 NULL → 「工单 → 原料批」这条边**从来没通过**：追溯永远只能查到
+        "这批货由哪张工单产出"，查不到"它用了哪些原料"，召回锁不住上游
+        （场景清单 P2-2 一直挂着的原因）。
+
+        历史单据没有流水时退回 ``issue_order_items`` 的弱关联，老数据仍能查。
         """
+        rows = await self.repo.query(
+            "SELECT t.material_id, t.batch_no, ABS(t.quantity) AS issued_qty, "
+            "       o.issue_no, o.issue_type "
+            "FROM inventory_transactions t "
+            "JOIN issue_orders o "
+            "  ON o.id = t.reference_id AND t.reference_type = 'issue_order' "
+            "WHERE t.transaction_type = 'issue' "
+            "  AND t.batch_no IS NOT NULL AND t.batch_no <> '' "
+            "  AND (o.work_order_id = :w "
+            "       OR (o.work_order_id IS NULL AND o.source_doc_no = :no)) "
+            "ORDER BY t.id",
+            {"w": wo["id"], "no": wo.get("wo_no")},
+        )
+        if rows:
+            return rows
         return await self.repo.query(
             "SELECT ii.material_id, ii.batch_no, ii.issued_qty, i.issue_no, i.issue_type "
             "FROM issue_order_items ii JOIN issue_orders i ON i.id = ii.issue_id "
