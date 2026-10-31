@@ -239,6 +239,90 @@ def main():
                (data(r).get("status") or "") in ("done", "published", "approved", "completed"),
                f"status={data(r).get('status')}")
 
+    # ══════════════ E-B1 跨仓调拨 ══════════════
+    print("\n── E-B1 跨仓调拨（原标注 ⚠️：无 transfer 端点）──")
+    # 端点其实是有的（POST /wms/inventory/stock-move），但只支持同仓移位，
+    # 且因 find_one 传 None 与 unit_price 漏传两个 bug 叠加，从未成功过。
+    r = c.get(f"{API}/wms/inventory", params={"page_size": 100})
+    inv = data(r).get("items") or []
+    # 库位 → 所属仓库（判定"跨仓"的权威依据）
+    r = c.get(f"{API}/wms/locations", params={"page_size": 100})
+    locs_all = (data(r).get("items") if isinstance(data(r), dict) else data(r)) or []
+    loc_wh = {l.get("id"): l.get("warehouse_id") for l in locs_all}
+    # 只挑"库存仓库 == 库位归属仓库"的行当源。实测 90 行里有 1 行不一致
+    # （inventory.warehouse_id 与所在库位的 warehouse_id 对不上，见 BACKLOG），
+    # 那一行本身是脏数据，不该拿它当靶子——但它暴露了另一个写入路径的同源缺陷。
+    src = next((x for x in inv
+                if (x.get("quantity") or 0) - (x.get("locked_qty") or 0) > 0
+                and x.get("location_id")
+                and loc_wh.get(x.get("location_id")) == x.get("warehouse_id")), None)
+    inconsistent = [x for x in inv
+                    if x.get("location_id")
+                    and loc_wh.get(x.get("location_id"))
+                    and loc_wh.get(x.get("location_id")) != x.get("warehouse_id")]
+    report("E-B1-1 找到有货且归属一致的源库存行", src is not None,
+           f"{len(inv)} 行库存，源={src and (src.get('warehouse_id'), src.get('location_id'))}"
+           f"；归属不一致的脏数据 {len(inconsistent)} 行")
+    if src:
+        src_wh = src.get("warehouse_id")
+        r = c.get(f"{API}/wms/warehouses", params={"page_size": 50})
+        whs = data(r).get("items") or []
+        tgt_wh = next((w for w in whs if w.get("id") != src_wh), None)
+        report("E-B1-2 存在另一个仓库", tgt_wh is not None,
+               f"{len(whs)} 个仓库，目标={tgt_wh and tgt_wh.get('code')}")
+
+        tgt_loc = None
+        if tgt_wh:
+            r = c.get(f"{API}/wms/warehouses/{tgt_wh['id']}/locations", params={"page_size": 50})
+            locs = (data(r).get("items") if isinstance(data(r), dict) else data(r)) or []
+            tgt_loc = next((l for l in locs if l.get("is_active") in (True, 1, None)), None)
+            report("E-B1-3 目标仓有可用库位", tgt_loc is not None,
+                   f"{len(locs)} 个库位，目标库位={tgt_loc and tgt_loc.get('location_code')}")
+
+        if tgt_loc:
+            qty = 1.0
+            before = float(src.get("quantity") or 0)
+            r = c.post(f"{API}/wms/inventory/stock-move", json={
+                "source_location_id": src.get("location_id"),
+                "target_location_id": tgt_loc.get("id"),
+                "material_id": src.get("material_id"),
+                "quantity": qty, "unit": src.get("unit") or "个",
+                "remark": "E2E 跨仓调拨复核"})
+            res = data(r)
+            report("E-B1-4 跨仓调拨接口成功（改造前 100% 失败）", r.status_code == 200,
+                   f"status={r.status_code} {msg(r)[:100] if r.status_code != 200 else ''}")
+
+            if r.status_code == 200:
+                report("E-B1-5 识别为跨仓", res.get("cross_warehouse") is True,
+                       f"src_wh={res.get('source_warehouse_id')} "
+                       f"tgt_wh={res.get('target_warehouse_id')}")
+                report("E-B1-6 目标仓库 = 目标库位实际归属（不再抄源仓）",
+                       res.get("target_warehouse_id") == tgt_wh.get("id"),
+                       f"期望 {tgt_wh.get('id')} 实际 {res.get('target_warehouse_id')}")
+
+                # 目标库存真的落在目标仓名下
+                r = c.get(f"{API}/wms/inventory/by-location",
+                          params={"location_id": tgt_loc.get("id")})
+                rows = data(r) if isinstance(data(r), list) else []
+                hit = next((x for x in rows
+                            if x.get("material_id") == src.get("material_id")), None)
+                report("E-B1-7 目标仓能查到这批货（账实相符）",
+                       hit is not None and hit.get("warehouse_id") == tgt_wh.get("id"),
+                       f"warehouse_id={hit and hit.get('warehouse_id')} "
+                       f"qty={hit and hit.get('quantity')}")
+
+                # 双仓流水：两条同凭证号
+                r = c.get(f"{API}/wms/storage-moves",
+                          params={"material_id": src.get("material_id"), "page_size": 50})
+                txs = (data(r).get("items") if isinstance(data(r), dict) else data(r)) or []
+                same = [t for t in txs if t.get("voucher_no") == res.get("voucher_no")]
+                report("E-B1-8 双仓流水（两条同凭证号）", len(same) == 2,
+                       f"{len(same)} 条 voucher={res.get('voucher_no')}")
+                if len(same) == 2:
+                    whs_tx = sorted(t.get("warehouse_id") for t in same)
+                    report("E-B1-9 两条流水分属两个仓",
+                           whs_tx == sorted([src_wh, tgt_wh.get("id")]), f"{whs_tx}")
+
     return summary()
 
 

@@ -328,6 +328,9 @@ class StockMoveRequest(BaseModel):
     quantity: float
     unit: str
     remark: Optional[str] = None
+    # 可选校验项：目标仓库**由目标库位解析**（库位归属是权威事实），
+    # 显式传只用于让调用方多一道自检——传错会被拒，不会静默按错的走。
+    target_warehouse_id: Optional[int] = None
 
 
 # ============================================

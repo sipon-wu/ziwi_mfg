@@ -262,16 +262,57 @@ class InventoryService:
         )
 
     async def stock_move(self, tenant_id: str, data: dict, created_by: int = None) -> dict:
-        """库存移动：源库位扣减 → 目标库位增加 → 记录交易流水"""
+        """库存移动：源库位扣减 → 目标库位增加 → 记录交易流水。
+
+        支持**跨仓调拨**（场景 E-B1）。改造前目标行 ``warehouse_id`` 直接抄源仓的，
+        于是把货移到一个属于别的仓库的库位时，库存被记到**源仓名下** —— 目标仓
+        盘点看不到这批货，源仓账面却少了，"双仓流水"也就无从谈起。
+
+        **目标仓库由目标库位决定**（库位归属仓库是权威事实），不再沿用源仓。
+        跨仓时写**两条流水**（源仓出、目标仓入，共用同一 ``voucher_no`` 以便配对）；
+        同仓移位仍是**一条**（from/to 库位都记在同一行），保持既有口径不变。
+        """
         from app.repositories.wms_repo import InventoryTransactionRepository
 
-        source = await self.repo.find_one(data["material_id"], None, data["source_location_id"])
-        if not source:
-            raise ValueError(f"源库位无此物料库存")
+        if data["source_location_id"] == data["target_location_id"]:
+            raise ValueError("源库位与目标库位相同，无需移动")
 
-        available = source["quantity"] - source["locked_qty"]
+        # 源仓库也由源库位解析：改造前这里是 find_one(material_id, None, loc)，
+        # 而 find_one 无条件拼 `warehouse_id = :wid` → 绑定 None 变成
+        # `warehouse_id = NULL`，**永远匹配不到任何行**。也就是说库存移位这个
+        # 端点从上线起就是 100% 报「源库位无此物料库存」，没人成功过。
+        src_wh = await self._resolve_location_warehouse(data["source_location_id"])
+        if src_wh is None:
+            raise ValueError(f"源库位 {data['source_location_id']} 不存在或不属于本租户")
+
+        # 注意 find_one 不传 batch_id 时会追加 `batch_id IS NULL` —— 批次管理的
+        # 库存根本没有这种行，直接调 find_one 会让**带批次的货永远移不动**。
+        # 故：显式给了批号就按批号定位；否则在该库位挑可用量最大的那一行。
+        if data.get("batch_no"):
+            bid = await self._resolve_batch(data["material_id"], data["batch_no"])
+            source = await self.repo.find_one(
+                data["material_id"], src_wh, data["source_location_id"], bid)
+        else:
+            rows = await self.repo.query(
+                "SELECT * FROM inventory WHERE material_id = :mid AND warehouse_id = :wid "
+                "AND location_id = :lid AND quantity - COALESCE(locked_qty, 0) > 0 "
+                "ORDER BY (quantity - COALESCE(locked_qty, 0)) DESC",
+                {"mid": data["material_id"], "wid": src_wh, "lid": data["source_location_id"]})
+            source = rows[0] if rows else None
+        if not source:
+            raise ValueError("源库位无此物料库存（或可用量为 0）")
+
+        available = source["quantity"] - (source["locked_qty"] or 0)
         if available < data["quantity"]:
             raise ValueError(f"可用库存不足: {available} < {data['quantity']}")
+
+        tgt_wh = await self._resolve_location_warehouse(data["target_location_id"])
+        if tgt_wh is None:
+            raise ValueError(f"目标库位 {data['target_location_id']} 不存在或不属于本租户")
+        if data.get("target_warehouse_id") and int(data["target_warehouse_id"]) != int(tgt_wh):
+            raise ValueError(
+                f"目标库位不属于指定仓库（库位实际归属 {tgt_wh}，传入 {data['target_warehouse_id']}）")
+        cross_warehouse = int(tgt_wh) != int(src_wh)
 
         # 扣减源库存
         await self.repo.execute(
@@ -279,14 +320,14 @@ class InventoryService:
             {"qty": data["quantity"], "id": source["id"]},
         )
 
-        # 增加目标库存
+        # 增加目标库存（仓库取目标库位实际归属，不是源仓）
         target_data = {
             "tenant_id": tenant_id,
             "material_id": data["material_id"],
-            "warehouse_id": source["warehouse_id"],
+            "warehouse_id": tgt_wh,
             "location_id": data["target_location_id"],
             "batch_id": source.get("batch_id"),
-            "batch_no": data.get("batch_no"),
+            "batch_no": data.get("batch_no") or source.get("batch_no"),
             "quantity": data["quantity"],
             "locked_qty": 0,
             "unit": data["unit"],
@@ -295,25 +336,63 @@ class InventoryService:
 
         # 记录流水
         tx_repo = InventoryTransactionRepository(self.repo._session).inherit_context_from(self.repo)
-        await tx_repo.create({
+        voucher = f"MV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        common = {
             "tenant_id": tenant_id,
             "transaction_type": "transfer",
-            "voucher_no": f"MV-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "voucher_no": voucher,
             "material_id": data["material_id"],
-            "warehouse_id": source["warehouse_id"],
-            "from_location_id": data["source_location_id"],
-            "to_location_id": data["target_location_id"],
             "batch_id": source.get("batch_id"),
-            "batch_no": data.get("batch_no"),
+            "batch_no": data.get("batch_no") or source.get("batch_no"),
             "quantity": data["quantity"],
             "unit": data["unit"],
             "source_type": "transfer",
             "source_doc_no": "",
             "reference_type": "stock_move",
+            "reference_id": None,
+            # 与 find_one 那个 bug 叠在一起的第二处：create 的 INSERT 是固定列
+            # 清单且含 unit_price，调用方不传就运行期报「A value is required for
+            # bind parameter 'unit_price'」。两个 bug 叠加 = 端点从上线起 100%
+            # 失败，且都只在真正调用时才暴露。
+            "unit_price": data.get("unit_price"),
+            "remark": data.get("remark") or "",
             "created_by": created_by,
-        })
+        }
+        if cross_warehouse:
+            # 双仓流水：源仓一条（出）、目标仓一条（入），同凭证号配对
+            await tx_repo.create({**common, "warehouse_id": src_wh,
+                                  "from_location_id": data["source_location_id"],
+                                  "to_location_id": None})
+            await tx_repo.create({**common, "warehouse_id": tgt_wh,
+                                  "from_location_id": None,
+                                  "to_location_id": data["target_location_id"]})
+        else:
+            await tx_repo.create({**common, "warehouse_id": src_wh,
+                                  "from_location_id": data["source_location_id"],
+                                  "to_location_id": data["target_location_id"]})
 
-        return {"success": True, "from_record_id": source["id"], "qty": data["quantity"]}
+        return {
+            "success": True,
+            "from_record_id": source["id"],
+            "qty": data["quantity"],
+            "voucher_no": voucher,
+            "source_warehouse_id": src_wh,
+            "target_warehouse_id": tgt_wh,
+            "cross_warehouse": cross_warehouse,
+        }
+
+    async def _resolve_location_warehouse(self, location_id: int):
+        """库位 → 所属仓库。库位归属是权威事实，目标仓库必须由此推出。"""
+        row = await self.repo.query_one(
+            "SELECT warehouse_id FROM warehouse_locations WHERE id = :id", {"id": location_id})
+        return row.get("warehouse_id") if row else None
+
+    async def _resolve_batch(self, material_id: int, batch_no: str):
+        """批号 → 批次 ID。查不到不静默放行，由调用方据此报错。"""
+        row = await self.repo.query_one(
+            "SELECT id FROM batches WHERE material_id = :mid AND batch_no = :no",
+            {"mid": material_id, "no": batch_no})
+        return row.get("id") if row else None
 
 
 # ============================================

@@ -329,6 +329,15 @@ async def list_inventory(
     data = await svc.list(material_id=material_id, warehouse_id=warehouse_id, location_id=location_id, batch_no=batch_no, page=page, page_size=page_size)
     return {"code": 0, "message": "success", "data": data}
 
+@router.get("/inventory/by-location")
+async def inventory_by_location(
+    location_id: int = Query(..., description="库位ID"),
+    repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+):
+    svc = InventoryService(repo)
+    data = await svc.by_location(location_id)
+    return {"code": 0, "message": "success", "data": data}
+
 @router.get("/inventory/{inv_id}")
 async def get_inventory(inv_id: int, repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True))):
     svc = InventoryService(repo)
@@ -904,14 +913,6 @@ async def inventory_by_material(
     data = await svc.by_material(material_id)
     return {"code": 0, "message": "success", "data": data}
 
-@router.get("/inventory/by-location")
-async def inventory_by_location(
-    location_id: int = Query(..., description="库位ID"),
-    repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
-):
-    svc = InventoryService(repo)
-    data = await svc.by_location(location_id)
-    return {"code": 0, "message": "success", "data": data}
 
 
 # ============================================
