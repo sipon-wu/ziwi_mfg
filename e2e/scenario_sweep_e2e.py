@@ -371,6 +371,67 @@ def main():
                        mine.get("downtime_type") == "fault",
                        f"downtime_type={mine.get('downtime_type')}")
 
+    # ══════════════ C-S8 报工不良 → NCR → 返工单 ══════════════
+    print("\n── C-S8 报工后返工单生成 ──")
+    # 建一张已下达的工单，报工时带报废数
+    r = c.post(f"{API}/work-orders", json={
+        "wo_no": f"WO-S8-{tag}", "product_code": "P-001",
+        "product_name": f"返工验证件{tag}", "planned_qty": 100,
+        "wo_type": "production"})
+    wo_id = data(r).get("id")
+    if wo_id:
+        c.post(f"{API}/work-orders/{wo_id}/release")
+    report("C-S8-1 建工单并下达", bool(wo_id), f"wo_no=WO-S8-{tag}")
+
+    if wo_id:
+        r = c.post(f"{API}/work-reports", json={
+            "work_order_id": wo_id, "output_qty": 90, "scrap_qty": 10,
+            "defect_reason": "E2E 尺寸超差", "reporter_id": 2,
+            "report_date": datetime.now().date().isoformat()})
+        rp = data(r)
+        ncr_id = rp.get("ncr_id")
+        report("C-S8-2 报工带报废自动开制程 NCR",
+               r.status_code == 200 and bool(ncr_id),
+               f"ncr_id={ncr_id} {msg(r)[:60] if r.status_code != 200 else ''}")
+
+        if ncr_id:
+            # 处置前先记下已有返工工单，避免"命中历史数据"冒充本次结论
+            def _rework_ids():
+                rr = c.get(f"{API}/work-orders", params={"page_size": 100})
+                items = (data(rr).get("items") if isinstance(data(rr), dict)
+                         else data(rr)) or []
+                return {w.get("id") for w in items if w.get("wo_type") == "rework"}
+            before = _rework_ids()
+
+            r = c.put(f"{API}/ncr/{ncr_id}/status", json={
+                "to_status": "reviewing", "action": "review"})
+            report("C-S8-3 NCR 可进入评审", r.status_code == 200,
+                   f"status={r.status_code} {msg(r)[:60] if r.status_code != 200 else ''}")
+
+            r = c.put(f"{API}/ncr/{ncr_id}/status", json={
+                "to_status": "disposed", "disposition": "rework",
+                "disposition_remark": "E2E 返工处置"})
+            disp = data(r)
+            report("C-S8-4 NCR 处置为返工", r.status_code == 200,
+                   f"status={r.status_code} {msg(r)[:80] if r.status_code != 200 else ''}")
+
+            after = _rework_ids()
+            new_ids = after - before
+            report("C-S8-5 处置后**新增**了返工工单（处置前 {len(before)} 张 → 后 {len(after)} 张）"
+                   .replace("{len(before)}", str(len(before)))
+                   .replace("{len(after)}", str(len(after))),
+                   len(new_ids) == 1,
+                   f"新增 id={sorted(new_ids)}")
+
+            if len(new_ids) == 1:
+                rw_id = sorted(new_ids)[0]
+                rr = c.get(f"{API}/work-orders/{rw_id}")
+                rw = data(rr)
+                report("C-S8-6 返工单关联了原工单/原 NCR",
+                       str(rw.get("remark") or "").find(str(ncr_id)) >= 0
+                       or str(rw.get("remark") or "").find("NCR") >= 0,
+                       f"wo_no={rw.get('wo_no')} remark={(rw.get('remark') or '')[:60]}")
+
     return summary()
 
 
