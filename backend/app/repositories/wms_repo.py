@@ -174,11 +174,26 @@ class MaterialRepository(MultiTenantRepository):
         return await self.execute("DELETE FROM materials WHERE id = :id", {"id": id})
 
     async def list_below_safety_stock(self) -> List[Dict]:
-        """查低于安全库存的物料列表"""
+        """查低于安全库存的物料列表。
+
+        口径必须是**真实可用量**：``quantity - locked_qty`` 且排除被冻结的批次。
+        改造前用 ``SUM(i.quantity)`` —— 把锁定量与 IQC 判退/召回冻结的货都算成
+        "手上有"。后果是反向的：一批不合格被冻结后账面数字没变，物料看起来
+        仍然够，**于是本该告警的不告警**，真缺料被静默吞掉（台账 C-47）。
+
+        JOIN 补 ``tenant_id`` 对齐：``query()`` 的自动注入只限定主表 ``materials``，
+        被 JOIN 的 ``inventory`` 不受限。
+        """
         return await self.query(
-            """SELECT m.*, COALESCE(SUM(i.quantity), 0) as current_stock
+            """SELECT m.*, COALESCE(SUM(
+                    CASE WHEN COALESCE(b.is_locked, FALSE) = FALSE
+                         THEN i.quantity - COALESCE(i.locked_qty, 0)
+                         ELSE 0 END), 0) as current_stock
                FROM materials m
                LEFT JOIN inventory i ON i.material_id = m.id
+                    AND i.tenant_id = m.tenant_id
+               LEFT JOIN batches b ON b.id = i.batch_id
+                    AND b.tenant_id = m.tenant_id
                WHERE m.is_active = true AND m.safety_stock_qty > 0
                GROUP BY m.id
                HAVING current_stock < m.safety_stock_qty"""
@@ -352,17 +367,22 @@ class InventoryRepository(MultiTenantRepository):
         # （materials m），被 JOIN 的 inventory 不受限。material_id 虽然全局自增，
         # 但靠"自增就不会撞"来保证隔离是运气不是设计 —— 一旦某天主键换成雪花/复用，
         # 这里就会把别的租户的库存算进本租户的齐套率。
+        # 冻结批次也是在**聚合里**排除，不是写进 WHERE。
+        # 写 WHERE 的话：某物料只有一条冻结批次的库存行时，LEFT JOIN 只匹配到
+        # 那一行、被 WHERE 整条滤掉 → 该物料从结果里**消失**。
+        # 齐套检查里靠 `available.get(code) or 0` 侥幸得到 0，换个写法就是 KeyError。
         rows = await self.query(
             "SELECT m.code AS material_code, "
-            "COALESCE(SUM(i.quantity - COALESCE(i.locked_qty, 0)), 0) AS available_qty "
+            "COALESCE(SUM("
+            "    CASE WHEN COALESCE(b.is_locked, FALSE) = FALSE "
+            "         THEN i.quantity - COALESCE(i.locked_qty, 0) ELSE 0 END), 0) "
+            "    AS available_qty "
             "FROM materials m "
             "LEFT JOIN inventory i ON i.material_id = m.id "
             "     AND i.tenant_id = m.tenant_id "
             "LEFT JOIN batches b ON b.id = i.batch_id "
             "     AND b.tenant_id = m.tenant_id "
             f"WHERE m.code IN ({clauses}) "
-            "AND (i.id IS NULL OR i.batch_id IS NULL "
-            "     OR COALESCE(b.is_locked, FALSE) = FALSE) "
             "GROUP BY m.code",
             params,
         )
@@ -900,6 +920,24 @@ class InventoryAlertRepository(MultiTenantRepository):
     async def update(self, id: int, data: dict) -> int:
         sets = self._build_set_clause(data)
         return await self.execute(f"UPDATE inventory_alerts SET {sets} WHERE id = :id", {**data, "id": id})
+
+    async def find_unresolved(self, material_id: int, alert_type: str) -> Optional[Dict]:
+        """该物料该类型**尚未闭环**的告警（open 或 acknowledged）。
+
+        扫描要判重用：改造前每次 ``check`` 都无条件 INSERT，同一物料扫 N 次
+        就有 N 条 open 告警，真正要处理的那条淹在重复项里（与 SPC 告警 C-43
+        同一病根，这是第二次复发）。
+
+        ``resolved`` 不算未闭环 —— 处理完又低于阈值了，应该允许新开一条，
+        但新开之后它就变成 open，后续扫描不会再重复。
+        """
+        return await self.query_one(
+            "SELECT * FROM inventory_alerts "
+            "WHERE material_id = :mid AND alert_type = :at "
+            "  AND status IN ('open', 'acknowledged') "
+            "ORDER BY id DESC LIMIT 1",
+            {"mid": material_id, "at": alert_type},
+        )
 
     async def delete(self, id: int) -> int:
         return await self.execute("DELETE FROM inventory_alerts WHERE id = :id", {"id": id})

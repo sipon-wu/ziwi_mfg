@@ -1,5 +1,5 @@
 """M20 仓储管理（WMS）模块 — Service 层"""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional, Dict, List
 from app.core.transaction import posting_scope, PostingError
 from app.constants.wms_constants import (
@@ -1297,26 +1297,61 @@ class InventoryAlertService:
         return {"affected": await self.repo.update(id, {"status": "acknowledged"})}
 
     async def check_and_alert(self, tenant_id: str) -> list:
-        """检查所有物料库存，低于阈值的生成预警"""
-        mat_repo = MaterialRepository(self.repo._session).inherit_context_from(self.repo)
-        inv_repo = InventoryRepository(self.repo._session).inherit_context_from(self.repo)
+        """检查所有物料库存，低于安全库存的生成预警。
 
-        alert_count = 0
+        三条契约：
+
+        1. **幂等**：同一物料同一类型只要还有一条未闭环的告警，就**刷新它**而不是
+           再插一条。改造前无条件 INSERT，扫一次多一条 —— 列表被刷屏，真正要
+           处理的那条淹在重复项里（与 SPC 告警 C-43 同一病根）。
+        2. **口径**：库存用真实可用量（扣锁定、排除冻结批次），见
+           ``list_below_safety_stock`` 的注释。
+        3. **给得出下一步**：预警里带上**建议采购量**与**建议到货日**。
+           采购申请单据本身归 ERP 边界外（B-11，无供应商/客户主数据），
+           但"还差多少、该什么时候到"是预警就该算出来的 ——
+           只说"低于安全库存"等于把判断题丢回给仓管员。
+        """
+        mat_repo = MaterialRepository(self.repo._session).inherit_context_from(self.repo)
+
         materials = await mat_repo.list_below_safety_stock()
         alerts = []
         for mat in materials:
+            current = float(mat.get("current_stock") or 0)
+            safety = float(mat.get("safety_stock_qty") or 0)
+            # 目标水位：再订货点优先；没配就用 2 倍安全库存（补一次够扛一阵）
+            reorder = float(mat.get("reorder_point") or 0)
+            target = reorder if reorder > safety else safety * 2
+            suggested = max(0.0, target - current)
+            lead_days = int(mat.get("lead_time_days") or 0)
+            eta = (date.today() + timedelta(days=lead_days)).isoformat() if lead_days else None
+
+            message = (
+                f"物料 {mat['code']}-{mat['name']} 可用库存 {current:g} "
+                f"低于安全库存 {safety:g}；建议采购 {suggested:g}"
+                + (f"（采购提前期 {lead_days} 天，建议到货 {eta}）" if lead_days else "")
+            )
             alert_data = {
                 "tenant_id": tenant_id,
                 "alert_type": "safety_stock",
                 "material_id": mat["id"],
                 "warehouse_id": None,
-                "current_qty": mat.get("current_stock", 0),
-                "threshold_qty": mat["safety_stock_qty"],
+                "current_qty": current,
+                "threshold_qty": safety,
                 "status": "open",
-                "alert_message": f"物料 {mat['code']}-{mat['name']} 库存 {mat.get('current_stock', 0)} 低于安全库存 {mat['safety_stock_qty']}",
+                "alert_message": message,
             }
-            alert_id = await self.repo.create(alert_data)
-            alert_data["id"] = alert_id
+
+            existing = await self.repo.find_unresolved(mat["id"], "safety_stock")
+            if existing:
+                # 刷新而不是新建：数量与建议要跟着最新库存走，但单据不重复
+                await self.repo.update(existing["id"], {
+                    "current_qty": current, "threshold_qty": safety,
+                    "alert_message": message,
+                })
+                alert_data["id"] = existing["id"]
+                alert_data["deduplicated"] = True
+            else:
+                alert_data["id"] = await self.repo.create(alert_data)
             alerts.append(alert_data)
         return alerts
 
