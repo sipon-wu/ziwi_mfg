@@ -154,13 +154,28 @@ class MaterialRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM materials WHERE code = :code", {"code": code})
 
     async def create(self, data: dict) -> int:
+        # pick_strategy 模型 default='fifo' 只在 ORM 侧生效 → 漏写即 NULL。
+        # NULL 落到拣选处会被判成 "非 fifo" 而走 LIFO（见 IssueOrderService），
+        # 等于**默认策略静默反转**。同理其它计数/开关列一并兜住。
+        data.setdefault("pick_strategy", "fifo")
+        for col in ("spec", "material_category", "storage_condition", "image_url"):
+            data.setdefault(col, None)
+        data.setdefault("material_type", "raw")
+        data.setdefault("is_batch_managed", False)
+        data.setdefault("is_serial_managed", False)
+        data.setdefault("min_stock_qty", 0)
+        data.setdefault("max_stock_qty", 0)
+        data.setdefault("safety_stock_qty", 0)
+        data.setdefault("reorder_point", 0)
+        data.setdefault("lead_time_days", 0)
+        data.setdefault("is_active", True)
         return await self.execute(
             """INSERT INTO materials (tenant_id, code, name, spec, unit, material_type, material_category,
-               is_batch_managed, is_serial_managed, storage_condition,
+               is_batch_managed, is_serial_managed, storage_condition, pick_strategy,
                min_stock_qty, max_stock_qty, safety_stock_qty, reorder_point,
                lead_time_days, image_url, is_active)
                VALUES (:tenant_id, :code, :name, :spec, :unit, :material_type, :material_category,
-               :is_batch_managed, :is_serial_managed, :storage_condition,
+               :is_batch_managed, :is_serial_managed, :storage_condition, :pick_strategy,
                :min_stock_qty, :max_stock_qty, :safety_stock_qty, :reorder_point,
                :lead_time_days, :image_url, :is_active)""",
             data,

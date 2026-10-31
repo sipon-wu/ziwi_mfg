@@ -963,7 +963,13 @@ class IssueOrderService:
                 if self.item_repo._tenant_id:
                     mat_repo.set_tenant_id(self.item_repo._tenant_id)
                 material = await mat_repo.get(item["material_id"])
-                pick_strategy = material.get("pick_strategy", "fifo") if material else "fifo"
+                # ★不能写 material.get("pick_strategy", "fifo")：dict.get 的默认值
+                # 只在**键不存在**时生效，而库里 69/78 行是**键在、值为 NULL**
+                # （模型 default='fifo' 只在 ORM 侧，裸 SQL INSERT 不补）。
+                # 于是 pick_strategy 拿到 None → `!= "fifo"` → 走 DESC →
+                # **FIFO 静默变 LIFO**：最老的货被一直压在库里，有保质期的物料
+                # 直接变呆滞/过期。接口照样 200、拣选照样成功，只是顺序反了。
+                pick_strategy = (material or {}).get("pick_strategy") or "fifo"
                 if pick_strategy == "manual":
                     raise ValueError(f"物料 {item['material_id']} 拣选策略为 manual，需指定批次出库")
 
