@@ -144,6 +144,12 @@ class CreateInspectionOrderRequest(BaseModel):
     qc_point_id: Optional[int] = None
     inspector_id: Optional[int] = None
     remark: Optional[str] = None
+    # ── D-S7 抽样方案输入 ──
+    # 给了 lot_qty 就按 GB/T 2828.1 自动定样本数与 Ac/Re 并写进检验单；
+    # 不给则维持原样（样本数由人工填，无抽样方案）。
+    lot_qty: Optional[int] = None
+    aql: Optional[float] = None
+    inspection_level: Optional[str] = None
 
 
 class UpdateInspectionOrderRequest(BaseModel):
@@ -154,6 +160,9 @@ class UpdateInspectionOrderRequest(BaseModel):
     qc_point_id: Optional[int] = None
     inspector_id: Optional[int] = None
     remark: Optional[str] = None
+    lot_qty: Optional[int] = None
+    aql: Optional[float] = None
+    inspection_level: Optional[str] = None
 
 
 class JudgeOrderRequest(BaseModel):

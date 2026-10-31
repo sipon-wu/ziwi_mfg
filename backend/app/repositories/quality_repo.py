@@ -167,12 +167,23 @@ class InspectionOrderRepository(MultiTenantRepository):
         )
 
     async def create_inspection_order(self, data: dict) -> int:
+        # ★抽样方案六列（lot_qty/aql/inspection_level/sample_qty/ac/re）必须写进
+        # 列清单 —— 「固定列 INSERT 漏写列」**第九次复发**（C-34/C-48/C-50/C-56
+        # ×2/C-57/C-63/C-64/C-65）。Service 层明明算好了方案并放进 data，
+        # 仓储层列清单没写 → 传进来不报错、库里就是 NULL，症状一律表现为
+        # "抽样方案配了却不生效"（接口 200、判定照旧放行）。
+        # 给默认值而不是要求调用方必传：老调用点（IQC 自动开单等）没有批量概念，
+        # 不该被逼着传 None。
         return await self.execute(
             "INSERT INTO inspection_order (tenant_id, order_no, order_type, work_order_id, "
-            "process_id, material_id, receipt_item_id, qc_point_id, inspector_id, remark) "
+            "process_id, material_id, receipt_item_id, qc_point_id, inspector_id, remark, "
+            "lot_qty, aql, inspection_level, sample_qty, ac, re) "
             "VALUES (:tenant_id, :order_no, :order_type, :work_order_id, "
-            ":process_id, :material_id, :receipt_item_id, :qc_point_id, :inspector_id, :remark)",
-            {"receipt_item_id": None, **data},
+            ":process_id, :material_id, :receipt_item_id, :qc_point_id, :inspector_id, :remark, "
+            ":lot_qty, :aql, :inspection_level, :sample_qty, :ac, :re)",
+            {"receipt_item_id": None, "lot_qty": None, "aql": None,
+             "inspection_level": None, "sample_qty": None, "ac": None, "re": None,
+             **data},
         )
 
     async def get_by_receipt_item(self, receipt_item_id: int) -> Optional[Dict]:

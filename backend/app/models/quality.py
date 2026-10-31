@@ -75,6 +75,17 @@ class InspectionOrder(Base):
     result = Column(String(10), comment="ACC/REJ/UAI")
     judge_at = Column(DateTime(timezone=True))
     remark = Column(Text)
+    # ── D-S7 抽样方案（GB/T 2828.1）───────────────────────────
+    # 没有这几列之前，"抽检"只能靠检验员口头决定抽几个、允收几个：
+    # 同一批货两个人抽能得出相反结论，且事后无法追溯依据。
+    # 落库的意义是**判定可复算**：样本量与 Ac/Re 写在单子上，
+    # 谁都能拿"批量 + AQL + 检验水平"再算一遍对得上。
+    lot_qty = Column(Integer, comment="送检批量（抽样方案的输入）")
+    aql = Column(Numeric(6, 3), comment="接收质量限 AQL，如 2.5 表示 2.5%")
+    inspection_level = Column(String(10), comment="检验水平 I/II/III/S-1~S-4")
+    sample_qty = Column(Integer, comment="应抽样本数")
+    ac = Column(Integer, comment="允收数 Ac：不合格数 ≤ Ac 判合格")
+    re = Column(Integer, comment="拒收数 Re：不合格数 ≥ Re 判不合格")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

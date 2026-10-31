@@ -13,6 +13,12 @@ from app.repositories.quality_repo import (
     QualityReportRepository,
 )
 from app.services.doc_no import guard_duplicate
+from app.services.aql_service import (
+    plan as aql_plan,
+    verdict as aql_verdict,
+    parse_sampling_plan,
+    AqlError,
+)
 from app.schemas.quality import (
     CreateQcPointConfigRequest,
     UpdateQcPointConfigRequest,
@@ -222,6 +228,30 @@ async def list_orders(
     return {"code": 0, "message": "success", "data": data}
 
 
+# ── ★静态段端点必须注册在 `{order_id}` 之前 ──────────────────
+# FastAPI 按**注册顺序**匹配：若 `aql-plan` 写在 `/{order_id}` 之后，
+# `aql-plan` 会被当成 order_id 解析成整数 → 100% 422。这是**路由遮蔽第三次
+# 复发**（C-53 by-location、C-60 by-material、本次 aql-plan），
+# 已有静态闸 `test_route_shadowing.py` 兜着，改这里会被闸直接拦下。
+@router.get("/inspection-orders/aql-plan")
+async def calc_aql_plan(
+    lot_qty: int = Query(..., ge=1, description="送检批量"),
+    aql: float = Query(..., description="接收质量限，如 2.5 表示 2.5%"),
+    inspection_level: str = Query(None, description="检验水平 I/II/III/S-1~S-4，默认 II"),
+):
+    """D-S7: 按 GB/T 2828.1 试算抽样方案（不落库）。
+
+    ★为什么必须先有这个"只算不写"的端点：检验员在抽之前就要知道抽多少。
+    如果只能建单时才算出来，等于逼着人先建一张单才能看到样本数 ——
+    而建单往往发生在货已经到了之后，那时候才知道要抽 315 个，计划是排不开的。
+    """
+    try:
+        p = aql_plan(lot_qty, aql, inspection_level)
+    except AqlError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+    return {"code": 0, "message": "success", "data": p}
+
+
 @router.get("/inspection-orders/{order_id}")
 async def get_order(
     order_id: int,
@@ -230,6 +260,85 @@ async def get_order(
     data = await repo.get_inspection_order(order_id)
     if not data:
         raise HTTPException(404, detail={"code": "404-0000", "message": "检验单不存在"})
+    return {"code": 0, "message": "success", "data": data}
+
+
+async def _resolve_sampling_plan(repo, data: dict) -> dict:
+    """按「批量 + AQL + 检验水平」算出抽样方案并并进建单数据（D-S7）。
+
+    AQL 的取值优先级：请求显式传 → 检验点 ``sampling_plan`` 里配的
+    （形如 ``AQL=1.0``）→ 都没有则**不生成抽样方案**。
+
+    ★查不出来必须显式报错，不能静默退化成"没方案"：
+    如果客户在检验点上配了 ``AQL=7.5`` 这种表里没有的档位，静默跳过的结果是
+    检验员又回到"凭经验抽几个"，而配置看起来是生效的 —— 典型的静默失效。
+    """
+    lot_qty = data.get("lot_qty")
+    if not lot_qty:
+        return data
+
+    aql = data.get("aql")
+    if aql is None and data.get("qc_point_id"):
+        qc_repo = QcPointRepository(repo._session)
+        if repo.tenant_id:
+            qc_repo.set_tenant_id(repo.tenant_id)
+        qc = await qc_repo.get_qc_point(data["qc_point_id"])
+        aql = parse_sampling_plan((qc or {}).get("sampling_plan"))
+
+    if aql is None:
+        return data  # 没配 AQL 就不做抽样方案，样本数仍可人工填
+
+    try:
+        p = aql_plan(lot_qty, aql, data.get("inspection_level"))
+    except AqlError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+    data["aql"] = p["aql"]
+    data["inspection_level"] = p["level"]
+    data["sample_qty"] = p["sample_qty"]
+    data["ac"] = p["ac"]
+    data["re"] = p["re"]
+    return data
+
+
+@router.get("/inspection-orders/{order_id}/verdict")
+async def sampling_verdict(
+    order_id: int,
+    repo: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+):
+    """D-S7: 按检验单上已落的 Ac/Re 与实际录入的不合格数，给出建议判定。
+
+    返回的是**建议**，不是直接改判定 —— 检验员对 UAI（让步接收）有裁量权，
+    系统替他拍板会把"特采"这条路堵死。但数字必须摆出来：
+    不合格数 8 / Ac 7 / Re 8 → 建议 REJ，谁要判 ACC 就得自己承担。
+    """
+    order = await repo.get_inspection_order(order_id)
+    if not order:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "检验单不存在"})
+    if order.get("ac") is None or order.get("re") is None:
+        return {"code": 0, "message": "该检验单未配置抽样方案，无法按 Ac/Re 判定",
+                "data": {"has_plan": False, "order_id": order_id}}
+
+    res_repo = InspectionResultRepository(repo._session)
+    if repo.tenant_id:
+        res_repo.set_tenant_id(repo.tenant_id)
+    results = await res_repo.list_results_by_order(order_id)
+    # ★不合格数 = FAIL 的行数；没有 result 字段的行不算（录了实测值未判的）
+    defect_count = sum(1 for r in (results or []) if r.get("result") == "FAIL")
+
+    data = {
+        "has_plan": True,
+        "order_id": order_id,
+        "lot_qty": order.get("lot_qty"),
+        "aql": order.get("aql"),
+        "inspection_level": order.get("inspection_level"),
+        "sample_qty": order.get("sample_qty"),
+        "ac": order.get("ac"),
+        "re": order.get("re"),
+        "recorded": len(results or []),
+        "defect_count": defect_count,
+        "suggested_result": aql_verdict(defect_count, order["ac"], order["re"]),
+    }
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -243,6 +352,7 @@ async def create_order(
     data["tenant_id"] = current_user.get("tenant_id", "default")
     if not data.get("result"):
         data["result"] = "pending"
+    data = await _resolve_sampling_plan(repo, data)
     # 自动生成检验单号: QC-YYYYMMDD-NNNN
     today_prefix = f"QC-{date.today().strftime('%Y%m%d')}-"
     max_no = await repo.get_max_order_no(today_prefix)
@@ -290,6 +400,30 @@ async def judge_order(
     order = await repo.get_inspection_order(order_id)
     if not order:
         raise HTTPException(404, detail={"code": "404-0000", "message": "检验单不存在"})
+    # ── D-S7：有抽样方案时，ACC 必须真的满足 Ac ──────────────
+    # 只拦这一个方向：不合格数已经超过 Ac 却判合格，是"人情放行"，
+    # 抽样方案配了等于没配。反方向（不合格数没超却判 REJ / UAI）不拦 ——
+    # 让步接收、发现抽样之外的致命缺陷等都需要人工裁量权，
+    # 系统替检验员拍板会把"特采"这条路堵死。
+    # 未录入任何检验结果明细时不拦：很多场景是纸面记录后再统一判定。
+    sampling_guard = None
+    if order.get("ac") is not None and order.get("re") is not None:
+        res_repo = InspectionResultRepository(repo._session)
+        if repo.tenant_id:
+            res_repo.set_tenant_id(repo.tenant_id)
+        results = await res_repo.list_results_by_order(order_id)
+        if results:
+            defect_count = sum(1 for r in results if r.get("result") == "FAIL")
+            sampling_guard = {"defect_count": defect_count,
+                              "ac": order["ac"], "re": order["re"],
+                              "recorded": len(results)}
+            if req.result == "ACC" and defect_count > int(order["ac"]):
+                raise HTTPException(400, detail={
+                    "code": "400-0000",
+                    "message": (f"已录入 {len(results)} 条检验结果，其中不合格 "
+                                f"{defect_count} 项，超过允收数 Ac={order['ac']}"
+                                f"（Re={order['re']}），按 GB/T 2828.1 不能判合格")})
+
     updates = {"result": req.result}
     if req.remark:
         updates["remark"] = req.remark
@@ -400,7 +534,8 @@ async def judge_order(
     return {"code": 0, "message": f"判定为 {req.result}",
             "data": {"ncr_id": ncr_id, "receipt_item_id": order.get("receipt_item_id"),
                      "receipt_inspection_status": receipt_status,
-                     "batch_locked": batch_locked}}
+                     "batch_locked": batch_locked,
+                     "sampling_guard": sampling_guard}}
 
 
 # ============================================================

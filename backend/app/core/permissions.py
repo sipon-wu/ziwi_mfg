@@ -63,6 +63,10 @@ _PARAM_SEG = re.compile(r"^\{.*\}$")
 APPROVE_SUFFIXES: Set[str] = {
     "judge", "approve", "review", "decide", "dispose", "reject",
     "confirm", "release-review",
+    # 抽样判定建议（D-S7）：不登记则资源名被推成 inspection_order_verdict，
+    # 权限码 M03:inspection_order_verdict:read 无人拥有 → 除通配 * 外全员 403
+    # （C-44 / C-45 / A-S1 / C-65 同一形态，第五次）。
+    "verdict",
 }
 EXECUTE_SUFFIXES: Set[str] = {
     "release", "close", "complete", "cancel", "issue", "store", "receive",
@@ -90,6 +94,10 @@ EXECUTE_SUFFIXES: Set[str] = {
     # （与 C-44 material-check / C-45 / A-S1 init-admin 同一形态，第四次）。
     # 登记后收敛回 M16:trial:read —— 能看试产单的人就能看它的 BOM 差异。
     "bom-diff",
+    # AQL 抽样方案试算（D-S7）：不登记则资源名被推成 inspection_order_aql_plan，
+    # 权限码 M03:inspection_order_aql_plan:read 无人拥有 → 除通配 * 外全员 403。
+    # 登记后收敛回 M03:inspection_order:read —— 检验员与品质工程师都已拥有。
+    "aql-plan",
 }
 
 
