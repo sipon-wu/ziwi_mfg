@@ -183,6 +183,11 @@ class InspectionResultResponse(BaseModel):
 
 
 class CreateInspectionResultRequest(BaseModel):
+    # ★ order_id 此前**完全没有**这个字段：仓储的 INSERT 却要 `:order_id`，
+    #   于是 POST /inspection-results 一律 500
+    #   （InvalidRequestError: A value is required for bind parameter 'order_id'），
+    #   检验明细根本录不进去 → measured_value 永远是 NULL → SPC 无数据可算（C-40）。
+    order_id: int
     item_id: Optional[int] = None
     item_name: Optional[str] = None
     spec_value: Optional[str] = None

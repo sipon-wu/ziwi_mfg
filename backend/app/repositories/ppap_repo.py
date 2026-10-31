@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from app.repositories.base import MultiTenantRepository
 
@@ -143,9 +144,15 @@ class PpapSubmissionRepository(MultiTenantRepository):
 
     async def list_due_reminders(self) -> List[Dict]:
         """查询超30天未回复的提交记录"""
+        # NOW() - INTERVAL '30 days' 是 PG 专有语法（SQLite 既不认 NOW() 也不认
+        # INTERVAL 字面量），截止时间在 Python 侧算好传进来。
+        # due_reminder = 0 同理：Boolean 列写整数在 PG 会报
+        # "operator does not exist: boolean = integer"。
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         return await self.query(
             "SELECT * FROM ppap_submissions WHERE status = 'pending' "
-            "AND submitted_at <= NOW() - INTERVAL '30 days' AND due_reminder = 0"
+            "AND submitted_at <= :cutoff AND due_reminder = FALSE",
+            {"cutoff": cutoff},
         )
 
 

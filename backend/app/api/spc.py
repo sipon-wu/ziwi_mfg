@@ -259,6 +259,12 @@ async def calculate_control_limits(
                     break
 
             if dp_id:
+                # 同一子组同一规则只留一条：重算会重复判异，不去重的话
+                # 一张图算两次就攒出双份告警，已闭环的还会被"重新打开"
+                if await alert_repo.find_alert(
+                        req.dimension_key, req.chart_type, sg_no,
+                        anomaly.get("rule_no", 0)):
+                    continue
                 await alert_repo.create_alert({
                     "tenant_id": tenant_id,
                     "chart_type": req.chart_type,
@@ -268,7 +274,8 @@ async def calculate_control_limits(
                     "subgroup_no": sg_no,
                     "data_point_id": dp_id,
                     "severity": anomaly.get("severity", "medium"),
-                    "is_read": 0,
+                    # Boolean 列不能传整数：SQLite 宽容，PG(asyncpg) 会拒绝（C-37 同类）
+                    "is_read": False,
                 })
 
         # 判异 → 不合格评审（P0-3）。告警只是"看见了"，评审单才是"有人负责"。

@@ -154,6 +154,25 @@ class NcrService:
         if to_status == "disposed" and disposition:
             spawned = await self.spawn_disposition_docs(
                 current, disposition, actor_id=actor_id, actor_name=actor_name)
+            # SPC 判异单处置完，控制图侧要跟着变：告警闭环 + 剔除特殊原因点
+            # + 重算控制限。改造前这里什么都不做，于是图上那几点永远飘红、
+            # "已调整工艺参数"这句话在系统里没有任何可查的结果。
+            if (current.get("source_type") or "") == "spc":
+                try:
+                    from app.services.spc_adjust_service import SpcAdjustService
+
+                    adjust = SpcAdjustService(
+                        self.repo._session,
+                        current.get("tenant_id") or self._tenant_id,
+                        repo=self.repo,
+                    )
+                    spawned["process_adjustment"] = await adjust.apply_disposition(
+                        current, disposition, actor_id=actor_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("SPC 处置回写失败: ncr=%s err=%s",
+                                   current.get("ncr_no"), exc)
+                    spawned["process_adjustment"] = {
+                        "applied": False, "error": f"{type(exc).__name__}: {exc}"}
         return {"id": id, "from_status": from_status, "to_status": to_status, **spawned}
 
     # ================================================================

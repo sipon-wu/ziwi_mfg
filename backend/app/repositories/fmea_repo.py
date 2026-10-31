@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Optional, Dict, List
 from app.repositories.base import MultiTenantRepository
 
@@ -229,10 +230,12 @@ class FmeaActionRepository(MultiTenantRepository):
         """完成措施并记录复评值"""
         re_rpn = re_s * re_o * re_d
         return await self.execute(
-            "UPDATE fmea_actions SET status = 'verified', completed_at = NOW(), "
+            # NOW() 是 PG 专有函数（SQLite 无此函数），时间由调用方传入
+            "UPDATE fmea_actions SET status = 'verified', completed_at = :ts, "
             "re_severity = :re_s, re_occurrence = :re_o, re_detection = :re_d, re_rpn = :re_rpn "
             "WHERE id = :id",
-            {"id": id, "re_s": re_s, "re_o": re_o, "re_d": re_d, "re_rpn": re_rpn},
+            {"id": id, "re_s": re_s, "re_o": re_o, "re_d": re_d, "re_rpn": re_rpn,
+             "ts": datetime.now(timezone.utc)},
         )
 
     async def list_overdue(self) -> List[Dict]:

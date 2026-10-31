@@ -145,6 +145,11 @@ class TestNoDialectSpecificSql:
         (r"TIMESTAMP\s+'", "TIMESTAMP '...' 字面量是 PostgreSQL 专有"),
         (r"\bDATE_TRUNC\s*\(", "DATE_TRUNC() 是 PostgreSQL 专有；改用日期区间比较"),
         (r"\bILIKE\b", "ILIKE 是 PostgreSQL 专有；用 LOWER(...) LIKE"),
+        # ↓ 2026-11-01 补：这两条同样是"本地过、生产炸"的反向版本 ——
+        #   SQLite 不认 NOW()（no such function: NOW）、也不认 INTERVAL '30 days'，
+        #   于是这类 SQL 只有本地会挂，而且报错与业务毫无关系。
+        (r"\bNOW\s*\(\s*\)", "NOW() 是 PostgreSQL 专有；时间由调用方作为参数传入"),
+        (r"\bINTERVAL\s+'", "INTERVAL '...' 字面量是 PostgreSQL 专有；截止时间在 Python 侧算好"),
     ]
     SQL_VERB = re.compile(
         r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING)\b",

@@ -127,16 +127,21 @@ def calculate_xbar_r(
 
     # 应用判异规则检测异常点
     anomalies = []
-    for point in points:
+    for i, point in enumerate(points):
         triggered = nelson_rules({
             "xbar": point["xbar"],
             "r": point["r"],
-        }, xbar_values, limits)
+        }, xbar_values, limits, index=i)
 
         if triggered:
             point["is_anomaly"] = True
             point["anomaly_rules"] = json.dumps([t["rule_no"] for t in triggered])
-            anomalies.extend(triggered)
+            # ★ 必须把 subgroup_no 带出来：api/spc.py 靠它回查 data_point_id 才能落
+            #   告警行。此前 extend(triggered) 只有 rule_no/description/severity，
+            #   api 侧 anomaly.get("subgroup_no", 0) 恒为 0 → 找不到数据点 → dp_id
+            #   为 None → **告警从来没被写入过**，"判异只飘红"连飘红都没有（C-43）。
+            for _t in triggered:
+                anomalies.append({**_t, "subgroup_no": point.get("subgroup_no")})
         else:
             point["is_anomaly"] = False
             point["anomaly_rules"] = "[]"
@@ -210,16 +215,22 @@ def calculate_p_np(
     # 判异规则检测
     p_values = [p["p_value"] for p in points]
     anomalies = []
-    for point in points:
+    for i, point in enumerate(points):
         triggered = nelson_rules(
             {"xbar": point["p_value"]},
             p_values,
             {"xbar": {"cl": cl_p, "ucl": ucl_p, "lcl": lcl_p}},
+            index=i,
         )
         if triggered:
             point["is_anomaly"] = True
             point["anomaly_rules"] = json.dumps([t["rule_no"] for t in triggered])
-            anomalies.extend(triggered)
+            # ★ 必须把 subgroup_no 带出来：api/spc.py 靠它回查 data_point_id 才能落
+            #   告警行。此前 extend(triggered) 只有 rule_no/description/severity，
+            #   api 侧 anomaly.get("subgroup_no", 0) 恒为 0 → 找不到数据点 → dp_id
+            #   为 None → **告警从来没被写入过**，"判异只飘红"连飘红都没有（C-43）。
+            for _t in triggered:
+                anomalies.append({**_t, "subgroup_no": point.get("subgroup_no")})
         else:
             point["is_anomaly"] = False
             point["anomaly_rules"] = "[]"
@@ -333,7 +344,7 @@ def calculate_capability(
 
 def nelson_rules(
     point: Dict, all_points: List[float],
-    control_limits: Dict,
+    control_limits: Dict, index: int = None,
 ) -> List[Dict]:
     """Nelson 判异规则检查（7种）
 
@@ -341,6 +352,7 @@ def nelson_rules(
         point: 当前数据点 {"xbar": float, "r": float}
         all_points: 所有数据点的值列表
         control_limits: {"xbar": {"cl": float, "ucl": float, "lcl": float}, ...}
+        index: 当前点在 all_points 中的下标；省略时按「最后一个点」处理
 
     Returns:
         触发的规则列表 [{"rule_no": int, "description": str, "severity": str}]
@@ -352,7 +364,18 @@ def nelson_rules(
     sigma = (ucl - cl) / 3 if (ucl - cl) > 0 else 1
 
     value = point.get("xbar", 0)
-    idx = len(all_points) - 1  # 当前点在列表中的索引
+    # ★ 判异窗口必须**锚定到当前点**。改造前这里写死
+    #   ``idx = len(all_points) - 1``，而规则 2~7 又都取 ``all_points[-N:]`` ——
+    #   逐点调用时**每个点看到的都是序列末尾那一段**，同一批规则被重复判定 N 次。
+    #   后果：所有点都被标成 is_anomaly=True、告警内容全是同一段尾部窗口，
+    #   而"剔除特殊原因"会把整张图剔光、控制限再也无法重算（实测 9 子组全被剔）。
+    idx = len(all_points) - 1 if index is None else index
+
+    def _window(n: int):
+        """以当前点结尾、长度 n 的窗口；不足 n 点返回 None。"""
+        if n <= 0 or idx + 1 < n:
+            return None
+        return all_points[idx + 1 - n: idx + 1]
 
     # ── 规则1: 1点超出控制限 ──
     if value > ucl or value < lcl:
@@ -363,9 +386,9 @@ def nelson_rules(
         })
 
     # ── 规则2: 连续7点在中心线同侧 ──
-    if len(all_points) >= 7:
-        recent = all_points[-7:]
-        if all(v > cl for v in recent) or all(v < cl for v in recent):
+    w7 = _window(7)
+    if w7 is not None:
+        if all(v > cl for v in w7) or all(v < cl for v in w7):
             triggered.append({
                 "rule_no": 2,
                 "description": f"连续7点（#{(idx-6)+1}~#{idx+1}）在中心线同侧",
@@ -373,10 +396,9 @@ def nelson_rules(
             })
 
     # ── 规则3: 连续7点递增或递减 ──
-    if len(all_points) >= 7:
-        recent = all_points[-7:]
-        if all(recent[i] < recent[i + 1] for i in range(6)) or \
-           all(recent[i] > recent[i + 1] for i in range(6)):
+    if w7 is not None:
+        if all(w7[k] < w7[k + 1] for k in range(6)) or \
+           all(w7[k] > w7[k + 1] for k in range(6)):
             triggered.append({
                 "rule_no": 3,
                 "description": f"连续7点（#{(idx-6)+1}~#{idx+1}）单调递增或递减",
@@ -384,12 +406,12 @@ def nelson_rules(
             })
 
     # ── 规则4: 连续14点交替上下 ──
-    if len(all_points) >= 14:
-        recent = all_points[-14:]
+    w14 = _window(14)
+    if w14 is not None:
         alternating = all(
-            (recent[i] > recent[i + 1] and recent[i + 1] < recent[i + 2]) or
-            (recent[i] < recent[i + 1] and recent[i + 1] > recent[i + 2])
-            for i in range(12)
+            (w14[k] > w14[k + 1] and w14[k + 1] < w14[k + 2]) or
+            (w14[k] < w14[k + 1] and w14[k + 1] > w14[k + 2])
+            for k in range(12)
         )
         if alternating:
             triggered.append({
@@ -399,10 +421,10 @@ def nelson_rules(
             })
 
     # ── 规则5: 2/3的点在2σ之外（同一侧）──
-    if len(all_points) >= 3:
-        recent_3 = all_points[-3:]
-        side_above = sum(1 for v in recent_3 if v > cl + 2 * sigma)
-        side_below = sum(1 for v in recent_3 if v < cl - 2 * sigma)
+    w3 = _window(3)
+    if w3 is not None:
+        side_above = sum(1 for v in w3 if v > cl + 2 * sigma)
+        side_below = sum(1 for v in w3 if v < cl - 2 * sigma)
         cnt = max(side_above, side_below)
         if side_above >= 2 or side_below >= 2:
             triggered.append({
@@ -412,10 +434,10 @@ def nelson_rules(
             })
 
     # ── 规则6: 4/5的点在1σ之外（同一侧）──
-    if len(all_points) >= 5:
-        recent_5 = all_points[-5:]
-        side_above = sum(1 for v in recent_5 if v > cl + 1 * sigma)
-        side_below = sum(1 for v in recent_5 if v < cl - 1 * sigma)
+    w5 = _window(5)
+    if w5 is not None:
+        side_above = sum(1 for v in w5 if v > cl + 1 * sigma)
+        side_below = sum(1 for v in w5 if v < cl - 1 * sigma)
         if side_above >= 4 or side_below >= 4:
             triggered.append({
                 "rule_no": 6,
@@ -424,9 +446,9 @@ def nelson_rules(
             })
 
     # ── 规则7: 连续15点在1σ之内 ──
-    if len(all_points) >= 15:
-        recent = all_points[-15:]
-        if all(cl - sigma <= v <= cl + sigma for v in recent):
+    w15 = _window(15)
+    if w15 is not None:
+        if all(cl - sigma <= v <= cl + sigma for v in w15):
             triggered.append({
                 "rule_no": 7,
                 "description": f"连续15点（#{(idx-14)+1}~#{idx+1}）在1σ之内（中心线附近）",

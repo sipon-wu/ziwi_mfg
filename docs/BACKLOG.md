@@ -18,6 +18,7 @@
 |---|---|---|---|---|---|
 | B-8 | **9 个种子角色里只有 `admin` 带 `is_system=1`** | 其余 8 个（`department_head` / `inspector` / `quality_engineer` …）界面上「删除」按钮可点 | 客户可以把平台预置的角色删掉；`seed_permissions.py` 按 code 授权，删掉后重跑种子只会报 "unmatched_roles"，不会自动重建 | 早期 `roles` 表只有 admin 标了 `is_system`，后续加角色时没有统一约定 | 二选一：①把 8 个种子角色统一标 `is_system=1`；②在 `seed_permissions.py` 里补"角色不存在则按内置定义重建" |
 | B-11 | **供应商主数据无任何 API，`supplier_id` 是预留字段** | `/suppliers`、`/basic/suppliers` 全部 404；但 `receipt_orders.supplier_id`、`ncr_records.supplier_id` 都有列 | NCR 的供应商永远为空 → 「按供应商分摊不良」做不了；来料 NCR 无法归到供应商 | 产品决策：供应商主数据归 M01 ERP / M09 SRM 生命周期管理，MES 不自建主数据 | **不自行新建**。等 ERP 集成回填；在此之前 NCR 供应商维度不可用属预期。若客户要求 MES 侧可见，再单独拍板 |
+| B-14 | **SPC 与检验结果录入在前端没有任何入口** | 全站没有"录检验结果"「计算控制限」的按钮；`/inspection-results`、`/spc/control-limits/calculate` 只有后端接口 | 修完 C-40~C-43 后链路在 HTTP 层全通，但车间/品质工程师在界面上仍走不进去 —— 只能靠 API 调用 | 这两个接口从建库起就 100% 500（C-40/C-41），前端当年没接；后来补了控制限列表/控制图/能力分析三页（只读） | 需要产品拍板是否做「检验结果录入」界面。做的话至少要：检验单详情页内联录入明细 + 控制限页「从检验数据自动计算」按钮 |
 
 
 ## 二、已排期
@@ -68,6 +69,11 @@
 | C-38 | **结构漂移检查读的是两份过期缓存，"0 漂移"是假结论** | 本批 | `scripts/diff_schema.py` 只读 `.workbuddy/tmp_db_schema.txt` 与 `tmp_model_schema.json`，而这两个文件由早已不存在的手工步骤生成 —— 实测库里 115 张表、报告仍写 108，新增表与列**根本看不见**。结构闸一旦会撒谎，四层验证里的这一层就等于没有（此前多处"漂移 0"结论需按重写后的口径重跑确认）。重写为两侧现场取：模型侧 `Base.metadata`，库侧 `inspect(conn).get_table_names/get_columns`；类型按粗粒度族（int/text/float/bool/datetime/date/json）比而不是逐字比（`VARCHAR(50)` 与 `character varying(50)` 本就不同名，逐字比永远假红）；可空性逐列严格比。重跑结果：**115 张表、六类差异全 0** |
 | C-39 | **保养计划是一行死数据 —— 到期 → 任务 → 停机 → 排产，五环一个都没接上**（原 B-13） | 本批 | `maintenance_plans` 建出来就再没被读过：`create_plan` 的 INSERT 不写 `next_execute_at`（新计划永远不到期）；全系统没有"到期扫描"的任何代码（计划不会变成任务）；`create_task` 的 INSERT 丢掉 `task_no`/`plan_id`（任务执行过几次查不出来）；开工/完成只改一个 `status` 字段（设备台账还是 `running`、不开停机记录、计划上的到期日原地不动）。结果"保养到期"这件事只存在于人的脑子里。修：新增 `MaintenanceService` —— `generate_due_tasks` 扫到期计划生成任务（`MT-<plan>-<YYYYMMDD>` 同日幂等）、`start_task`（设备 → `maintenance` + 开停机 `type=maintenance` + 受影响工单暂停）、`complete_task`（关记录算时长 + 设备 `running` + 工单恢复并按停机分钟顺延 + **计划滚到下一周期**，不推进的话下次扫描还会命中同一张、天天生成任务）。`add_cycle` 月份/年份走**日历加法**（1/31 + 1 月 = 2/28，`timedelta(days=30)` 会落成 3/2）。`list_due_plans` 把 `next_execute_at IS NULL` 也算到期（老计划全是 NULL，只按 `<= now` 过滤永远不到期）。**设计取舍：不自动猜受影响工单** —— `work_orders` 上没有 `equipment_id`（只有 `line_code`/`workshop`），无法可靠反查"这台设备上在制哪张单"，硬猜会停掉别人的单；没指定就只停机、不动工单，并在返回里写明"未指定受影响工单，未做排产调整"。新增 4 个端点（`POST /maintenance-tasks/generate-due`、`PUT .../{id}/start`、`PUT .../{id}/complete`、`PUT /maintenance-tasks/{id}`），`PUT .../{id}/status` 收敛到 start/complete 路径。迁移 `20261031_maintenance_loop.py`（加 `plan_id`/`work_order_id` 列 + 给 6 张 NULL 计划补 `next_execute_at`）。`maintenance_downtime_e2e` **22 通 / 0 断** |
 
+| C-40 | **检验结果明细 100% 录不进去 → SPC 从来没数据可算** | 本批 | `POST /inspection-results` 的请求体（`CreateInspectionResultRequest`）**根本没有 `order_id` 字段**，而 `InspectionResultRepository.create_result` 的 INSERT 要 `:order_id` → 一律 500（`A value is required for bind parameter 'order_id'`）。于是 `inspection_result.measured_value` 永远是 NULL，X̄-R 控制图**从建库起就没算过一次**。修：schema 补 `order_id: int`。**已知缺口（本次不做）**：前端全站没有录检验结果 / 计算控制限的入口，这两个接口目前只能靠 API 调用 —— 记 B-14 |
+| C-41 | **SPC 控制图计算 100% 500：查询读不存在的列 + 缺 bind 参数** | 本批 | 三处一起坏：①`get_inspection_data_for_xbar_r` / `get_inspection_data_for_p_np` 查 `io.product_id`，而 `inspection_order` 只有 `material_id`（离散制造里"产品"就是一条物料档案，见 `material_sync`）→ `no such column: io.product_id`；②`batch_insert_points` 的列清单是全量的，但 xbar_r 的点没有 `p_value`/`np_value`、p/np 的点没有 `xbar`/`r` → `A value is required for bind parameter 'p_value'` 整批炸；③`tenant_id`/`chart_type`/`dimension_key` 明明是方法入参，却还要调用方重复塞进每条点里。修：列名改 `io.material_id`、缺列按 None 补齐、三个上下文列由仓储自动补。顺带把取数排序改成 `created_at, io.id, ir.id` —— SQLite 的 `created_at` 只有秒级精度，同秒并列时子组边界每次都不同，同一批数据能算出两张不同的控制图。注：`capability_analysis` 早已因同一个列名问题改过取数路径，但**没回头修仓储里的这两条查询** |
+| C-42 | **NCR 处置完 SPC 侧毫无反应 —— X5 的"工艺调整"没有任何载体** | 本批 | 判完处置（让步/返工/报废/挑选/退货），控制图上那几点永远飘红、控制限还是判异前那一套，"已调整工艺参数"这句话在系统里查不到任何结果。新增 `SpcAdjustService`，在 `NcrService.advance` 的 `disposed` 分支对 `source_type='spc'` 的单子回写三件事：①该维度未处理告警全部置 `acknowledged_at/by`；②把 `is_anomaly=TRUE` 的点置 `excluded` 并写明剔除原因（NCR 单号）——**不能把异常子组留在控制限里**，否则等于把不良吸收进标准，控制限越算越宽、图永远不再报异；③用剔除后的点重算并**落一行新的** `spc_control_limits`（沿用旧图 USL/LSL），新行即新的生效标准。取舍：剔完不足 2 组就**不写**控制限，如实回报"数据不足未重算"（写一组假标准比不重算更糟）；算出来和现有那条完全一致则复用，不攒重复行；失败不阻断 NCR 推进（与 C-32 建下游单据同一取舍）。顺带把 `NOW()` 从 3 处仓储 SQL 里清掉（`spc_alerts.acknowledged_at`、`fmea_actions.completed_at`、`ppap_submissions` 的到期判断），`INTERVAL '30 days'` 改为 Python 侧算好传入，并把 `NOW()` / `INTERVAL '...'` 加进方言静态闸 |
+| C-43 | **判异规则把索引写死成"序列末尾" → 整张图所有点都被标成异常；告警一条都写不进库** | 本批 | 两个叠在一起的缺陷：①`nelson_rules` 里 `idx = len(all_points) - 1` 与传入的 `point` 无关，规则 2~7 又都取 `all_points[-N:]` —— 逐点调用时**每个点看到的都是序列末尾那一段**，同一批规则被重复判定 N 次，实测 13 个子组会一个不落地全被标成 `is_anomaly`，后续"剔除特殊原因"直接把整张图剔光、控制限再也无法重算；②`anomalies.extend(triggered)` 只有 `rule_no`/`description`/`severity`，**没有 `subgroup_no`**，而 `api/spc.py` 靠 `anomaly.get("subgroup_no", 0)` 回查数据点 → 恒为 0 → 查不到 → `dp_id` 为 None → **告警从来没被写入过**（"判异只飘红"其实连飘红都没有，告警列表恒空）。修：`nelson_rules` 加 `index` 参数并用「以当前点结尾的窗口」替代尾部切片（省略时仍按最后一点处理，兼容既有调用）；组装 anomalies 时带上 `subgroup_no`。另修告警无幂等：重算会重复判异，同一子组同一规则原本会攒出双份告警、已闭环的还会被"重新打开" → 新增 `find_alert` 判重。`spc_ncr_loop_e2e` **20 段通 / 0 段断** |
+
 ### 硬编码 INSERT 列清单专项（C-34 / C-39 共性，**已复发三次**）
 
 仓储层的 `INSERT INTO x (硬编码列清单) VALUES (...)` 会在模型加字段后**静默丢字段**：
@@ -89,8 +95,18 @@
 生产是 PostgreSQL、本地与单测是 SQLite，**任何 PG 专有 SQL 都会在本地炸而在生产正常**，
 而且报的是 `near "FROM": syntax error`，与业务毫无关系、极难定位。
 已加静态闸 `test_calendar_dialect.py::TestNoDialectSpecificSql`：
-扫描 `EXTRACT(` / `DATE_TRUNC(` / `TIMESTAMP '` / `ILIKE`，只扫含 SQL 动词的行
-（注释里解释"为什么不能用"不算违规）。**新增 SQL 前先过这道闸。**
+扫描 `EXTRACT(` / `DATE_TRUNC(` / `TIMESTAMP '` / `ILIKE` / **`NOW()`** / **`INTERVAL '`**，
+只扫含 SQL 动词的行（注释里解释"为什么不能用"不算违规）。
+后两条是 2026-11-01 补的 —— 它们是"**只有本地会炸**"的反向版本：
+SQLite 既没有 `NOW()` 函数也不认 `INTERVAL '30 days'`，生产 PG 反而正常。
+**新增 SQL 前先过这道闸。**
+
+另有一类同族但方向相反的问题：**布尔列写整数字面量**（`is_active = 1`）。
+SQLite 宽容、PG 直接 `operator does not exist: boolean = integer`。
+现存于 `fmea_repo`（`is_latest`/`is_high_risk`/`is_critical_process`）与
+`user_repo`（`is_primary`），`ppap_repo` 的 `due_reminder` 已随 C-42 顺手修掉。
+注意 `excel_import` 的 `is_active` 是 **Integer** 列，`= 1` 是对的，不能一刀切。
+计划：做一次专门清扫 + 加静态闸（需先确认哪些列真是 Boolean）。
 
 ---
 
