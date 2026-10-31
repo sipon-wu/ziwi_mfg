@@ -31,9 +31,17 @@ class ProductionRepository(MultiTenantRepository):
         data.setdefault("assignee_id", None)
         data.setdefault("assigned_org_id", None)
         return await self.execute(
-            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id)
-               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id)""",
-            data
+            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, material_check_status, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id)
+               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :completed_qty, :scrap_qty, :material_check_status, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id)""",
+            # ★带 default 的列必须在写入口兜住（C-64）。
+            # 实测 205 行工单里 114 行 completed_qty/scrap_qty 是 NULL、65 行
+            # material_check_status 是 NULL —— 而 model schema 声明的是 `int = 0`
+            # （非 Optional）。前端拿到 null 会把进度/占比算成 NaN。
+            # 裸 SQL 拿不到 Python 侧 default，不写就是 NULL。
+            {**data,
+             "completed_qty": data.get("completed_qty") if data.get("completed_qty") is not None else 0,
+             "scrap_qty": data.get("scrap_qty") if data.get("scrap_qty") is not None else 0,
+             "material_check_status": data.get("material_check_status") or "pending"}
         )
 
     async def update_work_order(self, id: int, data: dict) -> int:
@@ -185,8 +193,17 @@ class RouteStepRepository(MultiTenantRepository):
     async def create_step(self, data: dict) -> int:
         return await self.execute(
             "INSERT INTO route_steps (tenant_id, product_id, process_code, process_name, "
-            "sort_order, workcenter, standard_time, is_critical, remark) "
+            "sort_order, workcenter, standard_time, is_critical, remark, "
+            "step_type, is_outsource, is_parallel_eligible) "
             "VALUES (:tenant_id, :product_id, :process_code, :process_name, "
-            ":sort_order, :workcenter, :standard_time, :is_critical, :remark)",
-            data,
+            ":sort_order, :workcenter, :standard_time, :is_critical, :remark, "
+            ":step_type, :is_outsource, :is_parallel_eligible)",
+            # ★同上（C-64）：实测 54 行工艺路线里 is_parallel_eligible 全部 NULL、
+            # step_type 22 行 NULL、is_outsource 22 行 NULL。
+            # is_parallel_eligible 是"可否并行"的开关，NULL 在任何布尔判断里都
+            # 会走 else 分支 —— 配了并行也当不能并行。
+            {**data,
+             "step_type": data.get("step_type") or "production",
+             "is_outsource": 1 if data.get("is_outsource") else 0,
+             "is_parallel_eligible": 1 if data.get("is_parallel_eligible") else 0}
         )

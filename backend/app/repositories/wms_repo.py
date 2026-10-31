@@ -684,6 +684,13 @@ class ReceiptOrderRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM receipt_orders WHERE receipt_no = :no", {"no": receipt_no})
 
     async def create(self, data: dict) -> int:
+        # ★C-64：带 default 的列必须在写入口兜住，否则调用方没传就整列不写 → NULL。
+        # 实测 206 行入库单里 stored_qty 144 行 NULL、received_qty 59 行 NULL。
+        # "已收货/已上架数量"为 NULL 时，任何进度计算（stored/received）都是 NaN。
+        data.setdefault("status", "pending")
+        data.setdefault("total_qty", 0)
+        data.setdefault("received_qty", 0)
+        data.setdefault("stored_qty", 0)
         cols = [c for c in ("tenant_id", "receipt_no", "receipt_type", "status", "source_type",
                             "source_doc_no", "work_order_id", "warehouse_id", "supplier_id",
                             "total_qty", "received_qty", "stored_qty", "created_by") if c in data]
@@ -719,6 +726,11 @@ class ReceiptOrderItemRepository(MultiTenantRepository):
         # 而 receipt_order_items.tenant_id 是 NOT NULL ——
         # "带明细建入库单"必然 500（2026-10-30 E2E 实测，非本表首次踩）
         payload = {"tenant_id": self._tenant_id, **data}
+        # ★C-64：同上。实测 219 行明细里 stored_qty 110 行 NULL。
+        payload.setdefault("expected_qty", 0)
+        payload.setdefault("received_qty", 0)
+        payload.setdefault("stored_qty", 0)
+        payload.setdefault("inspection_status", "pending")
         cols = [c for c in ("tenant_id", "receipt_id", "line_no", "material_id",
                             "expected_qty", "received_qty", "stored_qty", "unit",
                             "batch_no", "location_id", "inspection_status", "remark")
@@ -776,6 +788,10 @@ class IssueOrderRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM issue_orders WHERE issue_no = :no", {"no": issue_no})
 
     async def create(self, data: dict) -> int:
+        # ★C-64：同上。实测 70 行出库单里 issued_qty 26 行 NULL。
+        data.setdefault("status", "pending")
+        data.setdefault("total_qty", 0)
+        data.setdefault("issued_qty", 0)
         cols = [c for c in ("tenant_id", "issue_no", "issue_type", "status", "source_type",
                             "source_doc_no", "work_order_id", "warehouse_id",
                             "department_id", "recipient",

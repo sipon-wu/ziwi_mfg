@@ -34,11 +34,15 @@ class AndonRepository(MultiTenantRepository):
     async def create_call(self, data: dict) -> int:
         return await self.execute(
             "INSERT INTO andon_call (tenant_id, call_no, call_type, source, equipment_id, work_order_id, "
-            "station, caller_id, caller_name, description, priority, status, response_deadline, resolve_deadline) "
+            "station, caller_id, caller_name, description, priority, status, response_deadline, resolve_deadline, "
+            "escalation_level) "
             "VALUES (:tenant_id, :call_no, :call_type, :source, :equipment_id, :work_order_id, "
             ":station, :caller_id, :caller_name, :description, :priority, 'pending', "
-            ":response_deadline, :resolve_deadline)",
-            data,
+            ":response_deadline, :resolve_deadline, :escalation_level)",
+            # ★C-64：实测 14 行安灯呼叫里 escalation_level 全部 NULL。
+            # 升级层级为 NULL 时 `escalation_level >= 2` 这类判断恒假 ——
+            # 该升级的呼叫永远升不上去，而接口不报任何错。
+            {**data, "escalation_level": data.get("escalation_level") or 0},
         )
 
     async def update_call(self, id: int, data: dict) -> int:

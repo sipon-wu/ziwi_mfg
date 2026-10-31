@@ -1,0 +1,466 @@
+{
+  "frozen": [
+    {
+      "file": "app/repositories/andon_repo.py",
+      "line": 36,
+      "table": "andon_call",
+      "column": "escalation_level",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/api_key_repo.py",
+      "line": 25,
+      "table": "api_keys",
+      "column": "is_active",
+      "default": "True"
+    },
+    {
+      "file": "app/repositories/approval_repo.py",
+      "line": 135,
+      "table": "approval_nodes",
+      "column": "status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 42,
+      "table": "customer_complaints",
+      "column": "severity",
+      "default": "'major'"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 42,
+      "table": "customer_complaints",
+      "column": "status",
+      "default": "'open'"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 84,
+      "table": "recall_orders",
+      "column": "batch_count",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 84,
+      "table": "recall_orders",
+      "column": "locked_count",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 84,
+      "table": "recall_orders",
+      "column": "qty_on_hand",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 84,
+      "table": "recall_orders",
+      "column": "scope",
+      "default": "'batch'"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 84,
+      "table": "recall_orders",
+      "column": "status",
+      "default": "'executing'"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 113,
+      "table": "recall_order_items",
+      "column": "is_locked",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/complaint_repo.py",
+      "line": 113,
+      "table": "recall_order_items",
+      "column": "qty_on_hand",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 30,
+      "table": "data_source_config",
+      "column": "protocol",
+      "default": "'Modbus'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 68,
+      "table": "collect_task",
+      "column": "collect_interval_seconds",
+      "default": "60"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 68,
+      "table": "collect_task",
+      "column": "failed_count",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 68,
+      "table": "collect_task",
+      "column": "status",
+      "default": "'idle'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 68,
+      "table": "collect_task",
+      "column": "total_collect_count",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 142,
+      "table": "collect_data_record",
+      "column": "quality",
+      "default": "'good'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 142,
+      "table": "collect_data_record",
+      "column": "source_type",
+      "default": "'iot'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 178,
+      "table": "iot_gateway",
+      "column": "status",
+      "default": "'offline'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 223,
+      "table": "iot_device",
+      "column": "collect_interval_seconds",
+      "default": "60"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 223,
+      "table": "iot_device",
+      "column": "protocol",
+      "default": "'Modbus'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 223,
+      "table": "iot_device",
+      "column": "scaling_factor",
+      "default": "1.0"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 223,
+      "table": "iot_device",
+      "column": "status",
+      "default": "'offline'"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 267,
+      "table": "link_monitor",
+      "column": "consecutive_failures",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/data_collection_repo.py",
+      "line": 267,
+      "table": "link_monitor",
+      "column": "expected_status_code",
+      "default": "200"
+    },
+    {
+      "file": "app/repositories/dictionary_repo.py",
+      "line": 15,
+      "table": "dictionaries",
+      "column": "is_system",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/dictionary_repo.py",
+      "line": 25,
+      "table": "dictionary_items",
+      "column": "status",
+      "default": "'active'"
+    },
+    {
+      "file": "app/repositories/energy_repo.py",
+      "line": 41,
+      "table": "energy_device",
+      "column": "is_active",
+      "default": "True"
+    },
+    {
+      "file": "app/repositories/energy_repo.py",
+      "line": 41,
+      "table": "energy_device",
+      "column": "multiplier",
+      "default": "1.0"
+    },
+    {
+      "file": "app/repositories/excel_import_repo.py",
+      "line": 25,
+      "table": "excel_import_tasks",
+      "column": "failed_rows",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/excel_import_repo.py",
+      "line": 25,
+      "table": "excel_import_tasks",
+      "column": "success_rows",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/excel_import_repo.py",
+      "line": 25,
+      "table": "excel_import_tasks",
+      "column": "total_rows",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/lab_repo.py",
+      "line": 34,
+      "table": "lab_requests",
+      "column": "status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/message_repo.py",
+      "line": 13,
+      "table": "messages",
+      "column": "is_read",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/organization_repo.py",
+      "line": 27,
+      "table": "employees",
+      "column": "status",
+      "default": "'active'"
+    },
+    {
+      "file": "app/repositories/ppap_repo.py",
+      "line": 69,
+      "table": "ppap_element_templates",
+      "column": "is_required",
+      "default": "True"
+    },
+    {
+      "file": "app/repositories/ppap_repo.py",
+      "line": 124,
+      "table": "ppap_submissions",
+      "column": "due_reminder",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/production_repo.py",
+      "line": 195,
+      "table": "route_steps",
+      "column": "step_type",
+      "default": "'production'"
+    },
+    {
+      "file": "app/repositories/quality_repo.py",
+      "line": 119,
+      "table": "inspection_item",
+      "column": "is_auto_generated",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/role_repo.py",
+      "line": 53,
+      "table": "roles",
+      "column": "is_system",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/role_repo.py",
+      "line": 53,
+      "table": "roles",
+      "column": "scope",
+      "default": "'ALL'"
+    },
+    {
+      "file": "app/repositories/tpm_repo.py",
+      "line": 97,
+      "table": "maintenance_tasks",
+      "column": "priority",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/tpm_repo.py",
+      "line": 97,
+      "table": "maintenance_tasks",
+      "column": "status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/tpm_repo.py",
+      "line": 155,
+      "table": "maintenance_plans",
+      "column": "cycle_unit",
+      "default": "'month'"
+    },
+    {
+      "file": "app/repositories/tpm_repo.py",
+      "line": 155,
+      "table": "maintenance_plans",
+      "column": "cycle_value",
+      "default": "1"
+    },
+    {
+      "file": "app/repositories/tpm_repo.py",
+      "line": 155,
+      "table": "maintenance_plans",
+      "column": "status",
+      "default": "'active'"
+    },
+    {
+      "file": "app/repositories/trial_repo.py",
+      "line": 30,
+      "table": "trial_orders",
+      "column": "priority",
+      "default": "500"
+    },
+    {
+      "file": "app/repositories/trial_repo.py",
+      "line": 67,
+      "table": "trial_routes",
+      "column": "source_type",
+      "default": "'manual'"
+    },
+    {
+      "file": "app/repositories/trial_repo.py",
+      "line": 93,
+      "table": "trial_bom",
+      "column": "source_type",
+      "default": "'manual'"
+    },
+    {
+      "file": "app/repositories/trial_repo.py",
+      "line": 124,
+      "table": "trial_reviews",
+      "column": "conclusion",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/user_repo.py",
+      "line": 230,
+      "table": "users",
+      "column": "must_change_password",
+      "default": "False"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 697,
+      "table": "receipt_orders",
+      "column": "received_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 697,
+      "table": "receipt_orders",
+      "column": "status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 697,
+      "table": "receipt_orders",
+      "column": "stored_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 697,
+      "table": "receipt_orders",
+      "column": "total_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 738,
+      "table": "receipt_order_items",
+      "column": "expected_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 738,
+      "table": "receipt_order_items",
+      "column": "inspection_status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 738,
+      "table": "receipt_order_items",
+      "column": "received_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 738,
+      "table": "receipt_order_items",
+      "column": "stored_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 799,
+      "table": "issue_orders",
+      "column": "issued_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 799,
+      "table": "issue_orders",
+      "column": "status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 799,
+      "table": "issue_orders",
+      "column": "total_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 833,
+      "table": "issue_order_items",
+      "column": "issued_qty",
+      "default": "0"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 833,
+      "table": "issue_order_items",
+      "column": "pick_status",
+      "default": "'pending'"
+    },
+    {
+      "file": "app/repositories/wms_repo.py",
+      "line": 833,
+      "table": "issue_order_items",
+      "column": "required_qty",
+      "default": "0"
+    }
+  ]
+}
