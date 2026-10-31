@@ -66,6 +66,24 @@
 | C-36 | **按批次出库会取到 0 数量的库位行 → 明明有货却报"库存不足 0.0"** | 本批 | `issue_item` 显式批次分支用 `find_one(material_id, warehouse_id, None, batch_id)`，不排序取第一条。同一批次必然散在多条库位行（待检区一行、上架后归 0；正式库位一行有货），SQLite 按 rowid 返回 → 命中的就是那条 0 行。与 B-7（物料级回退分支）同一病根，这次是批次分支漏了。修：新增 `find_batch_rows`（按可用量降序、只返有货行），服务层逐行分摊扣减。`test_trace_service::test_find_batch_rows_skips_empty_rows` 锁住 |
 | C-37 | **系统里没有"客诉"也没有"召回"，X6 只能走到追溯** | 本批 | 改造前客户投诉只能记在 Excel/微信里，与 NCR、批次、召回全无线；追溯算出"同批还有 200 件在库"也没有单据承载，批次更不会被锁 —— 证物照旧可被正常拣走。新增三张表：`customer_complaints`（客诉单）、`recall_orders` / `recall_order_items`（召回单与明细）。客诉受理时**当场跑一次追溯存快照**（`trace_snapshot` + `trace_summary`）——影响面会随批次变动，受理那一刻的结论才是取证依据，现算等于用"现在的判断"覆盖"当时的判断"；`POST /complaints/{id}/ncr` 开 NCR，单号 `NC-<客诉单号>` 天然幂等，`source_type` 新增 `customer` 取值；`POST /recalls` 按 `source_batch_no` 的追溯结果自动定范围（起点批次 ∪ 全部下游成品批次）并**真的调 `BatchRepository.lock` 冻结**，单据上 `batch_count/locked_count/qty_on_hand` 与明细一一对应。顺带修两处：`BatchRepository.lock` 的 `is_locked = 1` 在 PG 会报类型错（boolean 不吃整数），改 `TRUE`；召回明细的 `is_locked` 在 SQLite 回来是 1、PG 是 True，出口统一 `bool()`（前端 `=== true` 会一半失效）。**已知边界**：无客户主数据（B-11），召回只能锁批次，到不了"发给了哪个客户、通知谁退回"。`batch_trace_e2e` **38 通 / 0 断**（T1–T11 追溯 + T12–T19 客诉/召回） |
 | C-38 | **结构漂移检查读的是两份过期缓存，"0 漂移"是假结论** | 本批 | `scripts/diff_schema.py` 只读 `.workbuddy/tmp_db_schema.txt` 与 `tmp_model_schema.json`，而这两个文件由早已不存在的手工步骤生成 —— 实测库里 115 张表、报告仍写 108，新增表与列**根本看不见**。结构闸一旦会撒谎，四层验证里的这一层就等于没有（此前多处"漂移 0"结论需按重写后的口径重跑确认）。重写为两侧现场取：模型侧 `Base.metadata`，库侧 `inspect(conn).get_table_names/get_columns`；类型按粗粒度族（int/text/float/bool/datetime/date/json）比而不是逐字比（`VARCHAR(50)` 与 `character varying(50)` 本就不同名，逐字比永远假红）；可空性逐列严格比。重跑结果：**115 张表、六类差异全 0** |
+| C-39 | **保养计划是一行死数据 —— 到期 → 任务 → 停机 → 排产，五环一个都没接上**（原 B-13） | 本批 | `maintenance_plans` 建出来就再没被读过：`create_plan` 的 INSERT 不写 `next_execute_at`（新计划永远不到期）；全系统没有"到期扫描"的任何代码（计划不会变成任务）；`create_task` 的 INSERT 丢掉 `task_no`/`plan_id`（任务执行过几次查不出来）；开工/完成只改一个 `status` 字段（设备台账还是 `running`、不开停机记录、计划上的到期日原地不动）。结果"保养到期"这件事只存在于人的脑子里。修：新增 `MaintenanceService` —— `generate_due_tasks` 扫到期计划生成任务（`MT-<plan>-<YYYYMMDD>` 同日幂等）、`start_task`（设备 → `maintenance` + 开停机 `type=maintenance` + 受影响工单暂停）、`complete_task`（关记录算时长 + 设备 `running` + 工单恢复并按停机分钟顺延 + **计划滚到下一周期**，不推进的话下次扫描还会命中同一张、天天生成任务）。`add_cycle` 月份/年份走**日历加法**（1/31 + 1 月 = 2/28，`timedelta(days=30)` 会落成 3/2）。`list_due_plans` 把 `next_execute_at IS NULL` 也算到期（老计划全是 NULL，只按 `<= now` 过滤永远不到期）。**设计取舍：不自动猜受影响工单** —— `work_orders` 上没有 `equipment_id`（只有 `line_code`/`workshop`），无法可靠反查"这台设备上在制哪张单"，硬猜会停掉别人的单；没指定就只停机、不动工单，并在返回里写明"未指定受影响工单，未做排产调整"。新增 4 个端点（`POST /maintenance-tasks/generate-due`、`PUT .../{id}/start`、`PUT .../{id}/complete`、`PUT /maintenance-tasks/{id}`），`PUT .../{id}/status` 收敛到 start/complete 路径。迁移 `20261031_maintenance_loop.py`（加 `plan_id`/`work_order_id` 列 + 给 6 张 NULL 计划补 `next_execute_at`）。`maintenance_downtime_e2e` **22 通 / 0 断** |
+
+### 硬编码 INSERT 列清单专项（C-34 / C-39 共性，**已复发三次**）
+
+仓储层的 `INSERT INTO x (硬编码列清单) VALUES (...)` 会在模型加字段后**静默丢字段**：
+传进来不报错、库里就是没有，且症状一律表现为"某个功能永远不生效"，
+而查 service 层永远找不到（service 明明传了）。已发生的三次：
+
+| 位置 | 丢掉的列 | 症状 |
+|---|---|---|
+| `TpmRepository.create_equipment` | `status` | 新建设备 `status=NULL`，且没有接口能改状态（C-34） |
+| `TpmRepository.create_task` | `task_no` / `plan_id` / `work_order_id` | 任务与计划、工单零关联（C-39） |
+| `TpmRepository.create_plan` | `next_execute_at` | 计划永远不到期（C-39） |
+
+已改为白名单式：`cols = [c for c in (...) if c in payload]` 动态拼列。
+**新增仓储 `create_*` 时一律走白名单**，加字段只需往元组里补一个名字；
+`test_maintenance_loop.py::test_create_plan_persists_next_execute_at` 用真库锁住这一类。
+
 ### 方言依赖专项（C-26/C-28 共性）
 
 生产是 PostgreSQL、本地与单测是 SQLite，**任何 PG 专有 SQL 都会在本地炸而在生产正常**，

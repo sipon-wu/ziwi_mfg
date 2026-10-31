@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
 from app.repositories.tpm_repo import TpmRepository, EquipmentDowntimeRepository
+from app.services.maintenance_service import MaintenanceService
 from app.services.tpm_service import TpmService
 from app.schemas.tpm import (
     CreateEquipmentRequest,
@@ -106,14 +107,98 @@ async def get_task(
     return {"code": 0, "message": "success", "data": task}
 
 
+@router.put("/maintenance-tasks/{task_id}")
+async def update_task(
+    task_id: int, payload: dict,
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """修改任务（开工前指定受影响工单 / 指派执行人 / 改计划时间）。
+
+    现实流程就是这样：计划到期自动生成任务时还不知道会停哪张单，
+    由班组长在开工前把"受影响工单"补上，完工后才能据停机时长顺延交期。
+    """
+    allowed = {k: v for k, v in (payload or {}).items()
+               if k in ("task_no", "plan_id", "work_order_id", "task_type",
+                        "description", "priority", "assignee_id",
+                        "scheduled_start_at", "scheduled_end_at", "result", "cost")}
+    if not allowed:
+        raise HTTPException(400, detail={"code": "400-0000", "message": "没有可修改的字段"})
+    affected = await repo.update_task(task_id, allowed)
+    if not affected:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "任务不存在"})
+    return {"code": 0, "message": "任务已更新", "data": {"affected": affected}}
+
+
 @router.put("/maintenance-tasks/{task_id}/status")
 async def update_task_status(
     task_id: int, status: str = Query(...),
+    current_user: dict = Depends(get_current_user),
     repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
 ):
-    svc = TpmService(repo)
-    result = await svc.update_task_status(task_id, status)
+    """老接口，语义已收敛到 start / complete 两条路径。
+
+    直接改 ``status`` 曾是唯一的"执行保养"方式：设备台账不变、没有停机记录、
+    计划上的下次到期日也不动。现在 ``in_progress`` / ``completed`` 一律走
+    联动逻辑，避免出现"用老接口就没停机时长"的暗坑。
+    """
+    svc = MaintenanceService(repo)
+    try:
+        if status == "in_progress":
+            result = await svc.start_task(task_id, current_user.get("id"))
+        elif status == "completed":
+            result = await svc.complete_task(task_id, {}, current_user.get("id"))
+        else:
+            result = await TpmService(repo).update_task_status(task_id, status)
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
     return {"code": 0, "message": "状态已更新", "data": result}
+
+
+@router.post("/maintenance-tasks/generate-due")
+async def generate_due_tasks(
+    current_user: dict = Depends(get_current_user),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """扫描到期保养计划并生成任务（同日同计划幂等）。
+
+    改造前没有任何代码把计划变成任务 —— 计划表是死的，"到期"只存在于人的脑子里。
+    """
+    svc = MaintenanceService(repo)
+    data = await svc.generate_due_tasks(current_user.get("id"))
+    msg = f"扫描 {data['scanned']} 张到期计划，生成 {data['created']} 张任务"
+    if data["skipped"]:
+        msg += f"，跳过 {data['skipped']} 张（今日任务已存在）"
+    return {"code": 0, "message": msg, "data": data}
+
+
+@router.put("/maintenance-tasks/{task_id}/start")
+async def start_task(
+    task_id: int,
+    current_user: dict = Depends(get_current_user),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """保养开工：设备转 maintenance + 开停机记录（type=maintenance）+ 受影响工单暂停。"""
+    svc = MaintenanceService(repo)
+    try:
+        data = await svc.start_task(task_id, current_user.get("id"))
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
+    return {"code": 0, "message": "保养已开工", "data": data}
+
+
+@router.put("/maintenance-tasks/{task_id}/complete")
+async def complete_task(
+    task_id: int, payload: dict = None,
+    current_user: dict = Depends(get_current_user),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """保养完工：关停机记录算时长 + 设备 running + 工单恢复顺延 + 计划滚到下一周期。"""
+    svc = MaintenanceService(repo)
+    try:
+        data = await svc.complete_task(task_id, payload or {}, current_user.get("id"))
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
+    return {"code": 0, "message": "保养已完成", "data": data}
 
 
 @router.delete("/maintenance-tasks/{task_id}")
@@ -141,7 +226,9 @@ async def create_plan(
     req: CreateMaintenancePlanRequest,
     repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
 ):
-    svc = TpmService(repo)
+    # 走 Service 而不是直接 INSERT：只有 Service 会算出 next_execute_at，
+    # 否则新计划永远是"不到期"的死数据（台账 C-39）
+    svc = MaintenanceService(repo)
     result = await svc.create_plan({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
     return {"code": 0, "message": "创建成功", "data": result}
 

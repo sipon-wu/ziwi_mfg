@@ -86,10 +86,40 @@ class TpmRepository(MultiTenantRepository):
         )
 
     async def create_task(self, data: dict) -> int:
+        # task_no / plan_id / work_order_id 以前被这句 INSERT 直接丢掉：
+        # 调用方传了单号也存不进库，任务与计划、工单之间没有任何关联（台账 C-39）
+        payload = {**data, "status": data.get("status") or "pending"}
+        cols = [c for c in ("tenant_id", "equipment_id", "task_no", "plan_id",
+                            "work_order_id", "task_type", "description", "priority",
+                            "assignee_id", "scheduled_start_at", "scheduled_end_at",
+                            "status")
+                if c in payload]
+        sql = ("INSERT INTO maintenance_tasks ({}) VALUES ({})"
+               .format(", ".join(cols), ", ".join(f":{c}" for c in cols)))
+        return await self.execute(sql, {c: payload[c] for c in cols})
+
+    async def find_task_by_no(self, task_no: str) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM maintenance_tasks WHERE task_no = :no", {"no": task_no})
+
+    async def list_due_plans(self, now, limit: int = 200) -> list:
+        """到期（或从未排过期的）在用保养计划。
+
+        ``next_execute_at IS NULL`` 也要算到期 —— 改造前 create_plan 压根不写这一列，
+        库里所有老计划都是 NULL，只按 ``<= now`` 过滤会让它们永远不到期。
+        """
+        return await self.query(
+            "SELECT * FROM maintenance_plans "
+            "WHERE status = 'active' AND (next_execute_at IS NULL OR next_execute_at <= :now) "
+            "ORDER BY next_execute_at LIMIT :lim",
+            {"now": now, "lim": limit},
+        )
+
+    async def advance_plan(self, plan_id: int, last_execute_at, next_execute_at) -> int:
         return await self.execute(
-            "INSERT INTO maintenance_tasks (tenant_id, equipment_id, task_type, description, priority, assignee_id, scheduled_start_at, scheduled_end_at, status) "
-            "VALUES (:tenant_id, :equipment_id, :task_type, :description, :priority, :assignee_id, :scheduled_start_at, :scheduled_end_at, 'pending')",
-            data,
+            "UPDATE maintenance_plans SET last_execute_at = :last, "
+            "next_execute_at = :next WHERE id = :id",
+            {"last": last_execute_at, "next": next_execute_at, "id": plan_id},
         )
 
     async def update_task(self, id: int, data: dict) -> int:
@@ -115,11 +145,16 @@ class TpmRepository(MultiTenantRepository):
         return await self.query_page(sql, params, page=page, page_size=page_size)
 
     async def create_plan(self, data: dict) -> int:
-        return await self.execute(
-            "INSERT INTO maintenance_plans (tenant_id, equipment_id, plan_name, plan_type, cycle_value, cycle_unit, status) "
-            "VALUES (:tenant_id, :equipment_id, :plan_name, :plan_type, :cycle_value, :cycle_unit, 'active')",
-            data,
-        )
+        # 与 create_task 同一个病根：硬编码列清单的 INSERT 会把新字段静默丢掉。
+        # 这里漏的是 next_execute_at —— 计划建出来永远不到期（台账 C-39，同类第三次复发）。
+        payload = {**data, "status": data.get("status") or "active"}
+        cols = [c for c in ("tenant_id", "equipment_id", "plan_name", "plan_type",
+                            "cycle_value", "cycle_unit", "last_execute_at",
+                            "next_execute_at", "status")
+                if c in payload]
+        sql = ("INSERT INTO maintenance_plans ({}) VALUES ({})"
+               .format(", ".join(cols), ", ".join(f":{c}" for c in cols)))
+        return await self.execute(sql, {c: payload[c] for c in cols})
 
     # === 备件 ===
     async def list_spare_parts(self, page: int = 1, page_size: int = 20) -> dict:

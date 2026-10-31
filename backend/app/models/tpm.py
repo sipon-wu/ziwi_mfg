@@ -58,6 +58,13 @@ class MaintenanceTask(Base):
     tenant_id = Column(String(50), nullable=False)
     equipment_id = Column(BigInteger, nullable=False)
     task_no = Column(String(100))
+    # ★ 来源计划：改造前任务与计划之间没有任何字段关联 —— 计划被执行过几次、
+    #   下次什么时候到期，全都无从判断（计划就是一行死数据，见台账 C-39）
+    plan_id = Column(BigInteger, comment="来源保养计划ID")
+    # ★ 受影响工单：保养停机期间要顺延的那张单。
+    #   work_orders 没有 equipment_id（只有 line_code/workshop），无法反查
+    #   "这台设备上在制哪张单"，硬猜会把别人的单停掉，所以由计划/任务显式指定。
+    work_order_id = Column(BigInteger, comment="受影响工单ID（选填，用于排产调整）")
     task_type = Column(String(50), comment="repair/maintenance/inspection")
     priority = Column(Integer, default=0)
     description = Column(Text)

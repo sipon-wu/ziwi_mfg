@@ -61,6 +61,11 @@ class CreateMaintenanceTaskRequest(BaseModel):
     assignee_id: Optional[str] = None
     scheduled_start_at: Optional[str] = None
     scheduled_end_at: Optional[str] = None
+    # 手工建任务时也可以挂来源计划与受影响工单（台账 C-39）。
+    # 不挂计划 → 完工后不会滚动计划的下次到期日；不挂工单 → 保养停机不做排产调整。
+    task_no: Optional[str] = None
+    plan_id: Optional[int] = None
+    work_order_id: Optional[int] = None
 
 
 class MaintenancePlanResponse(BaseModel):
@@ -82,6 +87,9 @@ class CreateMaintenancePlanRequest(BaseModel):
     plan_type: str
     cycle_value: int = 1
     cycle_unit: str = "month"
+    # 首次到期时间：不传时由服务层按周期从今天推算（改造前根本不写这一列，
+    # 新计划永远不到期）
+    next_execute_at: Optional[datetime] = None
 
 
 class SparePartResponse(BaseModel):
