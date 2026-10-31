@@ -169,7 +169,7 @@
 | X7 | 完工入库 | 工单完工 → 成品入库 → 发货 | ✅ 到入库为止（`finished_goods_inbound_e2e` 22/1）：完工→生产入库单→收货→库存→批次追溯全通；**发货出库缺销售/发运单据入口**，归 ERP 边界外 |
 | X8 | 不良再处理 | 报工不良 → NCR → 返工 → 再检 | ✅ 全通（C-32，`quality_defect_loop_e2e` X8 段） |
 | X9 | 保养停机 | 保养到期 → 停机 → 排产调整 | ✅ 全通（C-39，`maintenance_downtime_e2e` 22/0） |
-| X10 | 能源超限 | 能耗超阈值 → 告警 → 排查 | ⚠️ |
+| X10 | 能源超限 | 能耗超阈值 → 告警 → 排查 | ✅（C-48：补 `energy_threshold` 阈值配置 + `POST /energy/alerts/check` 幂等扫描；能耗载体用已有的 `carbon_emission_record` 日粒度能耗，不新建抄表读数实体——设备级/小时级属 ECMS 独立产品线。顺带修 `create_alert` 漏写 `status` 落库 NULL。边界：能耗无手工录入 API（走同步层），判定只到日/月×能源类型） |
 
 ---
 

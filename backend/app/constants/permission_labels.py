@@ -147,6 +147,7 @@ RESOURCE_NAMES = {
     "energy_carbon_accounting": "碳核算",
     "energy_carbon_emission": "碳排放",
     "energy_device": "用能设备",
+    "energy_threshold": "能耗阈值",
 
     # ── M12 数据采集 ──
     "collect_data_source": "数据源",

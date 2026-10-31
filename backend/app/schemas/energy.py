@@ -101,3 +101,52 @@ class CreateEnergyAlertRequest(BaseModel):
 
 class UpdateAlertStatusRequest(BaseModel):
     status: str
+
+
+# ==================== 能耗阈值（C-48） ====================
+
+class EnergyThresholdResponse(BaseModel):
+    id: int
+    tenant_id: str
+    threshold_code: str
+    threshold_name: str
+    energy_type: Optional[str] = None
+    factory_id: Optional[str] = None
+    metric: str = "consumption"
+    period: str = "day"
+    direction: str = "upper"
+    threshold_value: Decimal
+    severity: str = "warning"
+    is_active: bool = True
+    remark: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreateEnergyThresholdRequest(BaseModel):
+    threshold_code: str
+    threshold_name: str
+    energy_type: Optional[str] = None
+    factory_id: Optional[str] = None
+    metric: str = "consumption"
+    period: str = "day"
+    direction: str = "upper"
+    threshold_value: float
+    severity: str = "warning"
+    is_active: bool = True
+    remark: Optional[str] = None
+
+
+class UpdateEnergyThresholdRequest(BaseModel):
+    threshold_code: Optional[str] = None
+    threshold_name: Optional[str] = None
+    energy_type: Optional[str] = None
+    factory_id: Optional[str] = None
+    metric: Optional[str] = None
+    period: Optional[str] = None
+    direction: Optional[str] = None
+    threshold_value: Optional[float] = None
+    severity: Optional[str] = None
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None

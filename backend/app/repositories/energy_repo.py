@@ -116,11 +116,18 @@ class EnergyRepository(MultiTenantRepository):
         return await self.query_one("SELECT * FROM energy_alert WHERE id = :id", {"id": id})
 
     async def create_alert(self, data: dict) -> int:
+        # status 必须显式写：模型上的 default="active" 是 Python 侧默认值，
+        # 裸 INSERT 不生效 → 落库为 NULL。后果有两层：① 列表按 status=active
+        # 过滤查不到任何新建告警（手工建的也一样）；② 幂等判重
+        # （status IN ('active','acknowledged')）永远失配，扫一次多一条。
+        data = dict(data)
+        data.setdefault("status", "active")
         alert_id = await self.execute(
             "INSERT INTO energy_alert (tenant_id, alert_code, alert_name, alert_type, energy_type, "
-            "device_id, severity, threshold_value, current_value, trigger_time, alert_message) "
+            "device_id, severity, threshold_value, current_value, trigger_time, alert_message, status) "
             "VALUES (:tenant_id, :alert_code, :alert_name, :alert_type, :energy_type, "
-            ":device_id, :severity, :threshold_value, :current_value, :trigger_time, :alert_message)",
+            ":device_id, :severity, :threshold_value, :current_value, :trigger_time, "
+            ":alert_message, :status)",
             data,
         )
 
@@ -151,3 +158,99 @@ class EnergyRepository(MultiTenantRepository):
             sets.append(f"{k} = :{k}")
             params[k] = v
         return await self.execute(f"UPDATE energy_alert SET {', '.join(sets)} WHERE id = :id", params)
+
+    async def update_alert(self, id: int, data: dict) -> int:
+        sets = self._build_set_clause(data)
+        return await self.execute(f"UPDATE energy_alert SET {sets} WHERE id = :id", {**data, "id": id})
+
+    # ==================== 能耗阈值（C-48，场景 X10） ====================
+
+    async def list_thresholds(self, page: int = 1, page_size: int = 20,
+                              energy_type: str = None, metric: str = None,
+                              is_active: bool = None) -> dict:
+        sql = "SELECT * FROM energy_threshold WHERE 1=1"
+        params = {}
+        if energy_type:
+            sql += " AND energy_type = :energy_type"; params["energy_type"] = energy_type
+        if metric:
+            sql += " AND metric = :metric"; params["metric"] = metric
+        if is_active is not None:
+            sql += " AND is_active = :is_active"; params["is_active"] = is_active
+        sql += " ORDER BY threshold_code ASC"
+        return await self.query_page(sql, params, page, page_size)
+
+    async def list_active_thresholds(self, threshold_code: str = None) -> List[Dict]:
+        """扫描用的启用阈值清单。
+
+        布尔过滤一律走绑定参数（``is_active = :is_active``）而不是写 ``= 1``，
+        SQLite 存 1/0、PG 存 true/false，字面量会直接让另一边报类型错。
+        """
+        sql = "SELECT * FROM energy_threshold WHERE is_active = :is_active"
+        params = {"is_active": True}
+        if threshold_code:
+            sql += " AND threshold_code = :threshold_code"; params["threshold_code"] = threshold_code
+        sql += " ORDER BY threshold_code ASC"
+        return await self.query(sql, params)
+
+    async def get_threshold(self, id: int) -> Optional[Dict]:
+        return await self.query_one("SELECT * FROM energy_threshold WHERE id = :id", {"id": id})
+
+    async def get_threshold_by_code(self, code: str, exclude_id: int = None) -> Optional[Dict]:
+        sql = "SELECT * FROM energy_threshold WHERE threshold_code = :code"
+        params = {"code": code}
+        if exclude_id:
+            sql += " AND id <> :exclude_id"; params["exclude_id"] = exclude_id
+        return await self.query_one(sql, params)
+
+    async def create_threshold(self, data: dict) -> int:
+        return await self.execute(
+            "INSERT INTO energy_threshold (tenant_id, threshold_code, threshold_name, energy_type, "
+            "factory_id, metric, period, direction, threshold_value, severity, is_active, remark) "
+            "VALUES (:tenant_id, :threshold_code, :threshold_name, :energy_type, :factory_id, "
+            ":metric, :period, :direction, :threshold_value, :severity, :is_active, :remark)",
+            data,
+        )
+
+    async def update_threshold(self, id: int, data: dict) -> int:
+        sets = self._build_set_clause(data)
+        return await self.execute(
+            f"UPDATE energy_threshold SET {sets} WHERE id = :id", {**data, "id": id})
+
+    async def delete_threshold(self, id: int) -> int:
+        return await self.execute("DELETE FROM energy_threshold WHERE id = :id", {"id": id})
+
+    async def sum_metric(self, metric: str, start: date, end: date,
+                         energy_type: str = None, factory_id: str = None) -> Dict:
+        """按区间汇总能耗或碳排放，同时回传记录数。
+
+        数据源就是 ``carbon_emission_record`` —— 它是本仓唯一真实落地的能耗
+        数据载体（按日、按能源类型记录 ``energy_consumption`` 与
+        ``emission_amount``）。没有独立的抄表读数表，所以也**不做设备级**判定，
+        宁可不做也不给一个永远算不出来的字段。
+
+        ``record_count`` 必须一起返回：区间内一条数据都没有时 actual=0，
+        下限阈值会误判成"用得太少"，那是用数据缺失冒充结论。
+        """
+        col = "emission_amount" if metric == "emission" else "energy_consumption"
+        sql = (f"SELECT COALESCE(SUM({col}), 0) AS total, COUNT(*) AS record_count "
+               "FROM carbon_emission_record "
+               "WHERE record_date >= :start AND record_date <= :end")
+        params = {"start": start, "end": end}
+        if energy_type:
+            sql += " AND energy_type = :energy_type"; params["energy_type"] = energy_type
+        if factory_id:
+            sql += " AND factory_id = :factory_id"; params["factory_id"] = factory_id
+        row = await self.query_one(sql, params) or {}
+        return {"total": float(row.get("total") or 0), "record_count": int(row.get("record_count") or 0)}
+
+    async def find_unresolved_alert(self, alert_code: str) -> Optional[Dict]:
+        """同一阈值同一周期只要还有未闭环告警，就刷新它而不是再插一条。
+
+        与库存预警（C-47）、SPC 告警（C-43）同一条幂等契约：无条件 INSERT
+        会让告警列表被刷屏，真正要处理的那条淹在重复项里。
+        """
+        return await self.query_one(
+            "SELECT * FROM energy_alert WHERE alert_code = :code "
+            "AND status IN ('active', 'acknowledged')",
+            {"code": alert_code},
+        )
