@@ -19,6 +19,13 @@
     T11  第二张试产单「从正式 BOM 载入」→ trial_bom 真有数据
     T12  第二张试产单「从正式路线载入」→ trial_routes 真有数据
     T13  终止试产 → 终态后再转产被拒
+    T14  转量产的产出必须能被正式生产**用起来**（场景 X4 的最后一跳）：
+         路线 draft→published、按该产品下正式工单、齐套检查读到的是
+         **本产品**的正式 BOM（2 种 M-001/M-002），不是全租户通吃
+
+T14 为什么必须补：X4 的定义是「试产单 → 转量产 → 正式 BOM/工艺 → 下工单」，
+而 T7~T9 只证明了 BOM/路线**写进去了**。清单上 X4 长期标 ❌，断的就是这最后一跳
+——转产本身是好的，只是"产出能不能被正式生产消费"从来没人验过。
 
 改造前的失败现象：转产接口回 200 "转量产完成"，但 BOM 管理页与工艺路线页
 查不到任何新增数据（``convert_to_production`` 只翻状态位、
@@ -270,6 +277,57 @@ def main():
         check("T13 终止成功", r.status_code == 200, msg(r))
         r = c.post(f"{API}/trials/{order2}/convert")
         check("T13 终态后再转产被拒", r.status_code == 400, f"status={r.status_code}")
+
+    # ── T14 转量产的产出必须能被正式生产用起来 ──────────────
+    # X4 的完整定义是「试产单 → 转量产 → 正式 BOM/工艺 → 下工单」。
+    # T7~T9 只证明了 BOM/路线**写进去了**，没证明**用得起来**——
+    # 清单上 X4 一直标 ❌，断的就是这最后一跳。
+    print("\n── T14 正式生产可消费转量产的产出 ──")
+
+    # T14-1 路线必须能发布：转产生成的是 draft，车间用不了草稿工艺
+    if route_id:
+        r = c.post(f"{API}/routes/{route_id}/publish")
+        check("T14-1 转量产生的路线可发布", r.status_code == 200,
+              msg(r) if r.status_code != 200 else "")
+        r = c.get(f"{API}/routes/{route_id}")
+        check("T14-1 发布后状态为 published",
+              (body(r).get("data") or {}).get("status") == "published",
+              f"status={(body(r).get('data') or {}).get('status')}")
+    else:
+        check("T14-1 转量产生的路线可发布", False, "T9 未拿到 route_id")
+
+    # T14-2 按该产品编码下正式工单
+    wo_no = f"WO-T14-{tag}"
+    r = c.post(f"{API}/work-orders", json={
+        "wo_no": wo_no, "product_code": code,
+        "product_name": f"试产验证件{tag}", "planned_qty": 20,
+        "wo_type": "production"})
+    wo = body(r).get("data") or {}
+    wo_id = wo.get("id")
+    check("T14-2 可按转量产的产品下正式工单", r.status_code == 200 and bool(wo_id),
+          f"wo_no={wo_no} {msg(r) if r.status_code != 200 else ''}")
+
+    # T14-3 齐套检查必须读**这个产品**的正式 BOM（2 种），
+    # 而不是把全租户 BOM 通吃（C-44 的口径，换个新产品再验一次）。
+    # 注意接口回的是嵌套结构：结论在 material_check_result 里。
+    if wo_id:
+        r = c.post(f"{API}/work-orders/{wo_id}/material-check")
+        outer = body(r).get("data") or {}
+        mc = outer.get("material_check_result") or {}
+        check("T14-3 齐套检查端点返回 200", r.status_code == 200,
+              f"status={r.status_code} {msg(r) if r.status_code != 200 else ''}")
+        check("T14-3 齐套检查跑通（不是 no_bom）",
+              outer.get("material_check_status") in ("passed", "failed"),
+              f"status={outer.get('material_check_status')} "
+              f"msg={mc.get('message')}")
+        check("T14-3 齐套检查读的是本产品的 BOM（恰好 2 种）",
+              mc.get("total_materials") == 2,
+              f"total={mc.get('total_materials')} bom_version={mc.get('bom_version')}")
+        got_codes = sorted({d.get("material_code") for d in (mc.get("details") or [])})
+        check("T14-3 物料正是转量产写入的 M-001/M-002",
+              got_codes == ["M-001", "M-002"], f"codes={got_codes}")
+    else:
+        check("T14-3 齐套检查读的是本产品的 BOM", False, "未拿到工单 id")
 
     return report()
 
