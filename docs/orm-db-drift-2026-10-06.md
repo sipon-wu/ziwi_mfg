@@ -98,3 +98,63 @@
 **结构对比发现不了裸 SQL 里拼错的列名**——只有当那个接口被真实调用时才会 500。
 可以再做一轮：静态提取所有裸 SQL 的 `FROM 表名` + `SELECT/SET/WHERE` 中的列名，逐条对照 `information_schema` 校验。
 这是比结构漂移更致命的一类隐患，但工作量较大，我没有自行扩大范围。
+
+---
+
+# 八、修复执行结果（2026-10-06 当晚，用户全授权后执行）
+
+## 8.1 顺带挖出更致命的 P0（原报告未覆盖）
+
+排查过程中为验证「新环境是否真的会崩」，建了临时空库 `mfg_check_tmp` 实测 `init_db()`，
+结果在建索引阶段就失败，**比 tenant_id 问题触发得更早**：
+
+```
+CREATE UNIQUE INDEX uq_user_primary_org ON user_organizations (user_id) WHERE is_primary = 1
+→ asyncpg.exceptions.UndefinedFunctionError: operator does not exist: boolean = integer
+```
+
+`backend/app/models/user.py:68` 的 partial index 用了 SQLite 语义 `is_primary = 1`
+（`postgresql_where="is_primary = 1"`），PG 的 `is_primary` 是真 BOOLEAN。
+**结论：全新 PG 库部署，init_db() 从未真正跑通过**，一直是靠"老库不需要重建索引"规避，
+所以这个坑从未暴露。已按方言分别给条件修复。
+
+## 8.2 已执行的修复（6/6）
+
+| # | 修复 | 位置 | 状态 |
+|---|---|---|---|
+| 1 | `WorkOrderStatusLog` 补 `tenant_id` | `models/production.py` | ✅ |
+| 2 | `User` 补 `cloud_uuid`（仍不进 `_USER_COLUMNS`） | `models/user.py` | ✅ |
+| 3 | 5 个数值语义列 VARCHAR → `NUMERIC(18,6)`；`spec_value` 保持文本 | `models/quality.py`、`models/lab.py` | ✅ |
+| 4 | 新增 `_row_to_dict` 把 Decimal 归一化为 float（防 JSON 序列化 500） | `repositories/base.py` | ✅ |
+| 5 | 新增幂等迁移 + 纳入部署流程；删除 2 个游离 SQL；`deploy.sh` 去掉 rm 步骤 | `migrations/20261006_missing_columns.py`、`deploy.sh` | ✅ |
+| 6 | 归档并 DROP 遗留表 `inspection_order_deleted_backup` | CVM DB | ✅ |
+| +1 | **P0**：partial index 按方言拆分（PG `is_primary` / SQLite `is_primary = 1`） | `models/user.py:68` | ✅ |
+
+连带改动：`schemas/quality.py` / `schemas/lab.py` 对应字段 `Optional[str]` → `Optional[float]`；
+`repositories/spc_repo.py` 去掉 `measured_value != ''`。
+
+## 8.3 验证证据
+
+- **新空库实测**：`create_all` 成功建出 **108 张表**；`work_order_status_logs` 含 `tenant_id`、
+  `users` 含 `cloud_uuid`；数值列均为 `numeric`、`spec_value` 仍为 `varchar`；
+  `uq_user_primary_org` 索引为 `... WHERE is_primary`（PG 合法）
+- **端到端**：staging 上 `POST /work-orders/257/release` → 状态日志写入成功且带 `tenant_id: mfg_stage`；
+  `inspection-items` 返回 `spec_upper_limit: 40.05`（float，非字符串）；inspection-orders / lab 均 200
+- **回归**：`pytest` **332 passed**（与基线一致）
+- **结构漂移复核**：108/108 表、**0** 缺表、**0** 缺列、**0** 类型不一致、**0** 可空性不一致
+- **数据安全**：生产租户 `mfg_demo` work_centers=6 / work_orders=32 / users=10，与基线一致未受影响；
+  演示租户 `mfg_stage` equipment=117 / work_orders=12 完好
+- **迁移幂等**：连续执行输出「共 0 处变更」
+
+## 8.4 提交
+
+- `3df92dd` fix(schema): 修复模型落后于库表的结构漂移 + 数值语义列改 NUMERIC
+- `48ef599` fix(models): 修复全新空库 create_all 建索引失败（PG 部分唯一索引方言）
+- `c80d3d4` fix(migration): 迁移脚本补充 NOT NULL 收紧且完全幂等
+
+staging 已部署（health 200），origin/main = `c80d3d4`。
+
+## 8.5 遗留（未做）
+
+`inspection_result.spec_value` / `lab_test_results.spec_value` 保持 VARCHAR（区间描述语义）。
+若后续要做「超差判定 SQL 化」，建议拆成 `spec_lower` / `spec_upper` 两个数值列，属独立建模重构。
