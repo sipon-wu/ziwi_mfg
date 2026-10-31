@@ -38,6 +38,15 @@ class CreateWorkOrderRequest(BaseModel):
     scheduled_end_at: Optional[datetime] = None
     workshop: Optional[str] = None
     line_code: Optional[str] = None
+    assignee_id: Optional[int] = None
+    assigned_org_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class AssignWorkOrderRequest(BaseModel):
+    """派工（场景 C-S2）。个人与班组至少要给一个。"""
+    assignee_id: Optional[int] = None
+    assigned_org_id: Optional[int] = None
     remark: Optional[str] = None
 
 
@@ -45,6 +54,8 @@ class UpdateWorkOrderRequest(BaseModel):
     wo_status: Optional[str] = None
     planned_qty: Optional[int] = None
     priority: Optional[int] = None
+    assignee_id: Optional[int] = None
+    assigned_org_id: Optional[int] = None
     scheduled_start_at: Optional[datetime] = None
     scheduled_end_at: Optional[datetime] = None
     remark: Optional[str] = None

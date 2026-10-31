@@ -24,9 +24,15 @@ class ProductionRepository(MultiTenantRepository):
         )
 
     async def create_work_order(self, data: dict) -> int:
+        # 派工字段必须显式进 INSERT：固定列清单一旦漏列，schema 上暴露了
+        # assignee_id 也写不进去 —— 接口 200、字段永远是 NULL（与 C-48 的
+        # energy_alert.status 同一病根：模型默认值救不了裸 SQL）。
+        data = dict(data)
+        data.setdefault("assignee_id", None)
+        data.setdefault("assigned_org_id", None)
         return await self.execute(
-            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark)
-               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark)""",
+            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id)
+               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id)""",
             data
         )
 

@@ -51,7 +51,7 @@
 | 编号 | 场景 | 关键校验点 / 数据变动 | 现状 |
 |:--|:--|:--|:--|
 | C-S1 | 工单创建 → 审核 → 下达 | 校验 BOM+工艺，写状态流水 | ✅ |
-| C-S2 | 工单派工到班组/个人 | 派工记录 | ⚠️ |
+| C-S2 | 工单派工到班组/个人 | 派工记录 | ✅ 全通（C-50，`work_order_assign_e2e` 18/0）：补 `POST /work-orders/{id}/assign`（派到个人 assignee_id / 班组 assigned_org_id）+ `GET /work-orders/{id}/assignments`；派工留痕进 `entity_status_logs`（action=assign，改派可查原负责人）。改造前 `assignee_id` 列在但无任何入口能写，班组维度连列都没有 |
 | C-S3 | 报工（合格数/不良数/工时） | 累计校验、写流水 | ✅ |
 | C-S4 | 工单完工 → 成品入库 | 完工数量=报工累计 | ⚠️ 联动未闭环 |
 | C-S5 | 排产（甘特拖拽 / 自动排） | 产能约束、日历 | ✅ |

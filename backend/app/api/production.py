@@ -8,6 +8,7 @@ from app.schemas.production import (
     CompleteWorkOrderRequest,
     CreateWorkOrderRequest,
     CreateWorkReportRequest,
+    AssignWorkOrderRequest,
     PauseWorkOrderRequest,
     ReleaseWorkOrderRequest,
     UpdateWorkOrderRequest,
@@ -201,6 +202,34 @@ async def cancel_work_order(
         order_id, current_user["id"], reason=req.reason,
     )
     return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/assign")
+async def assign_work_order(
+    order_id: int, req: AssignWorkOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository, require_auth=True)),
+):
+    """派工到个人 / 班组（场景 C-S2）。
+
+    改造前 `work_orders.assignee_id` 列一直在、但没有任何入口能写它，派工只能
+    直接改库；班组维度连列都没有。本轮补端点 + `assigned_org_id` 列，
+    派工留痕进 `entity_status_logs`（`action='assign'`）。
+    """
+    data = await ProductionService(repo).assign_work_order(
+        order_id, req.assignee_id, req.assigned_org_id,
+        actor_id=current_user.get("id"), remark=req.remark)
+    return {"code": 0, "message": "派工完成", "data": data}
+
+
+@router.get("/work-orders/{order_id}/assignments")
+async def list_assignments(
+    order_id: int,
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository, require_auth=True)),
+):
+    """派工记录（派给谁、谁派的、什么时候、改派前的负责人）。"""
+    data = await ProductionService(repo).list_assignments(order_id)
+    return {"code": 0, "message": "success", "data": data}
+
 
 @router.get("/work-orders/{order_id}/actions")
 async def get_work_order_actions(

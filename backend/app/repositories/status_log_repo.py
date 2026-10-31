@@ -3,6 +3,7 @@
 ★ 本表 append-only：只提供 INSERT 与查询，**不提供 UPDATE / DELETE**。
   这是"不支持补录/篡改"在访问层的落地（用户 2026-10-29 决策）。
 """
+import json
 from typing import Optional, List, Dict
 
 from app.repositories.base import MultiTenantRepository
@@ -22,6 +23,13 @@ class StatusLogRepository(MultiTenantRepository):
     )
 
     async def insert(self, data: dict) -> int:
+        data = dict(data)
+        # extra 是 JSON 列，但这里是裸 SQL 绑定：直接把 dict 交给驱动，
+        # SQLite 报 "type 'dict' is not supported"。此前没有任何调用方传过
+        # extra（唯一使用方 NCR 不传），所以这个坑一直没被踩到。
+        # 在唯一写入入口统一序列化，调用方只管传结构。
+        if isinstance(data.get("extra"), (dict, list)):
+            data["extra"] = json.dumps(data["extra"], ensure_ascii=False)
         params = {k: data.get(k) for k in self._INSERT_FIELDS}
         return await self.execute(
             "INSERT INTO entity_status_logs (tenant_id, entity_type, entity_id, entity_no, "
@@ -33,6 +41,22 @@ class StatusLogRepository(MultiTenantRepository):
             data,
         )
 
+    def _decode_extra(self, rows: List[Dict]) -> List[Dict]:
+        """读回来把 extra 还原成结构。
+
+        写入侧统一序列化了（见 ``insert``），读侧不还原的话调用方拿到的是
+        JSON 字符串 —— 一半的调用方会直接当 dict 用，属于典型的"写进去了但
+        读出来不是同一个东西"。
+        """
+        for r in rows:
+            v = r.get("extra")
+            if isinstance(v, str):
+                try:
+                    r["extra"] = json.loads(v)
+                except (TypeError, ValueError):
+                    pass
+        return rows
+
     async def list_by_entity(
         self, entity_type: str, entity_id: int, limit: int = 100
     ) -> List[Dict]:
@@ -42,7 +66,8 @@ class StatusLogRepository(MultiTenantRepository):
             "WHERE entity_type = :entity_type AND entity_id = :entity_id "
             "ORDER BY occurred_at ASC"
         )
-        return await self.query(sql, {"entity_type": entity_type, "entity_id": entity_id})
+        return self._decode_extra(
+            await self.query(sql, {"entity_type": entity_type, "entity_id": entity_id}))
 
     async def list_by_type(
         self, entity_type: str, to_status: str = None,

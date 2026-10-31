@@ -11,6 +11,10 @@ from app.repositories.production_repo import ProductionRepository
 from app.repositories.bom_repo import BomRepository
 from app.repositories.basic_data_repo import ProductRepository
 from app.repositories.wms_repo import InventoryRepository as WmsInventoryRepository
+from app.repositories.user_repo import UserRepository
+from app.repositories.organization_repo import OrganizationRepository
+from app.repositories.status_log_repo import StatusLogRepository
+from app.services.status_log_service import StatusLogService
 from app.services.material_sync import ensure_finished_material
 from app.services.bom_service import BomService
 from app.services.material_check_service import MaterialCheckService
@@ -51,6 +55,107 @@ class ProductionService:
     async def update_work_order(self, id: int, data: dict) -> dict:
         await self.repo.update_work_order(id, data)
         return {"message": "更新成功"}
+
+    # ==================== 派工（场景 C-S2） ====================
+
+    async def assign_work_order(self, id: int, assignee_id: int = None,
+                                assigned_org_id: int = None,
+                                actor_id: int = None, remark: str = None) -> dict:
+        """把工单派给**某个人**和/或**某个班组/部门**。
+
+        改造前 `work_orders.assignee_id` 列一直在，但建单/改单接口都没暴露它，
+        派工只能靠直接改库 —— 场景 C-S2「工单派工到班组/个人」实际是断的
+        （列在、入口不在）。班组维度更是连列都没有，本轮一并补
+        `assigned_org_id`（指向 `organizations`，`org_type` 取 dept/team）。
+
+        三条必须守住的：
+
+        1. **被派人必须真的存在且同租户**。不校验的话派给一个不存在/别租户的
+           id 也能成功，界面上负责人一栏空白 —— 又是那种"接口 200、结论是空的"
+           静默错。
+        2. **终态不可再派**。`closed` / `cancelled` 的工单派出去没人会看。
+        3. **派工要留痕**。记 `entity_status_logs`（`action='assign'`）——
+           决策流看板与精益体检都从这张通用表取数，派工另建一张表会让这两处
+           永远看不到派工轨迹。
+        """
+        if assignee_id is None and assigned_org_id is None:
+            raise _bad_request("至少要指定被派个人（assignee_id）或班组（assigned_org_id）",
+                              code="400-0411")
+
+        order = await self.repo.get_work_order(id)
+        if not order:
+            raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "工单不存在"})
+        status = order.get("wo_status")
+        if status in ("closed", "cancelled"):
+            raise _bad_request(f"工单{status_label(status)}，不能派工", code="400-0412")
+
+        assignee_name = None
+        if assignee_id is not None:
+            user_repo = UserRepository(self.repo._session).inherit_context_from(self.repo)
+            user = await user_repo.query_one(
+                "SELECT id, username, real_name FROM users WHERE id = :id", {"id": assignee_id})
+            if not user:
+                raise _bad_request(f"被派用户 {assignee_id} 不存在或不属于本租户", code="400-0413")
+            assignee_name = user.get("real_name") or user.get("username")
+
+        org_name = None
+        if assigned_org_id is not None:
+            org_repo = OrganizationRepository(self.repo._session).inherit_context_from(self.repo)
+            org = await org_repo.query_one(
+                "SELECT id, name, org_type FROM organizations WHERE id = :id", {"id": assigned_org_id})
+            if not org:
+                raise _bad_request(f"被派班组/部门 {assigned_org_id} 不存在或不属于本租户",
+                                   code="400-0413")
+
+        patch = {}
+        if assignee_id is not None:
+            patch["assignee_id"] = assignee_id
+        if assigned_org_id is not None:
+            patch["assigned_org_id"] = assigned_org_id
+        await self.repo.update_work_order(id, patch)
+
+        log = StatusLogService(self.repo._session, self.repo._tenant_id)
+        await log.record(
+            tenant_id=self.repo._tenant_id,
+            entity_type="work_order",
+            entity_id=id,
+            entity_no=order.get("wo_no"),
+            to_status=status or "draft",
+            from_status=status,
+            action="assign",
+            actor_id=actor_id,
+            source="manual",
+            reason=remark,
+            extra={
+                "assignee_id": assignee_id,
+                "assignee_name": assignee_name,
+                "assigned_org_id": assigned_org_id,
+                "previous_assignee_id": order.get("assignee_id"),
+                "previous_assigned_org_id": order.get("assigned_org_id"),
+            },
+        )
+
+        return {
+            "work_order_id": id,
+            "wo_no": order.get("wo_no"),
+            "assignee_id": assignee_id,
+            "assignee_name": assignee_name,
+            "assigned_org_id": assigned_org_id,
+            "previous_assignee_id": order.get("assignee_id"),
+        }
+
+    async def list_assignments(self, id: int) -> list:
+        """派工记录（从通用状态流水里按 action='assign' 过滤）。
+
+        不另建派工表：决策流看板与精益体检都以 `entity_status_logs` 为单一
+        数据源，另建一张等于让这两处永远看不到派工轨迹。
+        """
+        # 不自己 new StatusLogRepository：静态闸 test_services_use_inherit_context
+        # 要求派生 repo 必须 inherit_context_from，而 StatusLogService 的构造
+        # 已经用 tenant_id 初始化好了它自己的 repo。
+        repo = StatusLogService(self.repo._session, self.repo._tenant_id).repo
+        rows = await repo.list_by_entity("work_order", id, limit=200)
+        return [r for r in rows if r.get("action") == "assign"]
 
     async def change_status(self, id: int, new_status: str, operator_id: int,
                             remark: str = None,
