@@ -12,7 +12,7 @@ from app.core.permissions import (
 )
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
-from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system, integration_gateway, ncr, trace
+from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system, integration_gateway, ncr, trace, complaint
 from app.copilot import router as copilot_router
 
 settings = get_settings()
@@ -153,6 +153,7 @@ app.include_router(trial.router)
 app.include_router(lab.router)
 app.include_router(ncr.router)
 app.include_router(trace.router)
+app.include_router(complaint.router)
 app.include_router(system.router)
 # Integration Gateway（IG MVP）— API Key 认证
 app.include_router(integration_gateway.router)

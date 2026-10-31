@@ -36,6 +36,7 @@ from app.models.wms import (
     MaterialRequest, MaterialRequestItem,
 )
 from .warehouse import *
+from app.models.complaint import CustomerComplaint, RecallOrder, RecallOrderItem
 from app.models.trial import TrialOrder, TrialRoute, TrialBom, TrialReview
 from app.models.lab import LabRequest, LabTestResult, TestStandard, LabReport, LabCalibration
 from app.models.copilot import (

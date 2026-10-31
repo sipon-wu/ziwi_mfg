@@ -272,8 +272,12 @@ class BatchRepository(MultiTenantRepository):
                 "status": "active", "is_locked": False}
 
     async def lock(self, id: int, reason: str) -> int:
+        # 写布尔列用 TRUE 而不是 1：PG 的 boolean 不接受整数（``is_locked = 1``
+        # 会报 "column is of type boolean but expression is of type integer"），
+        # SQLite 自 3.23 起也认 TRUE。本地 SQLite 全绿、上线 PG 才炸的典型形态。
         return await self.execute(
-            "UPDATE batches SET is_locked = 1, lock_reason = :reason, status = 'locked' WHERE id = :id",
+            "UPDATE batches SET is_locked = TRUE, lock_reason = :reason, "
+            "status = 'locked' WHERE id = :id",
             {"id": id, "reason": reason},
         )
 

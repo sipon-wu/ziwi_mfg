@@ -275,6 +275,106 @@ def main():
     report("T11 原料库存行带批号", bool(with_batch),
            f"带该批号的行数={len(with_batch)}")
 
+    # ══════════════════════════════════════════════════════════
+    # 第二段：客诉 → NCR → 召回（X6 的后两环）
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'-' * 64}\n客诉 → NCR → 召回\n{'-' * 64}")
+
+    # ── T12 受理客诉：带批号必须当场跑出追溯快照 ──
+    r = c.post(f"{API}/complaints", json={
+        "customer_name": "E2E 客户", "customer_contact": "13800000000",
+        "product_code": FG_CODE, "product_name": "E2E 追溯成品",
+        "batch_no": batch_fg, "complaint_qty": 2,
+        "complaint_type": "功能", "severity": "major",
+        "source_channel": "phone",
+        "description": "探测脚本：客户反馈该批出现异响"})
+    comp = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    comp_id = comp.get("id")
+    report("T12 受理客诉（带批号）", bool(comp_id),
+           f"id={comp_id} HTTP {r.status_code} {r.text[:120] if r.status_code != 200 else ''}")
+    if not comp_id:
+        return 1
+    report("T12b 受理即生成追溯快照", bool(comp.get("trace_summary")),
+           f"trace_summary={comp.get('trace_summary')}")
+    comp_det = (c.get(f"{API}/complaints/{comp_id}").json().get("data") or {})
+    snap = comp_det.get("trace_snapshot")
+    report("T12c 快照落库且含下游批次",
+           isinstance(snap, dict) and batch_fg in (snap.get("output_batches") or [])
+           or isinstance(snap, dict) and snap.get("batch_no") == batch_fg,
+           f"snapshot_keys={sorted(snap.keys()) if isinstance(snap, dict) else snap}")
+
+    # ── T13 客诉开 NCR（幂等） ──
+    r = c.post(f"{API}/complaints/{comp_id}/ncr", json={"defect_qty": 2})
+    ncr = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    ncr_id = ncr.get("ncr_id")
+    report("T13 客诉开 NCR", bool(ncr_id) and ncr.get("created") is True,
+           f"ncr_id={ncr_id} created={ncr.get('created')} HTTP {r.status_code}")
+    if ncr_id:
+        d = (c.get(f"{API}/ncr/{ncr_id}").json().get("data") or {})
+        report("T13b NCR 带上客诉批号与来源",
+               d.get("batch_no") == batch_fg and d.get("source_type") == "customer",
+               f"batch_no={d.get('batch_no')} source_type={d.get('source_type')}")
+    r = c.post(f"{API}/complaints/{comp_id}/ncr", json={})
+    ncr2 = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    report("T13c 重复开 NCR 不建第二张",
+           ncr2.get("created") is False and ncr2.get("ncr_id") == ncr_id,
+           f"第二次 created={ncr2.get('created')} ncr_id={ncr2.get('ncr_id')}")
+
+    # ── T14 客诉实时追溯 ──
+    r = c.get(f"{API}/complaints/{comp_id}/trace", params={"direction": "up"})
+    tr3 = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    report("T14 客诉可实时追溯（不只看快照）",
+           r.status_code == 200 and bool(tr3.get("source_batches")),
+           f"HTTP {r.status_code} 上游批次={len(tr3.get('source_batches') or [])}")
+
+    # ── T15 建召回：按追溯结果自动算范围并冻结批次 ──
+    r = c.post(f"{API}/recalls", json={
+        "complaint_id": comp_id, "reason": "探测脚本：客诉转召回"})
+    rec = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    rec_id = rec.get("id")
+    report("T15 建召回单（按追溯自动定范围）", bool(rec_id),
+           f"id={rec_id} batch_count={rec.get('batch_count')} "
+           f"locked={rec.get('locked_count')} HTTP {r.status_code} "
+           f"{r.text[:120] if r.status_code != 200 else ''}")
+    report("T15b 召回范围含该成品批次且成功冻结",
+           (rec.get("locked_count") or 0) >= 1,
+           f"batch_count={rec.get('batch_count')} locked_count={rec.get('locked_count')}")
+
+    # ── T16 批次真的被冻结了（不是只写了个字段在召回单上） ──
+    r = c.get(f"{API}/trace/batch/{batch_fg}")
+    after = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    report("T16 召回后批次实体标记为已冻结", after.get("is_locked") is True,
+           f"is_locked={after.get('is_locked')}")
+    # 拣选排除锁定批次由单测锁住（test_wms_issue_pick::test_excludes_locked_batch）：
+    # 靶场里可能还有其他未锁批次，用"自动拣选是否失败"判断会产生假阴性。
+    r = c.get(f"{API}/trace/batches", params={"status": "locked", "keyword": batch_fg})
+    locked_hits = items_of(r.json()) if r.status_code == 200 else []
+    report("T16b 冻结批次出现在锁定清单",
+           any(h.get("batch_no") == batch_fg for h in locked_hits),
+           f"命中 {len(locked_hits)} 条")
+
+    # ── T17 召回单详情：明细能查到"锁了哪几批、多少在库" ──
+    r = c.get(f"{API}/recalls/{rec_id}")
+    rec_det = (r.json().get("data") or {}) if r.status_code == 200 else {}
+    its = rec_det.get("items") or []
+    report("T17 召回单明细可查", bool(its),
+           f"明细 {len(its)} 行 HTTP {r.status_code}")
+    hit_item = next((x for x in its if x.get("batch_no") == batch_fg), None)
+    report("T17b 明细记录在库数量与冻结状态",
+           bool(hit_item) and hit_item.get("is_locked") is True,
+           f"该批次明细={hit_item}")
+
+    # ── T18 召回可闭环 ──
+    r = c.post(f"{API}/recalls/{rec_id}/complete", json={"remark": "探测脚本：处理完毕"})
+    report("T18 召回可完成关闭", r.status_code == 200,
+           f"HTTP {r.status_code} {r.text[:120] if r.status_code != 200 else ''}")
+
+    # ── T19 客诉单上能反查到召回（闭环留痕） ──
+    comp_after = (c.get(f"{API}/complaints/{comp_id}").json().get("data") or {})
+    report("T19 客诉单回填 ncr_id 与 recall_id",
+           comp_after.get("ncr_id") == ncr_id and comp_after.get("recall_id") == rec_id,
+           f"ncr_id={comp_after.get('ncr_id')} recall_id={comp_after.get('recall_id')}")
+
     print(f"\n{'=' * 64}\n汇总：{len(OK)} 段通 / {len(GAP)} 段断\n{'=' * 64}")
     for name in GAP:
         print(f"  断点  {name}")
