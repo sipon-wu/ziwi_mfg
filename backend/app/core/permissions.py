@@ -84,6 +84,12 @@ EXECUTE_SUFFIXES: Set[str] = {
     # 权限码 M00:tenant_init_admin:create 无人拥有 → 除通配 * 外全员 403，
     # 且报错文案指向一个页面上根本不存在的权限项（与 C-45 同一形态，第三次）
     "init-admin",
+    # BOM 差异对比（G-E3）：不登记的话资源名会被推成 trial_bom_diff，
+    # 权限码变成 M16:trial_bom_diff:read —— 一个没有任何角色拥有的码，
+    # 除通配 *（admin）之外全员 403，且报错文案指向页面上不存在的权限项
+    # （与 C-44 material-check / C-45 / A-S1 init-admin 同一形态，第四次）。
+    # 登记后收敛回 M16:trial:read —— 能看试产单的人就能看它的 BOM 差异。
+    "bom-diff",
 }
 
 

@@ -27,7 +27,7 @@ TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
-OK, GAP = [], []
+OK, GAP, BOUNDARY = [], [], []
 
 
 def ok(name, detail=""):
@@ -38,6 +38,12 @@ def ok(name, detail=""):
 def gap(name, detail=""):
     GAP.append(name)
     print(f"  [GAP] {name}" + (f" · {detail}" if detail else ""))
+
+
+def boundary(name, detail=""):
+    """边界外：按产品边界**不做**，不是缺陷（不计入断点）。"""
+    BOUNDARY.append(name)
+    print(f"  [OUT] {name}" + (f" · {detail}" if detail else ""))
 
 
 def report(name, is_ok, detail=""):
@@ -271,8 +277,8 @@ def main():
     if has_sales:
         ok("M7-2 存在销售/发运单据入口", "")
     else:
-        gap("M7-2 无销售/发运单据入口（发货出库只能手工建出库单）",
-            "issue_type 留了「销售出库」枚举，但没有销售单/客户主数据 —— 按边界外记，归 ERP")
+        boundary("M7-2 无销售/发运单据入口（发货出库只能手工建出库单）",
+                 "issue_type 留了「销售出库」枚举，但无销售单/客户主数据 —— 归 ERP，边界外")
 
     return finish()
 

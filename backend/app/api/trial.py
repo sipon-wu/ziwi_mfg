@@ -212,6 +212,24 @@ async def save_trial_bom(
     return {"code": 0, "message": "试产BOM已保存"}
 
 
+@router.get("/{order_id}/bom-diff")
+async def diff_trial_bom(
+    order_id: int,
+    repo: TrialOrderRepository = Depends(get_tenant_repo(TrialOrderRepository)),
+):
+    """G-E3: 试产 BOM 与量产（正式）BOM 的差异清单。
+
+    为什么要有这个端点：试产的本质是"这一版和上一版差在哪"，评审会上
+    要逐条过差异。没有它，评审只能靠人拿两张表对着看——而 unit 从 g 变
+    kg 这种改动，数字没变、投料量差 1000 倍，肉眼一定会漏。
+    """
+    svc = TrialService(repo)
+    result = await svc.diff_bom(order_id)
+    if result.get("error"):
+        raise HTTPException(404, detail={"code": "404-0000", "message": result["error"]})
+    return {"code": 0, "message": "success", "data": result}
+
+
 @router.post("/{order_id}/import-bom")
 async def import_bom(
     order_id: int,

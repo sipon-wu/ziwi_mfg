@@ -267,6 +267,150 @@ class TrialService:
     # 转量产的落库细节
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # G-E3: 试产 BOM 与量产 BOM 差异对比
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _num(v):
+        """统一成 float 便于比较。None / 空串 / 非法值一律当 0 —— 差异对比是
+        给人看的结论，不该因为某一行数据脏就整份对比失败。"""
+        if v is None or v == "":
+            return 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    async def diff_bom(self, order_id: int) -> Dict:
+        """试产 BOM 与量产（正式）BOM 的行级差异清单（G-E3）。
+
+        ★为什么按 ``material_code`` 对齐而不是按行号/下标：
+        BOM 是集合不是序列 —— 试产时插入一行、或把两行顺序调换，下标就全变了，
+        按位置比对会把"没变"报成"全变"。按物料编码对齐才是语义正确的做法。
+
+        差异分四类：
+        - ``added``      试产有、正式没有（试产新增了料）
+        - ``removed``    正式有、试产没有（试产去掉了料）
+        - ``qty_changed``两边都有但单件用量不同（带 before/after）
+        - ``unit_changed``计量单位不同 —— **最容易被忽略却最危险的一类**：
+          用量数字没变、单位从 g 变成 kg，实际投料量差了 1000 倍，
+          而只看数字的人会以为"没变"。
+
+        对比基线的选择（有优先级）：
+        1. 试产 BOM 记录的 ``source_bom_id``（本次试产是从哪一版正式 BOM 载入的）
+           —— 这才是"改了什么"的正确参照物；
+        2. 该产品当前生效的正式 BOM（is_active=1）；
+        3. 都没有 → 返回 ``has_baseline=False``，而不是报错
+           （对比不出结果不该让页面打不开，那是把查询做成了门禁）。
+        """
+        order = await self.order_repo.get_order(order_id)
+        if not order:
+            return {"error": "试产工单不存在"}
+
+        trial_bom = await self.bom_repo.get_by_order(order_id)
+        trial_items = self._as_list(trial_bom.get("bom_json") if trial_bom else None)
+
+        product_id = order.get("product_id")
+        baseline_rows: List[Dict] = []
+        baseline_desc = None
+
+        source_bom_id = (trial_bom or {}).get("source_bom_id")
+        if source_bom_id:
+            # 分两步取而非写子查询：子查询里的 product_bom 不会被租户注入覆盖，
+            # 跨租户 id 可能读到别家的 version。走 query_one 才能带上 tenant_id。
+            src = await self.order_repo.query_one(
+                "SELECT version FROM product_bom WHERE id = :bid",
+                {"bid": source_bom_id})
+            if src and src.get("version") is not None:
+                baseline_rows = await self.order_repo.query(
+                    "SELECT material_code, material_name, qty_per_unit, unit, material_type, "
+                    "scrap_rate FROM product_bom WHERE product_id = :p AND version = :v",
+                    {"p": product_id, "v": src["version"]})
+                baseline_desc = f"源正式BOM(id={source_bom_id}, v{src['version']})"
+        if product_id and not baseline_rows:
+            baseline_rows = await self.order_repo.query(
+                "SELECT material_code, material_name, qty_per_unit, unit, material_type, "
+                "scrap_rate FROM product_bom WHERE product_id = :p AND is_active = 1",
+                {"p": product_id})
+            baseline_desc = "当前生效正式BOM"
+        if not product_id:
+            return {"error": "试产工单无 product_id，无法定位量产 BOM"}
+
+        if not baseline_rows:
+            return {
+                "has_baseline": False,
+                "message": "该产品在量产侧还没有正式 BOM，无可对比基线"
+                           "（试产 BOM 即为初始版本，全部视为新增）",
+                "trial_order_id": order_id,
+                "trial_count": len(trial_items),
+                "baseline_count": 0,
+                "diffs": [{"type": "added", "material_code": (it.get("material_code")
+                           or it.get("code")), "after": it} for it in trial_items],
+                "summary": {"added": len(trial_items), "removed": 0,
+                            "qty_changed": 0, "unit_changed": 0, "unchanged": 0},
+            }
+
+        def _key(it):
+            return it.get("material_code") or it.get("code")
+
+        def _qty(it):
+            return it.get("qty_per_unit") if it.get("qty_per_unit") is not None else it.get("qty")
+
+        trial_map = {_key(it): it for it in trial_items if _key(it)}
+        base_map = {r.get("material_code"): r for r in baseline_rows}
+
+        diffs: List[Dict] = []
+        unchanged = 0
+        for code in sorted(set(trial_map) | set(base_map)):
+            t, b = trial_map.get(code), base_map.get(code)
+            if t and not b:
+                diffs.append({"type": "added", "material_code": code,
+                              "material_name": t.get("material_name") or t.get("name"),
+                              "after": {"qty_per_unit": self._num(_qty(t)),
+                                        "unit": t.get("unit")}})
+            elif b and not t:
+                diffs.append({"type": "removed", "material_code": code,
+                              "material_name": b.get("material_name"),
+                              "before": {"qty_per_unit": self._num(b.get("qty_per_unit")),
+                                         "unit": b.get("unit")}})
+            else:
+                tq, bq = self._num(_qty(t)), self._num(b.get("qty_per_unit"))
+                tu, bu = (t.get("unit") or ""), (b.get("unit") or "")
+                changed = False
+                # ★浮点不能直接用 ==：1.0000001 与 1.0 是同一回事
+                if abs(tq - bq) > 1e-9:
+                    diffs.append({"type": "qty_changed", "material_code": code,
+                                  "material_name": b.get("material_name"),
+                                  "before": {"qty_per_unit": bq, "unit": bu},
+                                  "after": {"qty_per_unit": tq, "unit": tu}})
+                    changed = True
+                if tu != bu:
+                    diffs.append({"type": "unit_changed", "material_code": code,
+                                  "material_name": b.get("material_name"),
+                                  "before": {"qty_per_unit": bq, "unit": bu},
+                                  "after": {"qty_per_unit": tq, "unit": tu}})
+                    changed = True
+                if not changed:
+                    unchanged += 1
+
+        summary = {"added": 0, "removed": 0, "qty_changed": 0,
+                   "unit_changed": 0, "unchanged": unchanged}
+        for d in diffs:
+            summary[d["type"]] = summary.get(d["type"], 0) + 1
+
+        return {
+            "has_baseline": True,
+            "trial_order_id": order_id,
+            "product_id": product_id,
+            "baseline": baseline_desc,
+            "trial_count": len(trial_items),
+            "baseline_count": len(baseline_rows),
+            "diffs": diffs,
+            "summary": summary,
+            "changed": bool(diffs),
+        }
+
     @staticmethod
     def _as_list(raw) -> List[Dict]:
         """``bom_json`` / ``route_json`` 可能是字符串、也可能是已解析的 list。"""

@@ -35,6 +35,7 @@ USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
 OK, GAP = [], []
+BOUNDARY = []
 
 
 def ok(name, detail=""):
@@ -45,6 +46,17 @@ def ok(name, detail=""):
 def gap(name, detail=""):
     GAP.append(name)
     print(f"  [GAP] {name}" + (f" · {detail}" if detail else ""))
+
+
+def boundary(name, reason=""):
+    """标记为「边界外」——不是缺陷，是本平台按产品边界**不做**的东西。
+
+    ★为什么需要单独一个出口而不是并入 ok()：并入 ok 会让"缺一个功能"看起来
+    像"已具备"，报表上永远绿；并入 gap 又会让闸长期挂红，最后没人看。
+    边界外就该被**显式地、带理由地**标出来，既不假装完成也不假装是缺陷。
+    """
+    BOUNDARY.append(name)
+    print(f"  [OUT] {name}" + (f" · {reason}" if reason else ""))
 
 
 def report(name, is_ok, detail=""):
@@ -437,11 +449,15 @@ def main():
 
 def summary():
     print(f"\n{'=' * 62}")
-    print(f"通 {len(OK)} / 断 {len(GAP)}")
+    print(f"通 {len(OK)} / 断 {len(GAP)}" + (f" / 边界外 {len(BOUNDARY)}" if BOUNDARY else ""))
     if GAP:
         print("断点：")
         for g in GAP:
             print(f"  - {g}")
+    if BOUNDARY:
+        print("边界外（按产品边界不做，非缺陷）：")
+        for b in BOUNDARY:
+            print(f"  - {b}")
     print("=" * 62)
     return 0
 

@@ -23,7 +23,7 @@ TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
-OK, GAP = [], []
+OK, GAP, BOUNDARY = [], [], []
 
 
 def ok(name, detail=""):
@@ -34,6 +34,12 @@ def ok(name, detail=""):
 def gap(name, detail=""):
     GAP.append(name)
     print(f"  [GAP] {name}" + (f" · {detail}" if detail else ""))
+
+
+def boundary(name, detail=""):
+    """边界外：按产品边界**不做**，不是缺陷（不计入断点）。"""
+    BOUNDARY.append(name)
+    print(f"  [OUT] {name}" + (f" · {detail}" if detail else ""))
 
 
 def report(name, is_ok, detail=""):
@@ -184,9 +190,9 @@ def main():
     if found:
         ok("M5-1 存在采购建议/申请载体", found)
     else:
-        gap("M5-1 无采购申请单据（预警能算出买多少，但点不出采购单）",
-            "供应商主数据与采购归 ERP（B-11），轻量 MES 边界外；"
-            "已退一步把建议采购量与建议到货日写进预警消息")
+        boundary("M5-1 无采购申请单据（预警能算出买多少，但点不出采购单）",
+                 "供应商主数据与采购归 ERP（B-11），轻量 MES 边界外；"
+                 "已退一步把建议采购量与建议到货日写进预警消息")
 
     print(f"\n{'=' * 62}")
     print(f"通 {len(OK)} / 断 {len(GAP)}")
