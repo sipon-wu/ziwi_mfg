@@ -1181,15 +1181,29 @@ class IssueOrderService:
                         f"无法确定回退库位: material_id={item['material_id']}",
                     )
 
-                await self.inv_repo.stock_in(
-                    tenant_id=tenant_id,
-                    material_id=item["material_id"],
-                    warehouse_id=order["warehouse_id"],
-                    location_id=location_id,
-                    quantity=issued_qty,
-                    unit=item.get("unit", ""),
-                    batch_no=item.get("batch_no"),
-                )
+                # ★回滚必须"从哪扣的回哪去"。
+                # 此前这里调 stock_in(...)，而它内部用 find_one(batch_id=None) 定位：
+                # 该条件会拼 `batch_id IS NULL`，批次管理的库存行永远匹配不到 →
+                # 回滚被加到**另一行**（通常是那条无批次的残留行）。
+                # 后果极隐蔽：总数对得上（1335→1330→1335），但批次账错乱 ——
+                # 原批次少的货没回来，凭空多出一坨无批次的"幽灵库存"。
+                # 对要做批次追溯的物料，这等于把追溯链冲断。
+                row = await self._resolve_rollback_row(
+                    item["material_id"], order["warehouse_id"],
+                    location_id, item.get("batch_no"))
+                if row:
+                    await self.inv_repo.add_quantity(row["id"], issued_qty)
+                else:
+                    # 原行已被清掉/从未存在 → 只能新建，此时才走 stock_in
+                    await self.inv_repo.stock_in(
+                        tenant_id=tenant_id,
+                        material_id=item["material_id"],
+                        warehouse_id=order["warehouse_id"],
+                        location_id=location_id,
+                        quantity=issued_qty,
+                        unit=item.get("unit", ""),
+                        batch_no=item.get("batch_no"),
+                    )
                 await self._create_cancel_tx(
                     tenant_id=tenant_id,
                     material_id=item["material_id"],
@@ -1214,6 +1228,28 @@ class IssueOrderService:
 
         return {"order_id": order_id, "status": ISSUE_CANCELLED,
                 "reversed_qty": total_reversed, "tx_count": tx_count}
+
+    async def _resolve_rollback_row(self, material_id: int, warehouse_id: int,
+                                    location_id, batch_no: str = None) -> Optional[dict]:
+        """定位红冲该回到的**那一行**库存：优先同批次，其次同库位可用量最大。
+
+        刻意不走 ``find_one`` —— 它在 ``batch_id`` 为空时会追加
+        ``batch_id IS NULL``，把带批次的库存行全部排除（C-52 移位、C-56 盘点、
+        本条红冲，同一陷阱已踩三次）。
+        """
+        rows = await self.inv_repo.query(
+            """SELECT * FROM inventory
+               WHERE material_id = :mid AND warehouse_id = :wid
+               ORDER BY (quantity - COALESCE(locked_qty, 0)) DESC""",
+            {"mid": material_id, "wid": warehouse_id},
+        )
+        pool = [r for r in rows
+                if location_id is None or r.get("location_id") == location_id]
+        if batch_no:
+            exact = [r for r in pool if r.get("batch_no") == batch_no]
+            if exact:
+                return exact[0]
+        return pool[0] if pool else None
 
     async def _create_cancel_tx(self, tenant_id: str, material_id: int,
                                 warehouse_id: int, voucher_no: str,

@@ -466,6 +466,21 @@ class InventoryRepository(MultiTenantRepository):
             )
             return {"id": new_id}
 
+    async def add_quantity(self, id: int, quantity: float) -> int:
+        """给**指定库存行**加数量（红冲/回滚专用）。
+
+        为什么不走 ``stock_in``：它内部用 ``find_one(..., batch_id=None)`` 定位，
+        而 ``find_one`` 在不传 ``batch_id`` 时会追加 ``batch_id IS NULL`` ——
+        批次管理的库存行根本匹配不到，于是回滚被加到**另一行**（通常是那条
+        无批次的残留行），原批次该有的货回不来。总数看着对，批次账却乱了。
+        回滚必须"从哪扣的回哪去"，所以由调用方先用 ``_resolve_rollback_row``
+        定位到具体行，再按 id 加。
+        """
+        return await self.execute(
+            "UPDATE inventory SET quantity = quantity + :qty, "
+            "last_transaction_at = CURRENT_TIMESTAMP WHERE id = :id",
+            {"qty": quantity, "id": id})
+
     async def stock_out(self, id: int, quantity: float) -> int:
         """出库：扣减库存数量"""
         inv = await self.get(id)
