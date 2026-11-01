@@ -498,7 +498,7 @@ class TrialService:
         if product_id and not baseline_rows:
             baseline_rows = await self.order_repo.query(
                 "SELECT material_code, material_name, qty_per_unit, unit, material_type, "
-                "scrap_rate FROM product_bom WHERE product_id = :p AND is_active = 1",
+                "scrap_rate FROM product_bom WHERE product_id = :p AND is_active = true",
                 {"p": product_id})
             baseline_desc = "当前生效正式BOM"
         if not product_id:

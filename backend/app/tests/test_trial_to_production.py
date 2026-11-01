@@ -527,7 +527,7 @@ async def test_import_bom_reads_latest_active_version():
     svc, holder, ctx = build()
     ctx["answers"] = [("FROM product_bom", [
         {"material_code": "M-001", "version": 2, "is_active": True},
-        {"material_code": "M-002", "version": 2, "is_active": 1},
+        {"material_code": "M-002", "version": 2, "is_active": True},
         {"material_code": "M-003", "version": 1, "is_active": False},   # 旧版已停用
     ])]
     out = await svc.import_bom_from_formal(7)

@@ -34,11 +34,11 @@ class ExcelImportRepository(MultiTenantRepository):
 
     async def get_template(self, import_type: str) -> Optional[Dict]:
         return await self.query_one(
-            "SELECT * FROM import_templates WHERE import_type = :import_type AND is_active = 1",
+            "SELECT * FROM import_templates WHERE import_type = :import_type AND is_active = true",
             {"import_type": import_type}
         )
 
     async def list_templates(self) -> List[Dict]:
         return await self.query(
-            "SELECT import_type, template_name, description, version FROM import_templates WHERE is_active = 1 ORDER BY import_type"
+            "SELECT import_type, template_name, description, version FROM import_templates WHERE is_active = true ORDER BY import_type"
         )

@@ -212,7 +212,7 @@ async def test_assign_rejects_role_outside_tenant():
 @pytest.mark.asyncio
 async def test_delete_rejects_system_role():
     repo = MagicMock()
-    repo.get = AsyncMock(return_value={"id": 2, "code": "admin", "is_system": 1})
+    repo.get = AsyncMock(return_value={"id": 2, "code": "admin", "is_system": True})
     repo.delete = AsyncMock(return_value=1)
     svc = RoleService(repo)
 

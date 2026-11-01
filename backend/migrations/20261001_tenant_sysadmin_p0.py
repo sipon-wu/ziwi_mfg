@@ -160,8 +160,11 @@ async def apply(url: str) -> int:
              "CREATE UNIQUE INDEX idx_user_organizations_tenant_user_org "
              "ON user_organizations (tenant_id, user_id, org_id)"),
             # 部分唯一索引：一个用户最多一个主组织（SQLite 与 PG 均支持 WHERE 部分索引）
+            # ★条件写 `WHERE is_primary` 而不是 `= 1`：PG 的该列是 BOOLEAN，
+            # `is_primary = 1` 会在建索引阶段就报 boolean = integer 无此运算符，
+            # 让**全新库 create_all 直接失败**。裸列名在两种方言里都是真值判断。
             ("uq_user_primary_org",
-             "CREATE UNIQUE INDEX uq_user_primary_org ON user_organizations (user_id) WHERE is_primary = 1"),
+             "CREATE UNIQUE INDEX uq_user_primary_org ON user_organizations (user_id) WHERE is_primary"),
         ):
             if name in index_names:
                 print(f"[skip] 索引 {name} 已存在")

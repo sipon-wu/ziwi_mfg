@@ -213,6 +213,8 @@ class RouteStepRepository(MultiTenantRepository):
             # 会走 else 分支 —— 配了并行也当不能并行。
             {**data,
              "step_type": data.get("step_type") or "production",
-             "is_outsource": 1 if data.get("is_outsource") else 0,
-             "is_parallel_eligible": 1 if data.get("is_parallel_eligible") else 0}
+             # ★必须是 bool 不是 0/1：这两列在 PG 上是 BOOLEAN，传 int 会
+             # DataError: a boolean is required (got type int) —— 建工艺路线 500。
+             "is_outsource": bool(data.get("is_outsource")),
+             "is_parallel_eligible": bool(data.get("is_parallel_eligible"))}
         )

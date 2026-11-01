@@ -53,7 +53,7 @@ class FmeaDocumentRepository(MultiTenantRepository):
         )
 
     async def get_latest_doc(self, product_id: int = None, process_id: int = None, fmea_type: str = None) -> Optional[Dict]:
-        sql = "SELECT * FROM fmea_documents WHERE is_latest = 1"
+        sql = "SELECT * FROM fmea_documents WHERE is_latest = true"
         params = {}
         if product_id is not None:
             sql += " AND product_id = :product_id"
@@ -176,13 +176,13 @@ class FmeaItemRepository(MultiTenantRepository):
 
     async def list_high_risk(self, doc_id: int, threshold_rpn: int = 100, min_severity: int = 9) -> List[Dict]:
         return await self.query(
-            "SELECT * FROM fmea_items WHERE doc_id = :doc_id AND (is_high_risk = 1 OR rpn >= :rpn OR severity >= :sev)",
+            "SELECT * FROM fmea_items WHERE doc_id = :doc_id AND (is_high_risk = true OR rpn >= :rpn OR severity >= :sev)",
             {"doc_id": doc_id, "rpn": threshold_rpn, "sev": min_severity},
         )
 
     async def list_critical_processes(self, doc_id: int) -> List[Dict]:
         return await self.query(
-            "SELECT * FROM fmea_items WHERE doc_id = :doc_id AND is_critical_process = 1",
+            "SELECT * FROM fmea_items WHERE doc_id = :doc_id AND is_critical_process = true",
             {"doc_id": doc_id},
         )
 

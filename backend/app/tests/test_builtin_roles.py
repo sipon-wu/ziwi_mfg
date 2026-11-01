@@ -187,7 +187,7 @@ class FakeRoleRepo:
     """最小角色仓储替身：管住"已存在就跳过"和"新角色授权"。"""
 
     def __init__(self, existing=None, perms=None):
-        self.roles = {c: {"id": 100 + i, "code": c, "is_system": 1}
+        self.roles = {c: {"id": 100 + i, "code": c, "is_system": True}
                       for i, c in enumerate(existing or [])}
         self.perms = perms or [
             {"id": 1, "code": "M01:work_order:read"},

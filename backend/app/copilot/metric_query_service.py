@@ -389,7 +389,7 @@ class MetricQueryService:
         dp_params: Dict[str, Any] = {"tenant_id": tenant_id, "dk": limit.get("dimension_key")}
         dps = await self._fetch(
             "SELECT xbar FROM spc_data_points "
-            "WHERE tenant_id = :tenant_id AND dimension_key = :dk AND excluded = 0 "
+            "WHERE tenant_id = :tenant_id AND dimension_key = :dk AND excluded = false "
             "ORDER BY subgroup_no",
             dp_params,
         )

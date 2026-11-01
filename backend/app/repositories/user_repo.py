@@ -107,8 +107,12 @@ class UserRepository(MultiTenantRepository):
         """
         from sqlalchemy import text
         try:
+            # ★false 不是 0：PG 的 users.must_change_password 是 BOOLEAN，
+            # 写 0 会 DatatypeMismatchError，而下面的 except 把这个异常**静默吞掉**
+            # 并返回 0 —— 用户改完密码标志清不掉，下次登录又被拦去改密，死循环。
+            # SQLite >= 3.23 同样接受 false。
             res = await self._session.execute(
-                text("UPDATE users SET must_change_password = 0 WHERE id = :id"),
+                text("UPDATE users SET must_change_password = false WHERE id = :id"),
                 {"id": user_id},
             )
         except Exception:
@@ -240,7 +244,10 @@ class UserRepository(MultiTenantRepository):
         # A-S1: 首登改密标志。列可能尚未在老库中补出，故与 cloud_uuid 同策略——
         # 只在调用方**显式要求**时写入，避免无条件写列让普通建户 500。
         if data.get("must_change_password"):
-            params["must_change_password"] = 1
+            # ★True 不是 1：列在 PG 上是 BOOLEAN，传 int 会被 asyncpg 拒绝
+            # （DataError: a boolean is required (got type int)）→ 新租户初始化
+            # 管理员 / 管理员重置密码一律 500。
+            params["must_change_password"] = True
             base_cols += ", must_change_password"
             base_placeholders += ", :must_change_password"
         cloud_uuid = data.get("cloud_uuid")
@@ -261,15 +268,15 @@ class UserRepository(MultiTenantRepository):
         if primary_org_id:
             await self.execute(
                 """INSERT INTO user_organizations (tenant_id, user_id, org_id, is_primary)
-                   VALUES (:tenant_id, :user_id, :org_id, 1)
-                   ON CONFLICT (tenant_id, user_id, org_id) DO UPDATE SET is_primary = 1""",
+                   VALUES (:tenant_id, :user_id, :org_id, true)
+                   ON CONFLICT (tenant_id, user_id, org_id) DO UPDATE SET is_primary = true""",
                 {"tenant_id": tenant_id, "user_id": user_id, "org_id": primary_org_id}
             )
         for org_id in extra_org_ids:
             await self.execute(
                 """INSERT INTO user_organizations (tenant_id, user_id, org_id, is_primary)
-                   VALUES (:tenant_id, :user_id, :org_id, 0)
-                   ON CONFLICT (tenant_id, user_id, org_id) DO UPDATE SET is_primary = 0""",
+                   VALUES (:tenant_id, :user_id, :org_id, false)
+                   ON CONFLICT (tenant_id, user_id, org_id) DO UPDATE SET is_primary = false""",
                 {"tenant_id": tenant_id, "user_id": user_id, "org_id": org_id}
             )
 
