@@ -69,6 +69,12 @@ class InspectionOrder(Base):
     # 加这一列之前，检验单只有 work_order_id/process_id/material_id，
     # 判定结果无处回写 → "判定不合格却仍可上架"（scenario-verification P0-1）。
     receipt_item_id = Column(BigInteger, comment="来料检验来源：receipt_order_items.id")
+    # ★ G-E4 试产检验来源：trial_orders.id。
+    # 加这一列之前，试产检验只能靠 order_type 字符串"猜"是试产的，检验单与
+    # 试产单之间没有任何硬链 —— 判定不合格自动开的 NCR 挂不回试产项目，
+    # 评审会上问"这是哪个试产的失败"答不出来；也没法把试产 NCR 从量产
+    # 不良率里干净地摘出去。
+    trial_order_id = Column(BigInteger, comment="试产检验来源：trial_orders.id")
     qc_point_id = Column(BigInteger, comment="FK to qc_point_config.id")
     org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     inspector_id = Column(BigInteger)

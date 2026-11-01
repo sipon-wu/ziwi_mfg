@@ -188,6 +188,13 @@ class TrialService:
         if conclusion not in ("approved", "conditional_approve", "terminated", "adjust"):
             return {"error": f"无效的评审结论: {conclusion}"}
 
+        # G-E1 同一口径：评审判终止也是失败归档，原因必填。
+        # 必须在写 review 之前校验 —— 否则"结论已落库、单子还没终止"，
+        # 重试时界面显示已判终止，试产单却还挂着。
+        term_reason = (data.get("terminated_reason") or "").strip()
+        if conclusion == "terminated" and not term_reason:
+            return {"error": "评审结论为终止时必须填写终止原因（terminated_reason）"}
+
         now = datetime.now().isoformat()
         await self.review_repo.update_review(review_id, {
             "conclusion": conclusion,
@@ -199,7 +206,7 @@ class TrialService:
             await self.order_repo.update_order(order_id, {
                 "status": "terminated",
                 "completed_at": now,
-                "terminated_reason": data.get("terminated_reason"),
+                "terminated_reason": term_reason,
             })
         elif conclusion == "adjust":
             # 调整：回到之前的阶段重新试产
@@ -229,14 +236,36 @@ class TrialService:
             return {"error": "当前状态不是评审阶段，无法转量产"}
 
         # 获取最新的评审记录
-        reviews = await self.review_repo.list_by_order(order_id)
-        latest_review = reviews[0] if reviews else None
-        if not latest_review:
+        reviews = await self.review_repo.list_by_order(order_id) or []
+        if not reviews:
             return {"error": "无评审记录，请先提交评审"}
 
-        concl = latest_review.get("conclusion", "")
-        if concl not in ("approved", "conditional_approve"):
-            return {"error": f"评审未通过(结论={concl})，不能转量产"}
+        # ── G-B1：多方签核门禁 ─────────────────────────────────
+        # 改造前只看 `reviews[0]`（最新一条）的结论：工艺、品质、生产三方
+        # 各提交一份评审，只要**任意一条**批了就能转量产 —— 另外两方还挂着
+        # pending 也照转，"多方签核"形同虚设，等于最宽松的那一方说了算。
+        # 现在的口径：同一 review_stage 多次提交只认最新一条，然后要求
+        # **每一方都签过且都通过**，缺谁点谁。
+        latest_by_stage: Dict[str, Dict] = {}
+        for rv in reviews:
+            stage = rv.get("review_stage") or "main"
+            prev = latest_by_stage.get(stage)
+            if prev is None or (rv.get("id") or 0) > (prev.get("id") or 0):
+                latest_by_stage[stage] = rv
+
+        signoff = [
+            {"review_id": rv.get("id"), "stage": stage,
+             "conclusion": rv.get("conclusion"), "reviewer": rv.get("reviewer")}
+            for stage, rv in latest_by_stage.items()
+        ]
+        pending = [s["stage"] for s in signoff if s["conclusion"] == "pending"]
+        if pending:
+            return {"error": f"以下评审方尚未签核：{'、'.join(pending)}，不能转量产"}
+        blocked = [s for s in signoff
+                   if s["conclusion"] not in ("approved", "conditional_approve")]
+        if blocked:
+            return {"error": "评审未通过(" + "、".join(
+                f"{s['stage']}={s['conclusion']}" for s in blocked) + ")，不能转量产"}
 
         warnings: List[str] = []
 
@@ -260,12 +289,150 @@ class TrialService:
             "bom": bom_result,
             "route": route_result,
             "material": material_result,
+            # 签核证据：转量产是「谁批的」必须留痕的动作，只回一句"完成"
+            # 等于让人无法回答"这版配方是谁放行的"。
+            "signoff": signoff,
             "warnings": warnings,
         }
 
     # ------------------------------------------------------------------
     # 转量产的落库细节
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # G-E2: 试产 BOM 变更的影响面
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _qty_of(item: Dict):
+        """单件用量。试产 BOM 的行是前端自由 JSON，「用量」可能叫
+        qty_per_unit / qty / usage_qty —— 三个都认，否则改了量却报"没变"。"""
+        for k in ("qty_per_unit", "qty", "usage_qty"):
+            if item.get(k) is not None:
+                return item[k]
+        return 0
+
+    async def save_bom(self, order_id: int, data: dict) -> Dict:
+        """保存试产 BOM，并返回**本次变更的影响面**（G-E2）。
+
+        改造前 ``PUT /trials/{id}/bom`` 只回一句「试产BOM已保存」：改了什么、
+        影响谁，一概不说。而试产的本体就是「配方在变」——配方一变，之前按旧
+        配方做的检验、提交的评审、算过的成本**全部作废**。没人提示的话，
+        评审会会拿着旧检验数据批准新配方，这是最典型的"数据看着全、结论是错的"。
+
+        交付三件事：
+
+        1. **差异四类**与 G-E3 同口径（added / removed / qty_changed /
+           unit_changed），按 ``material_code`` 对齐（BOM 是集合不是序列，
+           按下标比对会把"没变"报成"全变"）；
+        2. ``requires_recheck``：已经开始试做（状态不是 planning）或已有检验单 /
+           评审记录时，任何差异都意味着"已有结论基于旧配方"，必须重新确认；
+        3. **已转量产不允许回改**：正式 BOM 已按当时配方生成，回改会让试产
+           与量产两套配方对不上，且转产是签核过的动作。
+        """
+        order = await self.order_repo.get_order(order_id)
+        if not order:
+            return {"error": "试产工单不存在"}
+        if order.get("status") == "production":
+            return {"error": "试产已转量产，试产 BOM 不能再改（正式 BOM 已按当时"
+                             "配方生成，回改会让两套配方对不上）"}
+
+        existing = await self.bom_repo.get_by_order(order_id)
+        old_items = self._as_list(existing.get("bom_json") if existing else None)
+        new_items = self._as_list(data.get("bom_json"))
+
+        old_map = {(x.get("material_code") or x.get("code") or ""): x
+                   for x in old_items if (x.get("material_code") or x.get("code"))}
+        new_map = {(x.get("material_code") or x.get("code") or ""): x
+                   for x in new_items if (x.get("material_code") or x.get("code"))}
+
+        added, removed, qty_changed, unit_changed = [], [], [], []
+        unchanged = 0
+        for code in sorted(set(old_map) | set(new_map)):
+            o, n = old_map.get(code), new_map.get(code)
+            if n and not o:
+                added.append({"material_code": code,
+                              "material_name": n.get("material_name") or n.get("name"),
+                              "after": {"qty_per_unit": self._num(self._qty_of(n)),
+                                        "unit": n.get("unit")}})
+            elif o and not n:
+                removed.append({"material_code": code,
+                                "material_name": o.get("material_name") or o.get("name"),
+                                "before": {"qty_per_unit": self._num(self._qty_of(o)),
+                                           "unit": o.get("unit")}})
+            else:
+                oq, nq = self._num(self._qty_of(o)), self._num(self._qty_of(n))
+                ou, nu = (o.get("unit") or ""), (n.get("unit") or "")
+                touched = False
+                if abs(nq - oq) > 1e-9:
+                    qty_changed.append({"material_code": code,
+                                        "material_name": o.get("material_name") or o.get("name"),
+                                        "before": {"qty_per_unit": oq, "unit": ou},
+                                        "after": {"qty_per_unit": nq, "unit": nu}})
+                    touched = True
+                if nu != ou:
+                    unit_changed.append({"material_code": code,
+                                         "material_name": o.get("material_name") or o.get("name"),
+                                         "before": {"qty_per_unit": oq, "unit": ou},
+                                         "after": {"qty_per_unit": nq, "unit": nu}})
+                    touched = True
+                if not touched:
+                    unchanged += 1
+
+        changed = bool(added or removed or qty_changed or unit_changed)
+
+        # 已有下游结论？—— 有，就意味着这些结论基于旧配方
+        insp = await self.order_repo.query_one(
+            "SELECT COUNT(*) AS c FROM inspection_order WHERE trial_order_id = :t",
+            {"t": order_id})
+        review_rows = await self.review_repo.list_by_order(order_id) or []
+        inspection_count = (insp or {}).get("c") or 0
+        review_count = len(review_rows)
+        started = (order.get("status") or "planning") != "planning"
+        requires_recheck = changed and (started or inspection_count > 0
+                                        or review_count > 0)
+
+        # 落库
+        # ★source_bom_id 不传时要保留原值：它是 G-E3 差异对比的基线来源，
+        # 一次"只改用量"的保存把基线洗成 NULL，下次对比就只能退回"当前生效
+        # 正式 BOM"，算出来的差异是另一回事。
+        payload = {
+            "tenant_id": self.order_repo.tenant_id or data.get("tenant_id") or "default",
+            "trial_order_id": order_id,
+            "bom_json": json.dumps(new_items, ensure_ascii=False),
+            "source_type": data.get("source_type") or "manual",
+            "source_bom_id": (data.get("source_bom_id")
+                              if data.get("source_bom_id") is not None
+                              else (existing or {}).get("source_bom_id")),
+        }
+        if existing:
+            await self.bom_repo.update_bom(existing["id"], payload)
+        else:
+            await self.bom_repo.create_bom(payload)
+
+        impact = {
+            "changed": changed,
+            "summary": {"added": len(added), "removed": len(removed),
+                        "qty_changed": len(qty_changed),
+                        "unit_changed": len(unit_changed),
+                        "unchanged": unchanged},
+            "added": added, "removed": removed,
+            "qty_changed": qty_changed, "unit_changed": unit_changed,
+            "inspection_count": inspection_count,
+            "review_count": review_count,
+            "requires_recheck": requires_recheck,
+        }
+        if requires_recheck:
+            reasons = []
+            if started:
+                reasons.append(f"试产已进入 {order.get('status')} 阶段")
+            if inspection_count:
+                reasons.append(f"已有 {inspection_count} 张试产检验单")
+            if review_count:
+                reasons.append(f"已有 {review_count} 份评审")
+            impact["recheck_reason"] = (
+                "；".join(reasons) + " 基于旧配方，BOM 已变更，需重新检验/重新评审")
+        return {"message": "试产BOM已保存", "impact": impact}
 
     # ------------------------------------------------------------------
     # G-E3: 试产 BOM 与量产 BOM 差异对比
@@ -558,30 +725,66 @@ class TrialService:
         )
 
         written = 0
+        # ── G-B2：工艺参数继承清单（显式，不靠"顺手带上"）──────────
+        # 改造前只拷 7 个字段（工序/名称/序号/类型/工作中心/外协/备注），
+        # 把 route_steps 上真正决定产能与节拍的 5 个参数全丢了：
+        # setup_time_override / unit_time_override / is_parallel_eligible /
+        # next_step_seq / parallel_group。症状极其隐蔽 —— 正式路线建出来了、
+        # 工序一道不少，但准备时间/单件工时回到 0，排产算出来的产能凭空翻倍，
+        # 谁也不会想到是"转量产时丢的"。
+        # 试产的全部意义就是把这些参数试准，丢了等于白试。
+        param_fields = ("setup_time_override", "unit_time_override",
+                        "is_parallel_eligible", "next_step_seq",
+                        "parallel_group")
+        dropped_keys: set = set()
         for idx, step in enumerate(usable, start=1):
+            seq = step.get("step_seq") or step.get("seq") or idx
             await self.order_repo.execute(
                 "INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, "
-                "step_seq, step_type, wc_id, is_outsource, remark) "
-                "VALUES (:tid, :rid, :op, :name, :seq, :stype, :wc, :outs, :remark)",
+                "step_seq, step_type, wc_id, is_outsource, remark, "
+                "setup_time_override, unit_time_override, is_parallel_eligible, "
+                "next_step_seq, parallel_group) "
+                "VALUES (:tid, :rid, :op, :name, :seq, :stype, :wc, :outs, :remark, "
+                ":setup, :unit, :par, :nseq, :pgroup)",
                 {
                     "tid": self.order_repo.tenant_id,
                     "rid": route_id,
                     "op": step["operation_id"],
                     "name": step.get("step_name") or step.get("name") or f"工序{idx}",
-                    "seq": step.get("step_seq") or step.get("seq") or idx,
+                    "seq": seq,
                     "stype": step.get("step_type") or "normal",
                     "wc": step.get("wc_id"),
                     "outs": bool(step.get("is_outsource")),
                     "remark": step.get("remark"),
+                    "setup": step.get("setup_time_override"),
+                    "unit": step.get("unit_time_override"),
+                    "par": bool(step.get("is_parallel_eligible")),
+                    "nseq": step.get("next_step_seq"),
+                    "pgroup": step.get("parallel_group"),
                 },
             )
             written += 1
+            # 试产路线里带了但正式 route_steps 没有落点的键 → 如实报出来，
+            # 而不是静默丢弃（"继承范围"这事的答案必须是可核对的清单）。
+            dropped_keys.update(k for k in step
+                                if k not in ("operation_id", "step_name", "name",
+                                             "step_seq", "seq", "step_type",
+                                             "wc_id", "is_outsource", "remark",
+                                             *param_fields))
 
+        inherited = ["operation_id", "step_name", "step_seq", "step_type",
+                     "wc_id", "is_outsource", "remark", *param_fields]
         if missing:
             warnings.append(f"试产路线有 {missing} 道工序缺 operation_id，已跳过")
         warnings.append("正式路线已生成但状态为 draft，需工艺工程师确认后发布")
+        if dropped_keys:
+            warnings.append(
+                "以下试产路线字段在正式工序上没有对应列、未继承："
+                + "、".join(sorted(dropped_keys)))
         return {"written": written, "route_id": route_id, "code": code,
-                "status": "draft", "missing_operation": missing}
+                "status": "draft", "missing_operation": missing,
+                "inherited_fields": inherited,
+                "not_inherited_fields": sorted(dropped_keys)}
 
     async def _ensure_product_material(self, order: Dict, warnings: List[str]) -> Dict:
         """转量产 → 确保成品在 ``materials`` 有档案。
@@ -628,12 +831,23 @@ class TrialService:
         }
 
     async def terminate_trial(self, order_id: int, reason: str = None) -> Dict:
-        """终止试产"""
+        """终止试产（G-E1：失败原因必填）。
+
+        ★为什么必须填原因：试产终止 = 一次失败归档。终止原因就是这次失败
+        唯一的结论沉淀 —— 不填的话，半年后翻到这张"已终止"的单子，谁也说不清
+        是配方不行、设备不行还是市场变了，同样的坑会再踩一遍。改造前
+        ``reason`` 是可选参数，不传就写 NULL，接口照样 200。
+        """
         order = await self.order_repo.get_order(order_id)
         if not order:
             return {"error": "试产工单不存在"}
         if order["status"] in FINAL_STAGES:
             return {"error": f"试产已处于终态({order['status']})"}
+
+        reason = (reason or "").strip()
+        if not reason:
+            return {"error": "终止原因必填：试产失败归档后要靠它复盘，"
+                             "空原因等于把这次失败的经验丢掉"}
 
         now = datetime.now().isoformat()
         await self.order_repo.update_order(order_id, {

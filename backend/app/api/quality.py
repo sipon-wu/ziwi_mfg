@@ -364,6 +364,32 @@ async def create_order(
             raise HTTPException(400, detail={
                 "code": "400-0000",
                 "message": f"关联的工单不存在: {data['work_order_id']}"})
+    # ── G-E4：试产检验必须挂到试产单上 ─────────────────────────
+    # 试产走的不是正式工单流，所以试产检验单只能靠 trial_order_id 硬链。
+    # 缺了它：判不合格自动开的 NCR 挂不回试产项目（评审会问"哪个试产的失败"
+    # 答不出来），也筛不出"这批试产一共出了几张不合格单"。
+    if data.get("order_type") == "trial" or data.get("trial_order_id"):
+        if data.get("order_type") != "trial":
+            # 传了试产单就说明这是试产检验，别让 order_type 留在 ipqc/fqc 上
+            # —— source_type 直接决定 NCR 的隔离口径。
+            data["order_type"] = "trial"
+        if not data.get("trial_order_id"):
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": "试产检验必须指定 trial_order_id（试产单），否则判定结果无法回挂项目"})
+        if data.get("work_order_id"):
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": "试产检验不能关联正式工单（work_order_id）：试产没有正式工单，"
+                           "混挂会把试产不合格算进量产口径，隔离就破了"})
+        from app.repositories.trial_repo import TrialOrderRepository
+        trial_repo = TrialOrderRepository(repo._session)
+        if repo.tenant_id:
+            trial_repo.set_tenant_id(repo.tenant_id)
+        if not await trial_repo.get_order(data["trial_order_id"]):
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": f"关联的试产单不存在: {data['trial_order_id']}"})
     data = await _resolve_sampling_plan(repo, data)
     # 自动生成检验单号: QC-YYYYMMDD-NNNN
     today_prefix = f"QC-{date.today().strftime('%Y%m%d')}-"
@@ -522,6 +548,25 @@ async def judge_order(
             ncr_repo.set_write_org_id(repo._write_org_id)
         svc = NcrService(repo._session, repo.tenant_id, repo=ncr_repo)
         source_type = order.get("order_type") or "inspection"
+        # ── G-E4：试产 NCR 与量产 NCR 隔离 ─────────────────────
+        # 隔离要落到「看得见」的地方，光靠 source_type 字段不够 —— 单号是
+        # 人最常引用的标识，前缀不同才能一眼分清；同时把试产单号写进
+        # defect_desc，评审会翻到这张 NCR 就知道是哪次试产出的事。
+        ncr_no = f"NC-{order.get('order_no')}"
+        defect_desc = (f"检验单 {order.get('order_no')} 判定不合格（REJ），"
+                       f"自动发起不合格评审")
+        if source_type == "trial":
+            trial_no = None
+            if order.get("trial_order_id"):
+                t_row = await repo.query_one(
+                    "SELECT order_no FROM trial_orders WHERE id = :i",
+                    {"i": order["trial_order_id"]})
+                trial_no = (t_row or {}).get("order_no")
+            trial_ref = trial_no or order.get("trial_order_id") or "未关联"
+            ncr_no = f"NC-TR-{trial_ref}"
+            defect_desc = (f"试产检验单 {order.get('order_no')}"
+                           f"（试产单 {trial_ref}）判定不合格（REJ），"
+                           f"自动发起试产不合格评审（不计入量产不良率）")
         existing = await ncr_repo.get_by_source(source_type, order_id)
         if existing:
             ncr_id = existing["id"]
@@ -529,7 +574,7 @@ async def judge_order(
             created = await svc.create_ncr(
                 {
                     "tenant_id": repo.tenant_id,
-                    "ncr_no": f"NC-{order.get('order_no')}",
+                    "ncr_no": ncr_no,
                     "source_type": source_type,
                     "source_id": order_id,
                     "source_no": order.get("order_no"),
@@ -539,7 +584,7 @@ async def judge_order(
                     "supplier_id": supplier_id,
                     "total_qty": defect_qty,
                     "defect_qty": defect_qty,
-                    "defect_desc": f"检验单 {order.get('order_no')} 判定不合格（REJ），自动发起不合格评审",
+                    "defect_desc": defect_desc,
                     "raised_by": user.get("id"),
                 },
                 actor_id=user.get("id"),

@@ -193,23 +193,21 @@ async def get_trial_bom(
 async def save_trial_bom(
     order_id: int,
     req: SaveTrialBomRequest,
-    repo: TrialBomRepository = Depends(get_tenant_repo(TrialBomRepository)),
+    repo: TrialOrderRepository = Depends(get_tenant_repo(TrialOrderRepository)),
 ):
-    """M16-03: 保存/更新试产BOM"""
-    existing = await repo.get_by_order(order_id)
-    bom_json = json.dumps(req.bom_json, ensure_ascii=False) if req.bom_json else "[]"
-    data = {
-        "tenant_id": repo.tenant_id or "default",
-        "trial_order_id": order_id,
-        "bom_json": bom_json,
-        "source_type": req.source_type,
-        "source_bom_id": req.source_bom_id,
-    }
-    if existing:
-        await repo.update_bom(existing["id"], data)
-    else:
-        await repo.create_bom(data)
-    return {"code": 0, "message": "试产BOM已保存"}
+    """M16-03: 保存/更新试产BOM（G-E2：返回本次变更的影响面）。
+
+    只回一句"已保存"是不够的 —— 配方变了，按旧配方做的检验、提交的评审、
+    算过的成本就都作废了。改了什么、谁必须重新确认，要一并答出来。
+    """
+    svc = TrialService(repo)
+    result = await svc.save_bom(order_id, {
+        **req.model_dump(),
+        "tenant_id": repo.tenant_id,
+    })
+    if result.get("error"):
+        raise HTTPException(400, detail={"code": "400-0000", "message": result["error"]})
+    return {"code": 0, "message": result["message"], "data": result["impact"]}
 
 
 @router.get("/{order_id}/bom-diff")
@@ -339,6 +337,8 @@ async def convert_to_production(
             # 成品物料档案：转产顺带把 products 的成品补进 materials，
             # 否则「完工自动生成入库单」会因为缺档案一直 skipped。
             "material": result.get("material"),
+            # G-B1 签核证据：转量产是谁批的，必须答得出来
+            "signoff": result.get("signoff", []),
             "warnings": result.get("warnings", []),
         },
     }

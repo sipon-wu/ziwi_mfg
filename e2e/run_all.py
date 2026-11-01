@@ -47,6 +47,7 @@ DEFAULT_PROBES = [
     "quality_edge_e2e",
     "basic_data_edge_e2e",
     "tpm_edge_e2e",
+    "trial_edge_e2e",
     "batch_trace_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",

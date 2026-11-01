@@ -139,6 +139,10 @@ class InspectionOrderResponse(BaseModel):
 class CreateInspectionOrderRequest(BaseModel):
     order_type: str
     work_order_id: Optional[int] = None
+    # G-E4：试产检验来源（trial_orders.id）。order_type='trial' 时必填 ——
+    # 试产没有正式工单，没有这条硬链就只能靠 order_type 字符串猜，
+    # 判不合格自动开的 NCR 也就挂不回试产项目。
+    trial_order_id: Optional[int] = None
     process_id: Optional[int] = None
     material_id: Optional[int] = None
     qc_point_id: Optional[int] = None
@@ -155,6 +159,7 @@ class CreateInspectionOrderRequest(BaseModel):
 class UpdateInspectionOrderRequest(BaseModel):
     order_type: Optional[str] = None
     work_order_id: Optional[int] = None
+    trial_order_id: Optional[int] = None
     process_id: Optional[int] = None
     material_id: Optional[int] = None
     qc_point_id: Optional[int] = None

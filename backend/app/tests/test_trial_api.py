@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 class TestM16Trial:
@@ -254,10 +254,24 @@ class TestM16Trial:
 
     async def test_save_trial_bom_new(self, async_client):
         """M16-03: 保存试产BOM（新建）"""
+        # G-E2 起保存走 Service（要算影响面），因此需要试产单本身可查：
+        # 拿不到单子就无法判断"是否已开始试做 / 是否已转量产"。
         with (
-            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order") as mock_get,
-            patch("app.repositories.trial_repo.TrialBomRepository.create_bom") as mock_create,
+            patch("app.repositories.trial_repo.TrialOrderRepository.get_order",
+                  new_callable=AsyncMock) as mock_order,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query_one",
+                  new_callable=AsyncMock) as mock_q,
+            patch("app.repositories.trial_repo.TrialReviewRepository.list_by_order",
+                  new_callable=AsyncMock) as mock_rev,
+            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order",
+                  new_callable=AsyncMock) as mock_get,
+            patch("app.repositories.trial_repo.TrialBomRepository.create_bom",
+                  new_callable=AsyncMock) as mock_create,
         ):
+            mock_order.return_value = {"id": 1, "status": "planning",
+                                       "product_id": 1, "order_no": "NP-1"}
+            mock_q.return_value = {"c": 0}
+            mock_rev.return_value = []
             mock_get.return_value = None
             mock_create.return_value = 1
             resp = await async_client.put("/api/v1/trials/1/bom", json={
@@ -267,13 +281,27 @@ class TestM16Trial:
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
         assert resp.json()["message"] == "试产BOM已保存"
+        # 影响面必须一起返回：只回"已保存"等于让用户自己去猜改了什么
+        assert resp.json()["data"]["summary"]["added"] == 1
 
     async def test_save_trial_bom_update(self, async_client):
         """M16-03: 更新已存在的试产BOM"""
         with (
-            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order") as mock_get,
-            patch("app.repositories.trial_repo.TrialBomRepository.update_bom") as mock_upd,
+            patch("app.repositories.trial_repo.TrialOrderRepository.get_order",
+                  new_callable=AsyncMock) as mock_order,
+            patch("app.repositories.trial_repo.TrialOrderRepository.query_one",
+                  new_callable=AsyncMock) as mock_q,
+            patch("app.repositories.trial_repo.TrialReviewRepository.list_by_order",
+                  new_callable=AsyncMock) as mock_rev,
+            patch("app.repositories.trial_repo.TrialBomRepository.get_by_order",
+                  new_callable=AsyncMock) as mock_get,
+            patch("app.repositories.trial_repo.TrialBomRepository.update_bom",
+                  new_callable=AsyncMock) as mock_upd,
         ):
+            mock_order.return_value = {"id": 1, "status": "planning",
+                                       "product_id": 1, "order_no": "NP-1"}
+            mock_q.return_value = {"c": 0}
+            mock_rev.return_value = []
             mock_get.return_value = {"id": 10, "trial_order_id": 1, "bom_json": "[]"}
             mock_upd.return_value = 1
             resp = await async_client.put("/api/v1/trials/1/bom", json={

@@ -260,11 +260,50 @@ async def test_convert_rejects_without_review():
 
 @pytest.mark.parametrize("concl", ["pending", "terminated", "adjust"])
 async def test_convert_rejects_unapproved_review(concl):
+    """未通过/未签核的评审一律不能转量产。
+
+    G-B1 起口径细分：``pending`` 是「还没签」，其余是「签了但没通过」——
+    两句话对用户的意义不同（前者去催人，后者要改方案），所以分开报。
+    """
     svc, _, ctx = build()
     ctx["reviews"] = [{"id": 1, "conclusion": concl}]
     out = await svc.convert_to_production(7)
-    assert "评审未通过" in out["error"]
-    assert concl in out["error"]
+    if concl == "pending":
+        assert "尚未签核" in out["error"]
+    else:
+        assert "评审未通过" in out["error"]
+        assert concl in out["error"]
+
+
+async def test_convert_requires_all_stages_signed():
+    """G-B1 多方签核：三方里只批一方，另外两方挂着 pending 不能转产。
+
+    改造前只看 ``reviews[0]`` 一条的结论 —— 最早那条批了就能转，
+    「多方签核」形同虚设，等于最宽松的那一方说了算。
+    """
+    svc, _, ctx = build()
+    ctx["reviews"] = [
+        {"id": 3, "review_stage": "production", "conclusion": "pending"},
+        {"id": 2, "review_stage": "quality", "conclusion": "pending"},
+        {"id": 1, "review_stage": "process", "conclusion": "approved"},
+    ]
+    out = await svc.convert_to_production(7)
+    assert out.get("error")
+    assert "quality" in out["error"] and "production" in out["error"]
+    assert "process" not in out["error"]
+
+
+async def test_convert_signoff_evidence_returned():
+    """全签后返回签核证据，且同一 stage 多次提交只认最新一条。"""
+    svc, _, ctx = build()
+    ctx["reviews"] = [
+        {"id": 5, "review_stage": "process", "conclusion": "approved"},
+        {"id": 2, "review_stage": "process", "conclusion": "adjust"},  # 旧版本，忽略
+    ]
+    out = await svc.convert_to_production(7)
+    assert out.get("error") is None
+    assert len(out["signoff"]) == 1
+    assert out["signoff"][0]["conclusion"] == "approved"
 
 
 @pytest.mark.parametrize("concl", ["approved", "conditional_approve"])
