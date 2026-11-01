@@ -133,13 +133,13 @@
 | F-S5 | 备件领用 → 库存扣减 | 关联维修单 | ✅ 全通（C-58，`wms_receipt_count_e2e` F-S5 段 8/0）：改造前**没有入口** —— 备件主数据（spare_parts）与流水表（spare_part_inventories）都在，但没有任何端点能发起领用，流水表常年 0 行，备件是「有主数据、无业务」。新增 `POST /spare-parts/{id}/consume` + `GET /{id}/movements`，三条契约：①库存不足即拒（备件不做欠料出库，领成负数会让缺口越滚越大）；②流水带 before/after 快照（备件只有 current_stock 一个数字，不记快照事后只知道「现在是几」）；③挂维修单必须校验存在（否则界面显示已关联、实际挂空 id，备件成本永远归不到那次维修）。顺带修：spare_part_inventories 缺 tenant_id 列（读流水 no such column）、create_spare_part 漏 max_stock（固定列 INSERT 漏列第六次复发）、consume 未登记进 EXECUTE_SUFFIXES（否则生成没人拥有的权限码，非 admin 全员 403） |
 | F-S6 | 能耗采集 → 核算 → 报表 | 采集任务 | ✅ |
 | F-S7 | 碳排放核算（PCF） | 排放因子 | ✅ 全通（`scenario_sweep_e2e` F-S7 段 6/0，含**交叉校验**）：核算接口的按能源类型明细与逐行加总一致（3 类能源全对得上）、总排放=各类型之和（1274 kg）、吨/公斤换算一致。注：判据是「接口 vs 自己算」而非「接口返回 200」 |
-| F-E1 | 保养任务逾期 | 告警+升级 | ❓ |
-| F-E2 | 设备停用但有在制工单 | 应拦截 | ❓ |
+| F-E1 | 保养任务逾期 | 告警+升级 | ✅ 全通（C-72，`tpm_edge_e2e` F-E1 段 6/0）：改造前「到期」只体现在 `scheduled_start_at` 这个时间戳上 —— 计划生成任务之后谁逾期了、逾期几天，接口不说，界面也不说，全靠人对着日期算，越拖越久也没人往上捅。现在列表每条带 `is_overdue` / `overdue_days` / `escalation`（≥3 天 `urgent`、≥7 天 `critical`），另加 `GET /maintenance-tasks/overdue` 专项清单（按逾期天数降序 + critical/urgent 计数）；completed / canceled 不参与判定（做完的活不能还挂红灯）。坑：`scheduled_start_at` 从 SQLite 出来是**字符串**，直接与 datetime 相减 TypeError → 必须先过 `_as_dt` 归一 |
+| F-E2 | 设备停用但有在制工单 | 应拦截 | ✅ 全通（C-72，`tpm_edge_e2e` F-E2 段 5/0）：设备报废（`status=scrapped`）前查 `work_orders` 是否有 released / in_progress / paused 工单，有则 400 并点名台数与设备名（「请先转产或作废这些工单」）—— 一停就成了排在一片停机坪上的单，开工不了也说不清该转给谁。**关键是拦住了就不写库**（报错但状态已改是最坏结果）。另修 API 层未把 ValueError 映射成 400 → 前端只能看到 500「服务器错误」 |
 | F-E3 | 安灯超时未响应 → 自动升级 | 规则驱动 | ✅ |
-| F-E4 | 备件库存不足领用 | 应告警 | ❓ |
-| F-B1 | 设备跨车间调拨 | 归属变更留痕 | ❓ |
-| F-B2 | 保养周期为 0 或负数 | 应拦截 | ❓ |
-| F-B3 | 能耗数据缺失补录 | 补录留痕（occurred_at） | ❓ |
+| F-E4 | 备件库存不足领用 | 应告警 | ✅ 全通（C-72，`tpm_edge_e2e` F-E4 段 4/0）：库存不足即 400 并给出「现有 X，要领用 Y」（备件不做欠料出库 —— 领成负数只会让下一次领用继续成功，缺口越滚越大且无人察觉）；被拒后库存保持 0，**不会写成负数**；足量领用扣库存到 7 并写 `spare_part_inventories` 流水（含 before/after 快照），流水可查 |
+| F-B1 | 设备跨车间调拨 | 归属变更留痕 | ✅ 全通（C-72，`tpm_edge_e2e` F-B1 段 3/0）：`location` 变更写 `audit_logs` 的 `equipment.transfer`（actor_id/actor_name + before/after 归属 + 人话 message「设备 X 调拨：冲压车间 → 装配车间」）。改造前只改一个字符串，谁在什么时候挪的、从哪儿挪的全无记录。归属未变不写（避免噪声）；审计不可用不阻断调拨（审计是旁路设施） |
+| F-B2 | 保养周期为 0 或负数 | 应拦截 | ✅ 全通（C-72，`tpm_edge_e2e` F-B2 段 4/0）：`cycle_value ≤ 0` 一律 400。0 会被 `add_cycle` 的 `value or 1` **静默当 1**（我填 0 却按 1 跑）；负数更糟 —— `next_execute_at` 直接落到过去，每次扫描都「到期」→ 生成任务风暴，且逾期天数永远为正。正常周期 1（月）仍能算出 `next_execute_at` |
+| F-B3 | 能耗数据缺失补录 | 补录留痕（occurred_at） | ✅ 全通（C-72，`tpm_edge_e2e` F-B3 段 6/0）：业务时间 `data_time` 与写库时间 `created_at` 天然分离 —— 两者不同就是「这条数是补的」最硬的证据，事后按 `created_at > data_time + 1h` 即可筛出全部补录；接口同时返回 `is_backfill`。未来时间（>now+5min）一律 400（时钟错乱/参数填错，放进库会污染按时间窗的统计）；批量写入含未来时间**整批拒**（不做部分写入，实测落库条数分毫不差）。★ 顺带修一个必炸的真缺陷：`value_numeric` 是 `Numeric(14,4)` 而 schema 声明 `Decimal`，SQLite 方言没有 Numeric bind 处理器 → `type 'decimal.Decimal' is not supported`，**IoT 采集数据在 SQLite 环境下一条都写不进去**（PG 上 asyncpg 自己吃 Decimal 所以一直没暴露）→ 仓储层统一转 float |
 
 ## G. 试产与实验室（NPI / 小试·中试·小批量）
 
@@ -187,7 +187,7 @@
 | X 跨模块 | 10 | — | — | 10 |
 | **合计** | **64** | **39** | **22** | **125** |
 
-现状分布（2026-11-01 复核后按**状态列脚本统计**重数）：✅ 105 项｜⚠️ 0 项｜❌ 0 项｜❓ 20 项待验证
+现状分布（2026-11-01 C-72 收口后按**状态列脚本统计**重数）：✅ 111 项｜⚠️ 0 项｜❌ 0 项｜❓ 14 项待验证
 
 **⚠️ 已清零**：A-S1（开通租户/初始化管理员/首登改密）、A-S7（审批模板节点）、B-S7（判为 ERP 边界外）均已收口
 

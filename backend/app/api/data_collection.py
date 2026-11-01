@@ -11,9 +11,14 @@ from app.schemas.data_collection import (
     CreateIoTDeviceRequest,
     CreateLinkMonitorRequest,
 )
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/v1/collect", tags=["M12-数据采集"])
+
+
+def _as_aware(dt: datetime) -> datetime:
+    """朴素时间按本地时区补上 tzinfo（pydantic 可能给 naive datetime）。"""
+    return dt.astimezone() if dt.tzinfo is None else dt
 
 
 # ==================== 数据源配置 ====================
@@ -176,11 +181,29 @@ async def create_collect_record(
     current_user: dict = Depends(get_current_user),
     repo: DataCollectionRepository = Depends(get_tenant_repo(DataCollectionRepository)),
 ):
-    """写入单条采集数据（IoT 数据入口）"""
+    """写入单条采集数据（IoT 数据入口）。
+
+    F-B3 补录留痕：
+    - **业务时间 `data_time` 与写库时间 `created_at` 分开存**，补录时两者
+      必然不同 —— 这就是"这条数是补的"最硬的证据，事后按 `created_at >
+      data_time + 1h` 即可筛出全部补录。
+    - **未来时间一律拒**：`data_time` 晚于当前时间说明时钟错乱或参数填错，
+      放进库里会污染按时间窗的统计（能耗日报把明天的量算进今天）。
+    """
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
+    dt = _as_aware(data["data_time"])
+    now = datetime.now(timezone.utc)
+    if dt > now + timedelta(minutes=5):
+        raise HTTPException(400, detail={
+            "code": "400-0000",
+            "message": (f"数据时间 {dt.isoformat()} 晚于当前时间，"
+                        f"疑似时钟错乱或参数填错")})
     record_id = await repo.create_collect_record(data)
-    return {"code": 0, "message": "数据已写入", "data": {"id": record_id}}
+    return {"code": 0, "message": "数据已写入",
+            "data": {"id": record_id,
+                     "data_time": dt.isoformat(),
+                     "is_backfill": (now - dt) > timedelta(hours=1)}}
 
 
 @router.post("/records/batch")
@@ -189,11 +212,18 @@ async def batch_create_collect_records(
     current_user: dict = Depends(get_current_user),
     repo: DataCollectionRepository = Depends(get_tenant_repo(DataCollectionRepository)),
 ):
-    """批量写入采集数据（IoT 高频数据入口）"""
+    """批量写入采集数据（IoT 高频数据入口）。未来数据时间同单条规则一并拒。"""
     tenant_id = current_user.get("tenant_id", "default")
+    now = datetime.now(timezone.utc)
     records = []
-    for r in req.records:
+    for i, r in enumerate(req.records):
         rec = r.model_dump()
+        dt = _as_aware(rec["data_time"])
+        if dt > now + timedelta(minutes=5):
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": (f"第 {i + 1} 条数据时间 {dt.isoformat()} 晚于当前时间，"
+                            f"整批已拒绝（不做部分写入）")})
         rec["tenant_id"] = tenant_id
         records.append(rec)
     count = await repo.batch_create_collect_records(records)

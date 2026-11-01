@@ -114,7 +114,23 @@ class DataCollectionRepository(MultiTenantRepository):
         sql += " ORDER BY data_time DESC"
         return await self.query_page(sql, params, page, page_size)
 
+    @staticmethod
+    def _norm_numeric(rec: dict) -> dict:
+        """Numeric 列的值统一转 float。
+
+        ★ 真缺陷（非洁癖）：``value_numeric`` 是 ``Numeric(14, 4)``，Pydantic
+        schema 声明成 ``Decimal``。SQLite 方言对 Numeric **没有** bind 处理器，
+        会把 ``decimal.Decimal`` 原样交给 sqlite3 → ``ProgrammingError: type
+        'decimal.Decimal' is not supported``，**IoT 采集数据在 SQLite 环境下
+        一条都写不进去**（PG 上因为是 asyncpg 能自己吃 Decimal 才一直没暴露）。
+        float 在两种后端都能绑，且 14.4 的精度远在 float 有效位数之内。
+        """
+        if rec.get("value_numeric") is not None:
+            rec = {**rec, "value_numeric": float(rec["value_numeric"])}
+        return rec
+
     async def create_collect_record(self, data: dict) -> int:
+        data = self._norm_numeric(data)
         return await self.execute(
             "INSERT INTO collect_data_record (tenant_id, task_id, device_id, gateway_id, "
             "data_time, point_name, value_numeric, value_text, value_boolean, quality, "
@@ -129,6 +145,7 @@ class DataCollectionRepository(MultiTenantRepository):
         """批量写入采集数据 — 高频IoT数据入口（批量INSERT语法，单次DB交互）"""
         if not records:
             return 0
+        records = [self._norm_numeric(r) for r in records]
         from sqlalchemy import text
         columns = list(records[0].keys())
         placeholders = ", ".join([

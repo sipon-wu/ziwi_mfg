@@ -90,6 +90,15 @@ class MaintenanceService:
     async def create_plan(self, data: dict) -> Dict:
         payload = {k: v for k, v in data.items() if v is not None}
         now = datetime.now(timezone.utc)
+        # ── F-B2：周期为 0 / 负数一律拒 ────────────────────────
+        # 0 会被 `add_cycle` 里的 `value or 1` 悄悄当成 1（"每月保养"变成
+        # "每月保养"看似无害，实际是"我填的是 0 却按 1 跑"的静默改写）；
+        # 负数更糟：next_execute_at 直接落到过去 → 每次扫描都"到期"，
+        # 生成任务风暴，且逾期天数永远为正。
+        value = payload.get("cycle_value", data.get("cycle_value"))
+        if value is not None and int(value) <= 0:
+            raise ValueError(f"保养周期必须为正整数（当前 {value}）："
+                             f"0/负数会让到期时间算不出来或永久逾期")
         if not payload.get("next_execute_at"):
             # 改造前这里根本不写 next_execute_at → 新计划永远不到期
             payload["next_execute_at"] = add_cycle(

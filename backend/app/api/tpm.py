@@ -58,10 +58,24 @@ async def get_equipment(
 @router.put("/equipment/{eq_id}")
 async def update_equipment(
     eq_id: int, req: UpdateEquipmentRequest,
+    current_user: dict = Depends(get_current_user),
     repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
 ):
+    """更新设备。
+
+    ★ ValueError 必须在这里翻成 400：报废拦截与"设备不存在"都是业务拒绝，
+    不翻的话 Service 抛什么、前端就吃 500 —— 前端只能显示"服务器错误"，
+    用户看不到"还有 3 张在制工单"这句真正有用的话。
+    """
     svc = TpmService(repo)
-    result = await svc.update_equipment(eq_id, req.model_dump(exclude_unset=True))
+    try:
+        result = await svc.update_equipment(
+            eq_id, req.model_dump(exclude_unset=True),
+            actor_id=current_user.get("id"),
+            actor_name=(current_user.get("real_name")
+                        or current_user.get("username")))
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "更新成功", "data": result}
 
 
@@ -83,6 +97,17 @@ async def list_tasks(
 ):
     svc = TpmService(repo)
     data = await svc.list_tasks(page, page_size, status)
+    return {"code": 0, "message": "success", "data": data}
+
+
+# ★ 静态段必须注册在 /maintenance-tasks/{task_id} 之前（路由遮蔽铁律）
+@router.get("/maintenance-tasks/overdue")
+async def list_overdue_tasks(
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """F-E1：逾期未完成的保养任务清单（含升级等级）。"""
+    svc = TpmService(repo)
+    data = await svc.list_overdue_tasks()
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -230,7 +255,11 @@ async def create_plan(
     # 走 Service 而不是直接 INSERT：只有 Service 会算出 next_execute_at，
     # 否则新计划永远是"不到期"的死数据（台账 C-39）
     svc = MaintenanceService(repo)
-    result = await svc.create_plan({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
+    try:
+        result = await svc.create_plan({**req.model_dump(),
+                                        "tenant_id": repo.tenant_id or "default"})
+    except ValueError as e:  # F-B2 周期非法等 —— 400 + 人话
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "创建成功", "data": result}
 
 
