@@ -18,8 +18,16 @@
 `is_system` 置 1。**不建角色、不动权限**（那两件由 `preset_roles` 负责，
 且必须由租户自己触发，迁移不应替客户决定要不要某个岗位）。
 
-注意 `is_system` 存量多为 NULL，判空必须写 `IS NULL OR = 0`：
-`is_system = false` 在 NULL 上求值为 NULL，WHERE 不成立，会**静默更新 0 行**。
+注意 `is_system` 存量多为 NULL，判空必须写成 `COALESCE(is_system, false) = false`：
+
+- 直接写 `is_system = false` 在 NULL 上求值为 NULL，WHERE 不成立，会**静默更新 0 行**；
+- 而原先写的 `is_system = 0` 是 **SQLite 语义**，在 PG 上 `boolean = integer`
+  没有匹配运算符，直接 `UndefinedFunctionError` 报错（本地 SQLite 跑通、
+  CVM 上必炸 —— 2026-11-01 首次上 staging 时即栽在这里）。
+
+`COALESCE(..., false) = false` 两种方言都成立：PG 走 boolean，SQLite 走 0/1，
+且把 NULL 归入"未回填"一侧。`SET is_system = true` 同理（SQLite ≥ 3.23 支持
+`true`/`false` 关键字）。
 
 用法
 ----
@@ -47,17 +55,17 @@ async def apply() -> bool:
     async with engine.begin() as conn:
         before = (await conn.execute(text(
             f"SELECT COUNT(*) FROM roles WHERE code IN ({placeholders}) "
-            f"AND (is_system IS NULL OR is_system = 0)"), params)).scalar()
+            f"AND COALESCE(is_system, false) = false"), params)).scalar()
         if not before:
             print("[skip] 内置角色 is_system 均已就位，无需回填")
             return False
         await conn.execute(text(
-            f"UPDATE roles SET is_system = 1 "
-            f"WHERE code IN ({placeholders}) AND (is_system IS NULL OR is_system = 0)"),
+            f"UPDATE roles SET is_system = true "
+            f"WHERE code IN ({placeholders}) AND COALESCE(is_system, false) = false"),
             params)
         after = (await conn.execute(text(
             f"SELECT COUNT(*) FROM roles WHERE code IN ({placeholders}) "
-            f"AND (is_system IS NULL OR is_system = 0)"), params)).scalar()
+            f"AND COALESCE(is_system, false) = false"), params)).scalar()
         print(f"[ok] 内置角色 is_system 回填：{before} → {after}（应为 0）")
     return True
 
