@@ -216,7 +216,14 @@ def main():
     r = c.get(f"{API}/downtimes", params={"equipment_id": eq_id, "page_size": 20})
     dts2 = items_of(r.json()) if r.status_code == 200 else []
     closed = [x for x in dts2 if x.get("ended_at")]
-    dur = (closed[0].get("duration_minutes") if closed else None)
+    # ★必须按 id 取"本次关闭的这一条"，不能取 closed[0]：列表按 started_at DESC
+    #   排序，而 A6b 刚把这条的起点往前挪了 90 分钟 —— 它反而排到**最后**，
+    #   closed[0] 读的是历史上另一条已关闭记录（时长 0.01），
+    #   于是服务端明明落库了 90 分钟（A11 顺延 90 也印证了），却被判成缺陷。
+    cur_closed = next((x for x in closed if x.get("id") == dt_id), None)
+    if cur_closed is None and closed:
+        cur_closed = max(closed, key=lambda x: x.get("id") or 0)
+    dur = (cur_closed.get("duration_minutes") if cur_closed else None)
     report("A10 解决后停机记录关闭并算出时长", bool(closed) and dur is not None,
            f"closed={len(closed)} duration_minutes={dur}")
     # 时长要和构造出来的 90 分钟对得上 —— 只判"非 None"会让 0 分钟的假时长蒙混过关

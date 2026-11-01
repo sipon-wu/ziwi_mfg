@@ -150,13 +150,25 @@ def main():
 
     # ── D10 绕过 API 直写库：DB 唯一索引必须拦住 ──
     print("\n── D10 越过应用层直写数据库 ──")
-    check("D10 DB 唯一索引拦住重复单号", probe_db_unique(rc_no),
-          "直接 INSERT 同号入库单 → IntegrityError")
+    # ★只有后端跑在本机 SQLite 上时这两条才有意义：探针是直接 sqlite3 连
+    #   backend/ziwi.db 写入的。指向 staging 时那条 SQL 落进**本地开发库**，
+    #   本地当然没有这个单号 → INSERT 成功 → 恒报"约束没生效"，
+    #   而 staging 的索引其实早就建好了（migrations/20261031_unique_doc_no.py）。
+    #   远端环境下如实跳过，不伪装成通过、也不冤枉成缺陷。
+    if _api_is_local():
+        check("D10 DB 唯一索引拦住重复单号", probe_db_unique(rc_no),
+              "直接 INSERT 同号入库单 → IntegrityError")
 
-    # ── D11 跨租户同号允许 ──
-    print("\n── D11 跨租户同号 ──")
-    check("D11 不同租户可用同一单号", probe_cross_tenant(rc_no),
-          "另一租户写入同号 → 成功（索引是 tenant 维度）")
+        # ── D11 跨租户同号允许 ──
+        print("\n── D11 跨租户同号 ──")
+        check("D11 不同租户可用同一单号", probe_cross_tenant(rc_no),
+              "另一租户写入同号 → 成功（索引是 tenant 维度）")
+    else:
+        print("  [SKIP] D10/D11：需要直写数据库才能验证 DB 层约束，"
+              f"当前 API 指向 {API}（非本机 SQLite）")
+        print("         staging 上的约束核对方式：")
+        print("         docker exec mfg1-db psql -U mfg -d mfg -c "
+              "\"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'uq_%_tenant_no'\"")
 
     print("\n" + "=" * 66)
     print(f"合计 {len(PASS) + len(FAIL)} 项：PASS {len(PASS)} / FAIL {len(FAIL)}"
@@ -172,6 +184,13 @@ def main():
 def _db_path():
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(os.path.dirname(here), "backend", "ziwi.db")
+
+
+def _api_is_local() -> bool:
+    """后端是不是就跑在本机（决定能不能直连 backend/ziwi.db 做 DB 级验证）。"""
+    from urllib.parse import urlparse
+    host = (urlparse(API).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
 
 
 def probe_db_unique(receipt_no: str) -> bool:

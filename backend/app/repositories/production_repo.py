@@ -77,7 +77,8 @@ class ProductionRepository(MultiTenantRepository):
     # ==================== 报工 ====================
     async def list_reports(self, page: int = 1, page_size: int = 20,
                             work_order_id: int = None, report_date: str = None) -> dict:
-        sql = """SELECT wr.id, wr.tenant_id, wr.work_order_id, wr.report_date, wr.reporter_id, 
+        sql = """SELECT wr.id, wr.tenant_id, wr.work_order_id, wr.report_date, wr.reporter_id,
+                 wr.org_id,
                  wr.operation_code, wr.operation_name, wr.output_qty, wr.scrap_qty, 
                  wr.defect_reason, wr.labor_hours, wr.status, wr.created_at, wr.reported_at,
                  wo.wo_no, wo.product_name
