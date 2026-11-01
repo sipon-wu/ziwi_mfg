@@ -48,7 +48,12 @@ class RoleRepository(MultiTenantRepository):
         vals = ":tenant_id, :name, :code, :description, COALESCE(:scope, 'ALL')"
         if "is_system" in params:
             cols += ", is_system"
-            vals += ", COALESCE(:is_system, 0)"
+            # ★兜底值必须是 false 而非 0：roles.is_system 在 PG 上是 BOOLEAN，
+            # COALESCE 要求两侧类型可统一，写 0 会直接
+            # DatatypeMismatchError: column "is_system" is of type boolean but
+            # expression is of type integer —— C-77 预置角色在 staging 上因此全挂
+            # （本地 SQLite 无类型检查，一路绿）。SQLite >= 3.23 同样接受 false。
+            vals += ", COALESCE(:is_system, false)"
         return await self.execute(
             f"INSERT INTO roles ({cols}) VALUES ({vals})", params)
 

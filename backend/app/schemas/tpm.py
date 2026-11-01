@@ -29,7 +29,7 @@ class CreateEquipmentRequest(BaseModel):
     category_id: Optional[int] = None
     model: Optional[str] = None
     manufacturer: Optional[str] = None
-    install_date: Optional[str] = None
+    install_date: Optional[date] = None
     location: Optional[str] = None
     power_kw: Optional[float] = None
     # 建时就允许指定（默认 idle）。改造前不带这个字段，INSERT 里也没有
@@ -59,8 +59,16 @@ class CreateMaintenanceTaskRequest(BaseModel):
     description: str
     priority: int = 0
     assignee_id: Optional[str] = None
-    scheduled_start_at: Optional[str] = None
-    scheduled_end_at: Optional[str] = None
+    # ★必须是 datetime 而不是 str：这两个字段直接落进 INSERT 参数，模型列是
+    # DateTime(timezone=True)。声明成 str 时 Pydantic 原样放行，
+    # SQLite 收字符串照单全收，PG 则报
+    #   DataError: invalid input for query argument $10:
+    #   '2026-10-22T11:59:42+00:00' (expected a datetime.date or datetime.datetime
+    #   instance, got 'str')
+    # —— 手工建保养任务在 staging 上直接 500。Pydantic 声明成 datetime 后
+    # 仍接受 ISO 字符串入参，前端无需改动。
+    scheduled_start_at: Optional[datetime] = None
+    scheduled_end_at: Optional[datetime] = None
     # 手工建任务时也可以挂来源计划与受影响工单（台账 C-39）。
     # 不挂计划 → 完工后不会滚动计划的下次到期日；不挂工单 → 保养停机不做排产调整。
     task_no: Optional[str] = None
@@ -111,7 +119,7 @@ class UpdateEquipmentRequest(BaseModel):
     category_id: Optional[int] = None
     model: Optional[str] = None
     manufacturer: Optional[str] = None
-    install_date: Optional[str] = None
+    install_date: Optional[date] = None
     location: Optional[str] = None
     power_kw: Optional[float] = None
     # ★ 改造前没有这一项：设备状态**根本无法通过 API 修改**。
