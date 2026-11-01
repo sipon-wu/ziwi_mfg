@@ -20,7 +20,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const BASE = 'http://127.0.0.1:5173';
+const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173';
 const API = 'http://127.0.0.1:8000/api/v1';
 const SHOT = path.join(__dirname, 'screenshots', 'role_perm_ui');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });

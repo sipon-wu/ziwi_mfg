@@ -23,7 +23,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const BASE = 'http://127.0.0.1:5173';
+const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173';
 const SHOT = path.join(__dirname, 'screenshots', 'role_crud');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });
 const TS = Date.now().toString().slice(-6);

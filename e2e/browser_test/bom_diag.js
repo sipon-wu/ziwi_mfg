@@ -1,6 +1,6 @@
 // bom_diag.js — 诊断 BOM 管理页线上真实渲染状态
 const { chromium } = require('playwright');
-const BASE = 'https://mfg1.ziwi.cn';
+const BASE = process.env.BASE_URL || 'https://mfg1.ziwi.cn';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });

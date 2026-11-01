@@ -5,7 +5,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const BASE = 'https://mfg1.ziwi.cn';
+const BASE = process.env.BASE_URL || 'https://mfg1.ziwi.cn';
 const API = 'https://mfg1.ziwi.cn/api/v1';
 const SHOT = path.join(__dirname, 'screenshots');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });

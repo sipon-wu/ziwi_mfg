@@ -5,7 +5,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
-const BASE = 'https://mfg1.ziwi.cn';
+const BASE = process.env.BASE_URL || 'https://mfg1.ziwi.cn';
 const SHOT = path.join(__dirname, 'screenshots');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
