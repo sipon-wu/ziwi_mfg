@@ -29,11 +29,18 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-_COLUMNS = [
-    ("source", "VARCHAR(20) DEFAULT 'web'"),
-    ("device_code", "VARCHAR(50)"),
-    ("measured_at", "TIMESTAMP"),
-]
+_COLUMNS = ["source", "device_code", "measured_at"]
+
+# source 需要 DEFAULT，其余不带默认值（历史行另有回填）
+_DEFAULT_SQL = {"source": " DEFAULT 'web'"}
+
+# ★列类型一律从模型编译，不手抄。
+# 手写 "TIMESTAMP" 曾在 PG 上埋过雷：模型声明的是 DateTime(timezone=True)
+# → 应为 TIMESTAMP WITH TIME ZONE，而写成裸 TIMESTAMP 建出的是 naive 列，
+# 于是服务层传 aware datetime（datetime.now(timezone.utc)）时
+# asyncpg 直接报 "can't subtract offset-naive and offset-aware datetimes"，
+# 批量录入 500。SQLite 对两者不作区分，所以本地全绿、上 staging 即炸。
+# 用 col.type.compile(dialect=...) 可保证与 create_all 建出的列完全一致。
 
 
 async def apply() -> bool:
@@ -41,6 +48,7 @@ async def apply() -> bool:
     from sqlalchemy import text
 
     from app.core.database import get_engine
+    from app.models.quality import InspectionResult
 
     engine = get_engine()
     changed = False
@@ -56,13 +64,16 @@ async def apply() -> bool:
             print("[skip] inspection_result 表不存在（全新库由 create_all 负责）")
             return False
 
-        for name, ddl in _COLUMNS:
+        for name in _COLUMNS:
             if name in existing:
                 print(f"[skip] {name} 已存在")
                 continue
+            type_sql = InspectionResult.__table__.c[name].type.compile(
+                dialect=engine.dialect)
             await conn.execute(text(
-                f"ALTER TABLE inspection_result ADD COLUMN {name} {ddl}"))
-            print(f"[ok] 新增列 inspection_result.{name}")
+                f"ALTER TABLE inspection_result ADD COLUMN {name} {type_sql}"
+                f"{_DEFAULT_SQL.get(name, '')}"))
+            print(f"[ok] 新增列 inspection_result.{name} ({type_sql})")
             changed = True
 
         if changed:
