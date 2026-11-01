@@ -10,7 +10,7 @@
 本种子的取舍
 ------------
 - 演示组织树建到"公司 → 车间/部门 → 班组"三层，覆盖 4 种 org_type。
-- **现有 10 个 test_\* 用户主组织留在公司根节点**：这样 DEPT_CHILD 解析出整棵树，
+- **现有 10 个 test_* 用户主组织留在公司根节点**：这样 DEPT_CHILD 解析出整棵树，
   可见范围与切换前完全一致（行为不变），不靠改演示数据来"演示"。
 - **另建 `demo_ws1_leader`（一号车间主任）挂在 ORG-WS1**：没有真实部门的观察点，
   数据范围"是否生效"就无法验证 —— 2026-10-30 切强制模式时才发现的盲区。
@@ -256,11 +256,22 @@ async def seed() -> dict:
                                           AND code = :c)"""),
                 {"t": TENANT, "u": uid, "c": role_code},
             )
+            # ★不要写成 INSERT ... SELECT :t, :u, r.id FROM roles WHERE r.tenant_id = :t：
+            # 同一个 :t 在 SELECT 列表和 WHERE 两处出现，PG 会分别推断成
+            # text / character varying 并报
+            #   AmbiguousParameterError: inconsistent types deduced for parameter $1
+            # （SQLite 不做参数类型推断，写法随意）。拆成两步最稳。
+            role_row = await conn.execute(
+                text("SELECT id FROM roles WHERE tenant_id = :t AND code = :c"),
+                {"t": TENANT, "c": role_code},
+            )
+            role_id = role_row.scalar()
+            if role_id is None:
+                continue
             await conn.execute(
                 text("""INSERT INTO user_roles (tenant_id, user_id, role_id, created_at)
-                        SELECT :t, :u, r.id, CURRENT_TIMESTAMP FROM roles r
-                        WHERE r.tenant_id = :t AND r.code = :c"""),
-                {"t": TENANT, "u": uid, "c": role_code},
+                        VALUES (:t, :u, :r, CURRENT_TIMESTAMP)"""),
+                {"t": TENANT, "u": uid, "r": role_id},
             )
             stats["demo_scoped"].append(f"{uname}@{org_code}({role_code})")
 
