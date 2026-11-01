@@ -121,7 +121,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); chart?.dispose() })
   <div style="background:#0a1628;min-height:100vh;color:#fff;padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div>
-        <h1 style="font-size:24px;color:#0d7377">知微制造 · 车间大屏</h1>
+        <h1 style="font-size:24px;color:#0d7377">知微智造 · 车间大屏</h1>
         <span style="color:#888;font-size:12px">{{ dayjs().format('YYYY-MM-DD HH:mm:ss') }}</span>
       </div>
       <van-button size="small" plain color="#0d7377" :loading="loading" @click="fetchStats">刷新</van-button>

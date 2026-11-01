@@ -30,7 +30,7 @@ async function handleLogin() {
     <div class="login-card">
       <div class="login-logo">
         <img src="/ziwilogo.png" alt="ziwi" class="login-logo-img" />
-        <span class="login-brand">知微制造</span>
+        <span class="login-brand">知微智造</span>
       </div>
       <p class="login-subtitle">ziwi SaaS 可配置数字化平台</p>
       <van-form @submit="handleLogin">

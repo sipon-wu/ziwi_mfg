@@ -4,7 +4,7 @@
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="sidebar-logo">
         <img src="/ziwilogo.png" alt="ziwi" class="logo-img" />
-        <span v-show="!sidebarCollapsed" class="logo-title">知微制造</span>
+        <span v-show="!sidebarCollapsed" class="logo-title">知微智造</span>
       </div>
 
       <nav class="sidebar-nav">
@@ -67,7 +67,7 @@
                 <path d="M0 1h20M0 8h20M0 15h20" fill="none" stroke="currentColor" stroke-width="2" />
               </svg>
             </span>
-            <span class="top-title">知微制造管理系统</span>
+            <span class="top-title">知微智造管理系统</span>
           </div>
           <div class="top-right">
             <span class="top-icon ai-copilot" title="AI 数据助手" @click="copilot.toggleDrawer(true)">
