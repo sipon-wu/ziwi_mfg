@@ -91,9 +91,16 @@ async function uiLogin(page, user, pass) {
       await sleep(500);
 
       // 行内展开按钮：.van-icon-arrow-down（在 .van-button @click.stop 内，不触发整行跳转）
-      const arrow = page.locator('.van-cell .van-icon-arrow-down').first();
+      // 两种列表形态：
+      //  · van-cell 卡片式 —— 行内 .van-icon-arrow-down 按钮
+      //  · 表格版（基础数据 4 页已改造）—— 点 tbody 整行展开，没有 van-icon
+      // 只认第一种会让 /basics/products 永远"未找到按钮"。
+      let arrow = page.locator('.van-cell .van-icon-arrow-down').first();
       if (await arrow.count() === 0) {
-        record(`并集-${pg.name}`, 'FAIL', '未找到行内展开(.van-icon-arrow-down)按钮，可能列表为空/懒加载未触发');
+        arrow = page.locator('table tbody tr:not(.row-detail-row)').first();
+      }
+      if (await arrow.count() === 0) {
+        record(`并集-${pg.name}`, 'FAIL', '未找到行内展开入口（van-cell 与表格版都未命中），可能列表为空/懒加载未触发');
         pr.error = 'no-arrow';
         perPage.push(pr);
         continue;

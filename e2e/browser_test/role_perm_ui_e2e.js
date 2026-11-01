@@ -21,12 +21,18 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173';
-const API = 'http://127.0.0.1:8000/api/v1';
+// 由 BASE 推导 —— 原来写死 http://127.0.0.1:8000/api/v1，
+// 导致「界面打 staging、API 打本地开发库」两套环境混用，
+// 建角色建到本地去了，回头看 staging 的页面当然对不上。
+const API = (process.env.API_BASE || `${BASE}/api/v1`).replace(/\/$/, '');
 const SHOT = path.join(__dirname, 'screenshots', 'role_perm_ui');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });
 
 const PWD = 'test123456';
-const TMP_CODE = '__e2e_role';
+// ★角色编码规则：**小写字母开头**，后接小写字母/数字/下划线，2~40 位。
+//   原来是 '__e2e_role'（下划线开头）→ POST /roles 直接被 400 拒，
+//   拿到 role_id=undefined，后续所有 UI 断言跟着假红。
+const TMP_CODE = 'e2e_tmp_role';
 const results = [];
 function rec(id, name, status, detail) {
   results.push({ id, name, status, detail });
@@ -127,8 +133,14 @@ async function purgeTmpRole(page) {
     await page.locator('.rp-role', { hasText: TMP_CODE }).first().click();
     await sleep(1200);
     const statText = await page.locator('.rp-head__stats').innerText();
-    rec('U2b', '选中临时角色（初始 0 项）', /\/\s*332/.test(statText) ? 'PASS' : 'FAIL',
-      statText.replace(/\s+/g, ' '));
+    // ★原来断言里写死了权限总数 332（`/\/\s*332/`）。权限点会随模块增加，
+    //   现在已经是 371 —— 写死常量等于给权限体系设了个天花板，加了权限就假红。
+    //   真正要验的是「新建角色初始一项都没勾」，总数只要求 > 0。
+    const m2b = /已勾选\s*(\d+)\s*\/\s*(\d+)/.exec(statText.replace(/\s+/g, ' '));
+    const selCount = m2b ? Number(m2b[1]) : -1;
+    const totCount = m2b ? Number(m2b[2]) : 0;
+    rec('U2b', '选中临时角色（初始 0 项）',
+      selCount === 0 && totCount > 0, `已勾选=${selCount} 总数=${totCount}`);
 
     // ══════════ U3 勾选 → dirty ══════════
     // M01 生产管理默认展开（前两个模块默认展开：M00 / M01）

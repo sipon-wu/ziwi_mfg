@@ -6,7 +6,8 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE = process.env.BASE_URL || 'https://mfg1.ziwi.cn';
-const API = 'https://mfg1.ziwi.cn/api/v1';
+// 由 BASE 推导，避免「界面打 staging、API 打本地」两套环境混用
+const API = (process.env.API_BASE || `${BASE}/api/v1`).replace(/\/$/, '');
 const SHOT = path.join(__dirname, 'screenshots');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });
 const PFX = 'E2E_BROWSER_';

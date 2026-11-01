@@ -69,7 +69,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await field('用户名').fill('mfg_admin');
   await field('密码').fill('admin123');
   await page.locator('button[type="submit"]').click();
-  await sleep(2000);
+  // ★不能写死 sleep(2000)：本地 5173 几百毫秒就跳完，staging 实测要 ~4s
+  //   （登录 200 后还要拉权限/菜单），2000ms 到了页面还停在 #/login，
+  //   于是判"登录失败"，后续所有断言全被带成假红。改成等 URL 真正离开登录页。
+  await page.waitForURL(u => !u.toString().includes('login'), { timeout: 20000 })
+            .catch(() => {});
   rec('W1', '登录', page.url().includes('login') ? 'FAIL' : 'PASS', page.url());
 
   // ══════════ 预置一张入库单（1 行，走 API 更快，UI 只验证操作按钮） ══════════

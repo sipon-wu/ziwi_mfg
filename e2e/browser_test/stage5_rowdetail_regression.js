@@ -64,10 +64,17 @@ async function uiLogin(page, user, pass) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await sleep(800);
 
-      const expandBtn = page.locator('.van-cell .van-button:has(.van-icon-arrow-down)').first();
+      // 两种列表形态都要支持：
+      //  · van-cell 卡片式 —— 行尾有 arrow-down 按钮
+      //  · 表格版（基础数据 4 页已改造）—— 点 tbody 整行展开，没有 van-button
+      // 只认第一种会让 /basics/products 永远"未找到按钮"。
+      let expandBtn = page.locator('.van-cell .van-button:has(.van-icon-arrow-down)').first();
+      if (await expandBtn.count() === 0) {
+        expandBtn = page.locator('table tbody tr:not(.row-detail-row)').first();
+      }
       if (await expandBtn.count() === 0) {
         rowExpandTotal++;
-        record(`行展开-${lr.name}`, 'FAIL', '未找到行内展开(arrow-down)按钮');
+        record(`行展开-${lr.name}`, 'FAIL', '未找到行内展开按钮（van-cell 与表格版都未命中）');
       } else {
         await expandBtn.click();
         await sleep(800);
@@ -76,7 +83,9 @@ async function uiLogin(page, user, pass) {
           rowExpandTotal++;
           record(`行展开-${lr.name}`, 'FAIL', '点击展开后未出现 .row-detail');
         } else {
-          const rows = await page.$$('.row-detail .rd-row');
+          // ★新版 ListRowDetail 是「并集多列网格」，一格一个字段，类名由 v2 的
+      //   .rd-row 改成了 .rd-cell。拿旧类名数行，永远数到 0。
+      const rows = await page.$$('.row-detail .rd-cell');
           const countText = await page.$eval('.rd-header-count', (el) => el.textContent).catch(() => '');
           const countNum = parseInt((countText || '').replace(/\D/g, ''), 10);
           const headerOk = countNum === rows.length;
@@ -93,8 +102,8 @@ async function uiLogin(page, user, pass) {
               if (clamped) truncated = true;
             }
           }
-          const labels = await page.$$('.rd-row .rd-label');
-          const values = await page.$$('.rd-row .rd-value');
+          const labels = await page.$$('.row-detail .rd-label');
+          const values = await page.$$('.row-detail .rd-value');
           const ok = rows.length > 0 && labels.length === rows.length && values.length === rows.length && !hasFold && !truncated && headerOk;
           rowExpandTotal++;
           if (ok) rowExpandPass++;

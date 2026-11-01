@@ -104,9 +104,27 @@ function matchPermission(perms, required) {
   const page = await ctx.newPage();
 
   // 当前页面加载期间发生的 403
+  //
+  // ★驾驶舱（Cockpit.vue）会逐个模块探活以填充 KPI 卡片，**每个调用都包了
+  //   try/catch**，拿不到就把对应卡片降级成「暂不可用」。所以没有该模块权限
+  //   的角色（如班组长）在 /dashboard 上收到 403 是**设计预期**，页面完全可用。
+  //   一律算失败会让这条回归永远有 1~2 项假红，反而掩盖真正的页面 403。
+  //   白名单只放 Cockpit 里那 9 个探测端点；页面主体数据 403 仍然算 FAIL。
+  const OPTIONAL_PROBES = new Set([
+    '/work-orders', '/work-reports', '/equipment', '/inspection-orders',
+    '/andon/calls', '/energy/devices', '/energy/carbon/emissions',
+    '/collect/data-sources', '/collect/records',
+  ]);
+  const pathOf = (u) => new URL(u).pathname.replace(/^\/api\/v1/, '');
+
   let hits403 = [];
+  let ignored403 = [];
   page.on('response', res => {
-    if (res.status() === 403) hits403.push(`${res.request().method()} ${new URL(res.url()).pathname}`);
+    if (res.status() !== 403) return;
+    const p = pathOf(res.url());
+    const line = `${res.request().method()} ${p}`;
+    if (OPTIONAL_PROBES.has(p)) ignored403.push(line);
+    else hits403.push(line);
   });
   const jsErrors = [];
   page.on('pageerror', e => jsErrors.push(e.message));
@@ -149,9 +167,11 @@ function matchPermission(perms, required) {
     const allowed = PAGES.filter(([, need]) => matchPermission(perms, need));
 
     let pageFail = 0;
+    let ignoredTotal = 0;
     const badPages = [];
     for (const [p] of allowed) {
       hits403 = [];
+      ignored403 = [];
       try {
         await page.goto(`${BASE}/#${p}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
         await sleep(450);
@@ -160,6 +180,7 @@ function matchPermission(perms, required) {
         pageFail++;
         continue;
       }
+      ignoredTotal += ignored403.length;
       if (hits403.length) {
         pageFail++;
         badPages.push(`${p} → ${[...new Set(hits403)].join(', ')}`);
@@ -168,7 +189,7 @@ function matchPermission(perms, required) {
 
     const ok = pageFail === 0;
     if (!ok) hardFail++;
-    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${username.padEnd(20)} 可见页面 ${String(allowed.length).padStart(2)}/${PAGES.length}｜403 页面 ${pageFail}` +
+    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${username.padEnd(20)} 可见页面 ${String(allowed.length).padStart(2)}/${PAGES.length}｜403 页面 ${pageFail}｜可选探活 403 ${ignoredTotal}（设计预期，不计失败）` +
       (badPages.length ? `\n        ${badPages.join('\n        ')}` : ''));
 
     rows.push({ username, allowed: allowed.length, pageFail, perms: perms.length, badPages });

@@ -145,8 +145,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await shot('D1_admin_reports');
   rec('D1', 'admin 报工页有数据', adminRows > 0,
     `DOM 行数=${adminRows} API total=${adminApiTotal}`);
+  // ★页面一次只取 page_size=50 行，而 API 的 total 是全量（staging 上 183）。
+  //   直接拿 DOM 行数比 total 会恒红（50 vs 183），那是分页而不是漏渲染。
+  //   正确口径：该显示 min(total, 页大小) 行。
+  const adminExpect = Math.min(adminApiTotal, 50);
   rec('D1', 'DOM 行数与 API 一致（页面没自己过滤/漏渲染）',
-    adminRows === adminApiTotal, `DOM=${adminRows} API=${adminApiTotal}`);
+    adminRows === adminExpect, `DOM=${adminRows} 期望=${adminExpect} (total=${adminApiTotal})`);
 
   // ══════════ D2 ws1 主任登录 ══════════
   const scoped = await loginAs('demo_ws1_leader', 'admin123');
@@ -164,8 +168,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   rec('D3', 'ws1 主任的报工行数少于 admin（根节点报工不可见）',
     scopedRows >= 0 && scopedRows < adminRows, `scoped=${scopedRows} < admin=${adminRows}`);
+  const scopedExpect = Math.min(scopedApiTotal, 50);
   rec('D3', 'DOM 行数与 API 一致（过滤发生在后端，不是前端藏起来）',
-    scopedRows === scopedApiTotal, `DOM=${scopedRows} API=${scopedApiTotal}`);
+    scopedRows === scopedExpect, `DOM=${scopedRows} 期望=${scopedExpect} (total=${scopedApiTotal})`);
 
   const listText = await page.evaluate(() =>
     (document.querySelector('.van-list') || document.body).innerText);
@@ -189,8 +194,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const arr = dataOf(rr) || [];
       if (rr.status === 200 && arr.length > 0) { target = o; n = arr.length; break; }
     }
+    if (!target) {
+      // ★扫不到「有明细的根节点单」时**自己造一张**，而不是判失败。
+      //   存量检验单几乎都是只有单头没有明细（历史上明细录不进去），
+      //   拿数据现状当缺陷会把这条验证永久卡死 —— 那是环境问题，不是代码问题。
+      //   用 admin（公司根节点）建单 → 落在根组织；再录一条明细，就有了可比对的父单。
+      const rc = await api('POST', '/inspection-orders',
+        { order_type: 'iqc', material_id: 1, remark: `data-scope 探针 ${tag}` });
+      const oid = (dataOf(rc) || {}).id;
+      if (rc.status === 200 && oid) {
+        await api('POST', `/inspection-orders/${oid}/results/batch`,
+          { results: [{ item_name: `外观${tag}`, result: 'PASS', measured_value: 1.0, unit: '项' }] });
+        const rr = await api('GET', `/inspection-orders/${oid}/results`);
+        const arr = dataOf(rr) || [];
+        if (arr.length > 0) { target = { id: oid }; n = arr.length; }
+      }
+    }
     rec('D5', '存在有明细的根节点检验单', !!target,
-      target ? `order=${target.id} 明细 ${n} 条` : '扫完没有带明细的单');
+      target ? `order=${target.id} 明细 ${n} 条` : '扫完没有带明细的单，自建也没成功');
 
     if (target) {
       await loginAs('demo_ws1_leader', 'admin123');
