@@ -72,13 +72,16 @@ DEFAULT_PROBES = [
     "closed_loop_test",
 ]
 
-# 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；合计 N 项：PASS a / FAIL b
-# 汇总行格式在本目录里不统一，至少有三种：
-#   "通 44 / 断 0"   "PASS 33 / FAIL 0"   "汇总：38 段通 / 0 段断"
+# 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL
+# 汇总行格式在本目录里不统一，至少有四种：
+#   "通 44 / 断 0"   "PASS 33 / FAIL 0"   "11 PASS / 0 FAIL"   "汇总：38 段通 / 0 段断"
 # 只认一种会把"其实跑通了"的探针误判成 NOSUMMARY —— 那和漏跑没区别。
+# ★数字在前的形态（wms_realistic / factory_full_flow 用的）曾经漏掉，
+#   导致 11 PASS / 0 FAIL 被报成"未输出可识别汇总"，门禁假红。
 _SUMMARY_RE = re.compile(
     r"(?:通\s*(?P<ok1>\d+)\s*/\s*断\s*(?P<bad1>\d+))"
     r"|(?:PASS\s*(?P<ok2>\d+)\s*/\s*FAIL\s*(?P<bad2>\d+))"
+    r"|(?:(?P<ok4>\d+)\s*PASS\s*/\s*(?P<bad4>\d+)\s*FAIL)"
     r"|(?:(?P<ok3>\d+)\s*段通\s*/\s*(?P<bad3>\d+)\s*段断)", re.IGNORECASE)
 
 
@@ -118,10 +121,32 @@ def run_one(name: str, py: str, timeout: int = 300):
 
     ok = bad = 0
     for m in _SUMMARY_RE.finditer(out):
-        o = m.group("ok1") or m.group("ok2") or m.group("ok3")
-        b = m.group("bad1") or m.group("bad2") or m.group("bad3")
+        o = m.group("ok1") or m.group("ok2") or m.group("ok4") or m.group("ok3")
+        b = m.group("bad1") or m.group("bad2") or m.group("bad4") or m.group("bad3")
         if o is not None:
             ok, bad = int(o), int(b or 0)
+
+    # 少数探针只打结论不打计数（factory_full_flow 的 "══ 全流程 E2E: ✅ ALL PASS ══"、
+    # closed_loop_test 的 "0 bugs — ..."）。不给它们兜底就会被判成 NOSUMMARY，
+    # 等于白跑一场。
+    if "ALL PASS" in out and not bad:
+        ok = max(ok, 1)
+    if "HAS FAILURES" in out:
+        bad = max(bad, 1)
+    _bugs = re.search(r"(\d+)\s*bugs", out, re.IGNORECASE)
+    if _bugs:
+        _n = int(_bugs.group(1))
+        if _n:
+            bad = max(bad, _n)
+        else:
+            ok = max(ok, 1)
+    elif "BUGLIST" in out:
+        # closed_loop_test 有缺陷时不打 "N bugs"，只列 "1. [P0] 场景 | 端点"
+        _n = len(re.findall(r"^\s*\d+\.\s*\[", out, re.MULTILINE))
+        if _n:
+            bad = max(bad, _n)
+        else:
+            ok = max(ok, 1)
 
     if "[FATAL]" in out or "Traceback (most recent call last)" in out:
         status = "ERROR"
