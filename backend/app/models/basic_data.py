@@ -1,7 +1,8 @@
 # ── 基础数据模块 ORM 模型 ─────────────────────────────────────────
 # M01 产品管理 | M04 工序定义 | M05 工作中心 | M03 工艺路线 | M06 工厂日历
 
-from sqlalchemy import Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean
+from sqlalchemy import (Column, BigInteger, String, Integer, Float, DateTime, Text, Date,
+                       Boolean, UniqueConstraint)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -200,3 +201,46 @@ class FactoryCalendar(Base):
     weekday    = Column(Integer, comment="星期几(1~7, 1=周一)")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ── M00 供应商主数据（B-11 / C-78）───────────────────────────────
+
+class Supplier(Base):
+    """供应商主数据 —— MES 侧**只读快照 + 种子演示数据**。
+
+    ★ 权威源在 ERP。本表存在的唯一理由是 MES 需要它做两件事：
+    ① 来料检验 / NCR 能归到供应商（"按供应商分摊不良"此前永远算不出来，
+       因为 `ncr_records.supplier_id` 有列、没有可指向的表）；
+    ② 来料收货要记"这批货是谁送的"。
+
+    **不承担供应商生命周期管理** —— 准入、评级、SRM 协同属 M09/ERP 边界
+    （产品决策：供应商主数据 → M01 ERP 优先；M09 SRM 只管生命周期不管理主数据）。
+    因此本模块只提供读接口，写入口留给后续 ERP 同步（`source='erp'`），
+    演示环境由 `seeds/suppliers_seed.py` 造种子（`source='seed'`）。
+    """
+
+    __tablename__ = "suppliers"
+
+    id            = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id     = Column(String(50), nullable=False, comment="租户ID")
+    code          = Column(String(50), nullable=False, comment="供应商编码")
+    name          = Column(String(200), nullable=False, comment="供应商名称")
+    short_name    = Column(String(50), comment="简称（列表与选择器显示）")
+    category      = Column(String(30), default="raw",
+                           comment="类别: raw 原材料/pack 包材/outsource 外协/service 服务")
+    contact_name  = Column(String(100), comment="联系人")
+    contact_phone = Column(String(50), comment="联系电话")
+    email         = Column(String(100), comment="邮箱")
+    address       = Column(String(300), comment="地址")
+    tax_no        = Column(String(50), comment="税号（对账用）")
+    status        = Column(String(20), default="active", comment="状态: active/disabled")
+    source        = Column(String(20), default="seed",
+                           comment="来源: seed 种子/erp ERP同步/manual 手工")
+    erp_code      = Column(String(50), comment="ERP 侧供应商编码（同步对账用）")
+    remark        = Column(Text)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_supplier_tenant_code"),
+    )

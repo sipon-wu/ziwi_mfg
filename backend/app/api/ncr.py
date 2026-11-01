@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.ncr_repo import NcrRepository
+from app.repositories.supplier_repo import SupplierRepository
 from app.schemas.ncr import AdvanceNcrRequest, CreateNcrRequest
 from app.services.ncr_service import NcrService
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
@@ -35,9 +36,22 @@ async def list_ncrs(
     source_type: str = Query(None),
     supplier_id: int = Query(None),
     repo: NcrRepository = Depends(get_tenant_repo(NcrRepository)),
+    sup_repo: SupplierRepository = Depends(get_tenant_repo(SupplierRepository)),
 ):
-    """NCR 列表（可按状态/来源类型/供应商过滤）"""
+    """NCR 列表（可按状态/来源类型/供应商过滤）。
+
+    C-78：回填 `supplier_name` —— `supplier_id` 此前是个**没有表可指的裸列**，
+    列表里永远只有一串数字，评审会上问"这家供应商谁"只能翻 ERP。
+    批量一次 IN 查完，不做 N+1。
+    """
     data = await _svc(repo).list_ncrs(page, page_size, status, source_type, supplier_id)
+    items = data.get("items") or []
+    sids = [x.get("supplier_id") for x in items if x.get("supplier_id")]
+    if sids:
+        names = await sup_repo.names_by_ids(sids)
+        for x in items:
+            if x.get("supplier_id") in names:
+                x["supplier_name"] = names[x["supplier_id"]]
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -45,13 +59,27 @@ async def list_ncrs(
 async def create_ncr(
     req: CreateNcrRequest,
     repo: NcrRepository = Depends(get_tenant_repo(NcrRepository)),
+    sup_repo: SupplierRepository = Depends(get_tenant_repo(SupplierRepository)),
     user: dict = Depends(get_current_user),
 ):
-    """创建 NCR（初始状态 open，并写入首条流水）"""
+    """创建 NCR（初始状态 open，并写入首条流水）。
+
+    C-78：`supplier_id` 此前是个**裸列** —— 填 999 也照收，供应商名还得手打。
+    现在传了 id 就必须真有这家供应商（400 点名），并自动回填名称
+    （优先简称），免去手工重复录入、也避免"id 指 A、名字写 B"的口径分裂。
+    """
     actor_id, actor_name = _actor(user)
     data = req.model_dump()
     data["tenant_id"] = repo.tenant_id
     data["raised_by"] = actor_id
+    if data.get("supplier_id"):
+        sup = await sup_repo.get_supplier(data["supplier_id"])
+        if not sup:
+            raise HTTPException(400, detail={
+                "code": "400-0000",
+                "message": f"供应商 {data['supplier_id']} 不存在，请先在供应商主数据中选择"})
+        data["supplier_name"] = (data.get("supplier_name")
+                                 or sup.get("short_name") or sup.get("name"))
     await assert_doc_no_available(repo, "ncr_records", "ncr_no",
                                   data.get("ncr_no"), "不合格单号")
     try:
@@ -67,11 +95,16 @@ async def create_ncr(
 async def get_ncr(
     ncr_id: int,
     repo: NcrRepository = Depends(get_tenant_repo(NcrRepository)),
+    sup_repo: SupplierRepository = Depends(get_tenant_repo(SupplierRepository)),
 ):
-    """NCR 详情"""
+    """NCR 详情（C-78：回填 supplier_name，历史单据只存了 id 的也能看到是谁）"""
     item = await _svc(repo).get(ncr_id)
     if not item:
         raise HTTPException(404, detail={"code": "404-0000", "message": "不合格评审单不存在"})
+    if item.get("supplier_id") and not item.get("supplier_name"):
+        names = await sup_repo.names_by_ids([item["supplier_id"]])
+        if names.get(item["supplier_id"]):
+            item["supplier_name"] = names[item["supplier_id"]]
     return {"code": 0, "message": "success", "data": item}
 
 

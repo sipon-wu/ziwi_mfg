@@ -25,7 +25,7 @@ from app.models.data_collection import (
     LinkMonitor, LinkMonitorLog,
 )
 from app.models.inventory import InventoryItem
-from app.models.basic_data import Operation, WorkCenter, WcEquipment, WcTeam, ProcessRoute, RouteStep, ProductRoute, Product, ProductVersion, FactoryCalendar
+from app.models.basic_data import Operation, WorkCenter, WcEquipment, WcTeam, ProcessRoute, RouteStep, ProductRoute, Product, ProductVersion, FactoryCalendar, Supplier
 from app.models.wms import (
     Warehouse, WarehouseZone, WarehouseLocation,
     Material, Batch,

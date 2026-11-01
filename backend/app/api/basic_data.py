@@ -12,6 +12,7 @@ from app.services.basic_data_service import (
     OperationService, WorkCenterService, RouteService,
     ProductService, CalendarService,
 )
+from app.repositories.supplier_repo import SupplierRepository
 from app.schemas.basic_data import (
     OperationCreate, OperationUpdate,
     WorkCenterCreate, WorkCenterUpdate,
@@ -454,3 +455,33 @@ async def batch_set_calendar_days(
     svc = CalendarService(repo)
     result = await svc.batch_set_days(records)
     return {"code": 0, "message": f"批量更新{result['affected']}天", "data": result}
+
+
+
+# ── 供应商主数据（B-11 / C-78）────────────────────────────────────
+# ★只读：权威源在 ERP，MES 侧只保留够用的快照（见 models/basic_data.Supplier）。
+# 不加写接口不是漏了 —— 产品决策是供应商主数据归 ERP/M09，MES 自建会让两边
+# 各有一份、对不上账。演示数据由 seeds/suppliers_seed.py 造。
+
+@router.get("/suppliers")
+async def list_suppliers(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    keyword: Optional[str] = Query(None, description="搜索关键词(编码/名称/简称/ERP编码)"),
+    category: Optional[str] = Query(None, description="类别: raw/pack/outsource/service"),
+    status: Optional[str] = Query(None, description="状态: active/disabled"),
+    repo: SupplierRepository = Depends(get_tenant_repo(SupplierRepository, require_auth=True)),
+):
+    data = await repo.list_suppliers(page, page_size, keyword, category, status)
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.get("/suppliers/{supplier_id}")
+async def get_supplier(
+    supplier_id: int,
+    repo: SupplierRepository = Depends(get_tenant_repo(SupplierRepository, require_auth=True)),
+):
+    data = await repo.get_supplier(supplier_id)
+    if not data:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "供应商不存在"})
+    return {"code": 0, "message": "success", "data": data}
