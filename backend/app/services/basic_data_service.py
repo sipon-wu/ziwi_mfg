@@ -201,16 +201,49 @@ class RouteService:
         return await self.step_repo.list_steps(route_id)
 
     async def save_steps(self, route_id: int, steps: List[dict]) -> dict:
-        """覆盖保存路线全部步骤（先删后插）"""
+        """覆盖保存路线全部步骤（先删后插）。
+
+        B-E4 工序冲突校验（保存前整单校验，不落半截数据）：
+        - **step_seq 重复 → 拒**：序号是排产/报工的顺序锚点，重了等于
+          "先做哪道"没有答案，下游排序随机。
+        - **operation_id 不存在 → 拒**：幽灵工序挂上路线，派工/报工
+          按工序归集时查到的是空名。
+        - **同一工序重复出现 → 告警不拒**：清洗、检验这类工序在一
+          条路线上合法地出现多次，硬拦会误伤。
+        """
         route = await self.repo.get_route(route_id)
         if not route:
             raise ValueError("工艺路线不存在")
         if route["status"] != "draft":
             raise ValueError("仅草稿状态的路线可编辑步骤")
 
+        seqs = [s.get("step_seq") for s in steps]
+        dup_seqs = sorted({x for x in seqs if seqs.count(x) > 1})
+        if dup_seqs:
+            raise ValueError(
+                f"工序序号重复: {dup_seqs} —— 同一序号对应多道工序，"
+                f"加工顺序无法确定")
+
+        op_ids = [s.get("operation_id") for s in steps if s.get("operation_id")]
+        warnings = []
+        if op_ids:
+            placeholders = ", ".join(f":op{i}" for i in range(len(op_ids)))
+            params = {f"op{i}": v for i, v in enumerate(op_ids)}
+            rows = await self.repo.query(
+                f"SELECT id FROM operations WHERE id IN ({placeholders})", params)
+            existing = {r["id"] for r in rows}
+            missing = sorted(set(op_ids) - existing)
+            if missing:
+                raise ValueError(f"工序不存在: {missing}")
+            dup_ops = sorted({x for x in set(op_ids) if op_ids.count(x) > 1})
+            if dup_ops:
+                warnings.append(
+                    f"工序 {dup_ops} 在路线中重复出现：如非有意（如多次清洗/检验），"
+                    f"请检查是否编排错误")
+
         await self.step_repo.delete_steps_by_route(route_id)
         count = await self.step_repo.batch_create_steps(steps)
-        return {"affected": count, "route_id": route_id}
+        return {"affected": count, "route_id": route_id, "warnings": warnings}
 
 
 class ProductService:

@@ -1,6 +1,6 @@
 """M02 BOM 版本锁定 — API 测试"""
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 from datetime import date
 
 
@@ -33,7 +33,14 @@ class TestM02BOM:
 
     async def test_create_bom(self, async_client):
         """创建 BOM 物料记录"""
-        with patch("app.repositories.bom_repo.BomRepository.create_bom") as mock:
+        with (
+            patch("app.repositories.bom_repo.BomRepository.create_bom") as mock,
+            # B-E3/B-B3：创建路径新增循环引用/单位校验，会读 products/materials
+            patch("app.repositories.bom_repo.BomRepository.query_one",
+                  new_callable=AsyncMock, return_value=None),
+            patch("app.repositories.bom_repo.BomRepository.query",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
             mock.return_value = 1
             resp = await async_client.post("/api/v1/boms", json={
                 "product_id": 1,
@@ -69,7 +76,16 @@ class TestM02BOM:
 
     async def test_update_bom(self, async_client):
         """更新 BOM 记录"""
-        with patch("app.repositories.bom_repo.BomRepository.update_bom") as mock:
+        with (
+            patch("app.repositories.bom_repo.BomRepository.update_bom") as mock,
+            patch("app.repositories.bom_repo.BomRepository.get_bom",
+                  new_callable=AsyncMock,
+                  return_value={"id": 1, "product_id": 1, "material_code": "M001"}),
+            patch("app.repositories.bom_repo.BomRepository.query_one",
+                  new_callable=AsyncMock, return_value=None),
+            patch("app.repositories.bom_repo.BomRepository.query",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
             mock.return_value = 1
             resp = await async_client.put("/api/v1/boms/1", json={
                 "qty_per_unit": 3.0,
@@ -133,6 +149,10 @@ class TestM02BOM:
         with (
             patch("app.repositories.bom_repo.BomRepository.get_max_version") as mock_max,
             patch("app.repositories.bom_repo.BomRepository.create_bom") as mock_create,
+            patch("app.repositories.bom_repo.BomRepository.query_one",
+                  new_callable=AsyncMock, return_value=None),
+            patch("app.repositories.bom_repo.BomRepository.query",
+                  new_callable=AsyncMock, return_value=[]),
         ):
             mock_max.return_value = 2
             mock_create.return_value = 3

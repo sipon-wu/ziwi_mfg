@@ -268,7 +268,11 @@ async def update_material(mat_id: int, req: MaterialUpdate,
 @router.delete("/materials/{mat_id}")
 async def delete_material(mat_id: int, repo: MaterialRepository = Depends(get_tenant_repo(MaterialRepository, require_auth=True))):
     svc = MaterialService(repo)
-    result = await svc.delete(mat_id)
+    try:
+        result = await svc.delete(mat_id)
+    except ValueError as e:
+        # B-E1 被 BOM 引用等数据级错误 —— 400 + 人话
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "物料删除成功", "data": result}
 
 # `/materials/search` 已按"静态段先于动态段"的规则上移到 `/materials/{mat_id}` 之前

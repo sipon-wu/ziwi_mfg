@@ -43,9 +43,12 @@ async def create_work_order(
     result = await guard_duplicate(
         svc.create_work_order(data, current_user.get("tenant_id", "default")),
         "工单号", data.get("wo_no"))
-    # 回 id 供前端直接跳详情；其他创建接口（如物料）也是这个形状
+    # 回 id 供前端直接跳详情；其他创建接口（如物料）也是这个形状。
+    # warnings 必须透出（B-E5/B-E6）：无 BOM、未挂工艺、草稿工艺等提醒
+    # 只在响应里给得出去才有意义，吞掉等于没做。
     return {"code": 0, "message": result["message"],
-            "data": {"id": result.get("id"), "wo_no": result.get("wo_no")}}
+            "data": {"id": result.get("id"), "wo_no": result.get("wo_no"),
+                     "warnings": result.get("warnings") or []}}
 
 @router.get("/work-orders/{order_id}")
 async def get_work_order(

@@ -31,6 +31,10 @@ class WorkOrder(Base):
     # "设备已报废却还在给它排产"既拦不住（没有可拦的对象）也查不出（没有线索）。
     equipment_id = Column(BigInteger, comment="设备ID（equipment.id，C-E7 停用拦截用）")
     work_center_id = Column(BigInteger, comment="工作中心ID（work_centers.id，C-E7）")
+    # ★ B-S3/B-E6：工单冻结的工艺路线（process_routes.id）。
+    # 工艺升级是**新建一行版本**（不是改老行），工单拿着老行的 id 就自然
+    # 沿用旧版 —— "在制工单用什么工艺"从口头约定变成可查证的外键。
+    route_id = Column(BigInteger, comment="工艺路线ID（process_routes.id，B-S3/B-E6）")
     org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用，创建时取创建人主组织）")
     line_code = Column(String(100), comment="产线编码")
     remark = Column(Text, comment="备注")

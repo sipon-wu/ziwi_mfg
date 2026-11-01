@@ -194,6 +194,20 @@ class MaterialService:
         return {"affected": await self.repo.update(id, data)}
 
     async def delete(self, id: int):
+        # ── B-E1：被 BOM 引用的物料禁止删除 ─────────────────────
+        # BOM 行按 material_code 字符串引用物料。物料一删，BOM 行就成
+        # 孤儿：齐套检查查不到库存（按编码对不上）、成本卷积断链。
+        ref = await self.repo.get(id)
+        if ref:
+            row = await self.repo.query_one(
+                "SELECT COUNT(*) AS cnt FROM product_bom "
+                "WHERE material_code = :code AND is_active = TRUE",
+                {"code": ref.get("code")})
+            cnt = (row or {}).get("cnt") or 0
+            if cnt:
+                raise ValueError(
+                    f"物料 {ref.get('code')} 被 {cnt} 条生效 BOM 引用，无法删除；"
+                    f"请先从 BOM 中移除或停用该物料")
         return {"affected": await self.repo.delete(id)}
 
     async def search(self, keyword: str, limit=20):

@@ -45,6 +45,7 @@ DEFAULT_PROBES = [
     "work_order_edge_e2e",
     "wms_edge_e2e",
     "quality_edge_e2e",
+    "basic_data_edge_e2e",
     "batch_trace_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",

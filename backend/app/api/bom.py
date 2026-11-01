@@ -32,7 +32,11 @@ async def create_bom(
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
     svc = BomService(repo)
-    result = await svc.create(data)
+    try:
+        result = await svc.create(data)
+    except ValueError as e:
+        # B-E3 循环引用等数据级错误 —— 用户能自己改的错，给 400 + 人话
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "BOM物料添加成功", "data": result}
 
 
@@ -80,7 +84,10 @@ async def update_bom(
     repo: BomRepository = Depends(get_tenant_repo(BomRepository, require_auth=True)),
 ):
     svc = BomService(repo)
-    result = await svc.update(bom_id, req.model_dump(exclude_unset=True))
+    try:
+        result = await svc.update(bom_id, req.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
     return {"code": 0, "message": "BOM更新成功", "data": result}
 
 

@@ -7,7 +7,7 @@ class ProductionRepository(MultiTenantRepository):
     # ==================== 工单 ====================
     async def list_work_orders(self, page: int = 1, page_size: int = 20,
                                 status: str = None, keyword: str = None) -> dict:
-        sql = "SELECT id, tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, priority, scheduled_start_at, scheduled_end_at, actual_start_at, actual_end_at, workshop, line_code, remark, created_at, equipment_id, work_center_id FROM work_orders WHERE 1=1"
+        sql = "SELECT id, tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, priority, scheduled_start_at, scheduled_end_at, actual_start_at, actual_end_at, workshop, line_code, remark, created_at, equipment_id, work_center_id, route_id FROM work_orders WHERE 1=1"
         params = {}
         if status:
             sql += " AND wo_status = :status"
@@ -34,9 +34,10 @@ class ProductionRepository(MultiTenantRepository):
         # 否则"加了列、加了校验、却写不进去"——校验通过、字段恒 NULL。
         data.setdefault("equipment_id", None)
         data.setdefault("work_center_id", None)
+        data.setdefault("route_id", None)
         return await self.execute(
-            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, material_check_status, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id, equipment_id, work_center_id)
-               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :completed_qty, :scrap_qty, :material_check_status, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id, :equipment_id, :work_center_id)""",
+            """INSERT INTO work_orders (tenant_id, wo_no, wo_type, wo_status, product_code, product_name, planned_qty, completed_qty, scrap_qty, material_check_status, priority, scheduled_start_at, scheduled_end_at, workshop, line_code, remark, assignee_id, assigned_org_id, equipment_id, work_center_id, route_id)
+               VALUES (:tenant_id, :wo_no, :wo_type, 'draft', :product_code, :product_name, :planned_qty, :completed_qty, :scrap_qty, :material_check_status, :priority, :scheduled_start_at, :scheduled_end_at, :workshop, :line_code, :remark, :assignee_id, :assigned_org_id, :equipment_id, :work_center_id, :route_id)""",
             # ★带 default 的列必须在写入口兜住（C-64）。
             # 实测 205 行工单里 114 行 completed_qty/scrap_qty 是 NULL、65 行
             # material_check_status 是 NULL —— 而 model schema 声明的是 `int = 0`

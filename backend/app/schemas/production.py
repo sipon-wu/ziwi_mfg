@@ -43,6 +43,8 @@ class CreateWorkOrderRequest(BaseModel):
     # C-E7：工单挂的设备/工作中心（传了才校验启用状态，不传不逼人填）
     equipment_id: Optional[int] = None
     work_center_id: Optional[int] = None
+    # B-S3/B-E6：工单冻结的工艺路线（传了校验存在性，不传给 warning）
+    route_id: Optional[int] = None
     remark: Optional[str] = None
 
 

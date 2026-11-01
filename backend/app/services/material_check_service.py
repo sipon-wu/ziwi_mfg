@@ -64,7 +64,15 @@ class MaterialCheckService:
         product_code = (order.get("product_code") or "").strip()
         planned_qty = order.get("planned_qty") or 0
 
-        boms, reason = await self._active_bom(product_code)
+        # ── B-B1：快照口径优先 ─────────────────────────────────
+        # 工单下达时已冻结 BOM 快照。此后 BOM 再改（换版本、改用量），
+        # 在制工单的物料需求**必须按快照算** —— 车间是按下达时的配方
+        # 备的料，齐套口径跟着新 BOM 走，等于做到一半换考题。
+        # 快照为空（下达时产品还没配 BOM）则回落到实时 BOM：
+        # 空快照不等于"不需要料"，等于"当时没法定口径"。
+        boms, reason = await self._snapshot_bom(work_order_id)
+        if not boms:
+            boms, reason = await self._active_bom(product_code)
         if not boms:
             return {
                 "work_order_id": work_order_id,
@@ -144,6 +152,25 @@ class MaterialCheckService:
                 "缺料行的 substitute 字段为可替代方案（按 priority 依次消耗）；"
                 "替代需人工确认，不改变 check_status")
         return out
+
+    async def _snapshot_bom(self, work_order_id: int):
+        """返回 ``(该工单 BOM 快照行, None)``；无快照或快照为空返回 ``([], None)``。
+
+        快照是"冻结口径"的增强：老库尚未建 ``bom_snapshots`` 表、或历史工单
+        从未下达过时，取快照会失败 —— 此时回落到实时 BOM，而不是让整次
+        齐套检查 500（与替代料增强同一处置原则）。
+        """
+        try:
+            snapshot = await self.bom_repo.get_snapshot_by_work_order(work_order_id)
+        except Exception:  # noqa: BLE001 —— 快照不可用不得中断齐套检查
+            return [], None
+        if not snapshot or not snapshot.get("snapshot_data"):
+            return [], None
+        try:
+            lines = json.loads(snapshot["snapshot_data"])
+        except (ValueError, TypeError):
+            return [], None
+        return (lines if isinstance(lines, list) else []), None
 
     async def _active_bom(self, product_code: str):
         """返回 ``(该产品当前生效的最高版本 BOM 行, 失败原因)``。"""

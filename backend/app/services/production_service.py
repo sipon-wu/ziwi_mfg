@@ -137,6 +137,43 @@ class ProductionService:
                     f"设备「{row.get('equipment_name')}」当前为"
                     f"{'故障' if row.get('status') == 'fault' else '维修中'}，"
                     f"工单已建但开工前需确认设备已恢复")
+
+        # ── B-E6：工艺路线关联 ─────────────────────────────────
+        # 传了就校验存在性（幽灵路线放行 = 这条关联从未生效）；
+        # 草稿路线只告警（可以先把活排到还没发布的工艺上，但开工前必须发布）。
+        route_id = data.get("route_id")
+        if route_id is not None:
+            row = await self.repo.query_one(
+                "SELECT id, name, version, status FROM process_routes WHERE id = :id",
+                {"id": route_id})
+            if not row:
+                raise _bad_request(f"工艺路线 {route_id} 不存在或不属于本租户", "400-0015")
+            if row.get("status") != "published":
+                warnings.append(
+                    f"工艺路线「{row.get('name')} v{row.get('version')}」"
+                    f"尚未发布（{row.get('status')}），开工前需先发布")
+        else:
+            # 不挂工艺不拦（新租户没配路线也能先跑起来），但要留一句话：
+            # 没有工艺的工单，报工按工序归集、工艺纪律检查都无从谈起。
+            warnings.append(
+                "工单未关联工艺路线（route_id）：报工将无法按工序归集，"
+                "建议建单时指定已发布的工艺路线")
+
+        # ── B-E5：产品无 BOM 预警（不拦，与下达 no_bom 口径一致）──
+        # 拦死的方案被明确否过（C-44：没配 BOM 不等于缺料，拦它只会让
+        # 新租户什么都下不下去）。但"什么都没确认"不能静悄悄地过去 ——
+        # 建单时就告诉计划员：这单下达时齐套检查给不了结论。
+        product_code = (data.get("product_code") or "").strip()
+        if product_code:
+            row = await self.repo.query_one(
+                "SELECT COUNT(*) AS cnt FROM product_bom pb "
+                "WHERE pb.is_active = TRUE "
+                "AND pb.product_id IN (SELECT id FROM products WHERE code = :code)",
+                {"code": product_code})
+            if not row or not row.get("cnt"):
+                warnings.append(
+                    f"产品 {product_code} 无生效 BOM：下达时齐套检查将返回"
+                    f" no_bom（无法判断缺料），建议先维护 BOM")
         return warnings
 
     async def update_work_order(self, id: int, data: dict) -> dict:

@@ -140,12 +140,19 @@ class RouteRepository(MultiTenantRepository):
         )
 
     async def create_route(self, data: dict) -> int:
+        # 固定列 INSERT：调用方（CreateRoute schema）没有 status/created_by
+        # 这两个键，不补缺省就是缺绑定参数 500（B-S3 实测：建路线直接 500，
+        # 整个工艺版本升级链路从第一步就走不通）。
+        params = {"status": "draft", "created_by": None,
+                  "effective_from": None, "effective_to": None,
+                  "description": None, "route_type": "discrete", "version": 1,
+                  **data}
         return await self.execute(
             """INSERT INTO process_routes (tenant_id, code, name, version, status, route_type,
                effective_from, effective_to, description, created_by)
                VALUES (:tenant_id, :code, :name, :version, :status, :route_type,
                :effective_from, :effective_to, :description, :created_by)""",
-            data,
+            params,
         )
 
     async def update_route(self, id: int, data: dict) -> int:
@@ -233,12 +240,24 @@ class RouteStepRepository(MultiTenantRepository):
 
     async def batch_create_steps(self, steps: List[Dict]) -> int:
         """批量创建步骤。
-        返回最后插入的 id（如果有的话）。
+        返回插入行数。
+
+        ★ 固定列 INSERT 必须补缺省（B-S3/B-E4 实测）：调用方 schema
+        ``RouteStepCreate`` 只给 route_id/operation_id/step_seq 等业务字段，
+        没有 tenant_id / remark / 时间覆盖等列 —— 不补就是缺绑定参数 500，
+        **步骤一条都存不进去**（列表看着像"保存成功"，其实全是空的）。
         """
-        from datetime import datetime
+        from sqlalchemy import text
         total = 0
-        last_id = 0
         for step in steps:
+            params = {
+                "tenant_id": self._tenant_id or "default",
+                "step_name": None, "step_type": "production", "wc_id": None,
+                "setup_time_override": None, "unit_time_override": None,
+                "is_parallel_eligible": False, "is_outsource": False,
+                "next_step_seq": None, "parallel_group": None, "remark": None,
+                **step,
+            }
             row = await self._session.execute(
                 text(
                     """INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, step_seq,
@@ -248,7 +267,7 @@ class RouteStepRepository(MultiTenantRepository):
                     :step_type, :wc_id, :setup_time_override, :unit_time_override,
                     :is_parallel_eligible, :is_outsource, :next_step_seq, :parallel_group, :remark)"""
                 ),
-                step,
+                params,
             )
             total += row.rowcount
         await self._session.flush()

@@ -68,8 +68,14 @@ class BomRepository(MultiTenantRepository):
             sql += " AND version = :version"
             params["version"] = version
         else:
-            # 取最高版本
-            sql += " AND version = (SELECT MAX(version) FROM product_bom WHERE product_id = :pid2 AND is_active = true)"
+            # ★ B-B2：MAX(version) 子查询必须同样受生效日期约束。
+            # 否则"未来生效的新版本"会把当前生效的旧版本顶掉：
+            # v1 昨天生效、v2 明年生效，子查询取到 2，外层又把 v2 滤掉
+            # → 生效 BOM 直接查空（齐套检查报 no_bom、快照是空的）。
+            # 口径 = 「该日期已生效的版本里取最新」（清单：拒绝或取最新，取最新）。
+            sql += (" AND version = (SELECT MAX(version) FROM product_bom"
+                    " WHERE product_id = :pid2 AND is_active = true"
+                    " AND (effective_from IS NULL OR effective_from <= :eff_date))")
             params["pid2"] = product_id
         sql += " ORDER BY material_code"
         return await self.query(sql, params)

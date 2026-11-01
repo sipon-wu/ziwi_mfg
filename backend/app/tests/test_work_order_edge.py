@@ -227,4 +227,7 @@ class TestResourceValidation:
 
     async def test_active_resource_passes(self):
         svc = _svc(_order(), query_one={"id": 3, "name": "A线", "is_active": True})
-        assert await svc._validate_resources({"work_center_id": 3}) == []
+        warns = await svc._validate_resources({"work_center_id": 3})
+        # 启用资源不应产生**资源相关**告警；B-E5/B-E6 的 BOM/工艺提示
+        # 与资源校验无关，不在此断言范围内。
+        assert not any("工作中心" in w or "设备" in w for w in warns), warns
