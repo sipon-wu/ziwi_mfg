@@ -460,6 +460,202 @@ class ProductionService:
                        f"；作废时产出快照：合格 {completed} / 报废 {scrap}")
         return await self.change_status(id, "cancelled", operator_id, remark=remark)
 
+    # ── C-S6 / C-S7：工单拆分与合并 ────────────────────────────
+    # 这两个动作在车间里天天发生：一张大单要分给两个班组（拆），
+    # 几张同产品的小单凑成一批做省换型（合）。
+    # 改造前**没有任何端点**，只能"作废重建"——重建出来的单与原来的
+    # 齐套快照、派工记录、报工数据全脱钩，"这张单从哪来"再也查不到。
+
+    #: 拆/合都只允许 draft。已下达的单已经做了 BOM 快照与齐套检查，
+    #: 拆出来的子单和母单各持一份快照，物料账必然对不上；已开工的单
+    #: 更是带着报工数据，一拆就成了孤儿。
+    _SPLIT_MERGE_ALLOWED = ("draft",)
+
+    #: 子单从母单继承的字段（工艺路线、设备、工作中心、班组、负责人、
+    #: 交期都要跟着走 —— 否则子公司"产品对、工艺空"，开工当天才发现没路线）
+    _INHERIT_FIELDS = ("wo_type", "product_code", "product_name", "route_id",
+                       "work_center_id", "equipment_id", "workshop",
+                       "line_code", "priority", "assigned_org_id",
+                       "assignee_id", "scheduled_start_at", "scheduled_end_at")
+
+    async def split_work_order(self, id: int, qtys: list,
+                              tenant_id: str = None) -> dict:
+        """工单拆分（C-S6）：母单留下余量，其余分成若干子单，子单继承 BOM/工艺。
+
+        三条硬规则：
+
+        1. **只有草稿单可拆** —— 已下达的单一拆，子单与母单各持一份齐套快照，
+           物料账立刻对不上；已开工的单带着报工数据，拆完就是孤儿。
+        2. **必须留余量给母单** —— 分出总量必须**小于**母单计划量。等于的话
+           母单变成 0 量空壳，既不该留着（占着单号）又不该删（有历史），
+           那样的情况应该用"作废 + 新建"，语义才清楚。
+        3. **子单号必须可追溯** —— ``{母单号}-S1/-S2``，一眼看出从哪张单拆的。
+        """
+        order = await self._require_order(id)
+        status = order.get("wo_status")
+        if status not in self._SPLIT_MERGE_ALLOWED:
+            raise _bad_request(
+                f"只有草稿工单可以拆分（当前 {status_label(status)}）；"
+                f"已下达/在制的单已做 BOM 快照与齐套检查，拆出的子单与母单"
+                f"各持一份，物料账对不上", "400-0020")
+
+        if not isinstance(qtys, list) or not qtys:
+            raise _bad_request("请给出每张子单的计划数量（qtys）", "400-0021")
+        try:
+            qtys = [int(q) for q in qtys]
+        except (TypeError, ValueError):
+            raise _bad_request("qtys 必须是整数数组", "400-0021")
+        if any(q <= 0 for q in qtys):
+            raise _bad_request("子单计划数量必须为正整数", "400-0021")
+
+        total = sum(qtys)
+        planned = int(order.get("planned_qty") or 0)
+        if total >= planned:
+            raise _bad_request(
+                f"分出总量 {total} 必须小于母单计划量 {planned}："
+                f"分完母单要有余量；若要整单转出请用作废+新建", "400-0022")
+
+        children = []
+        warnings = []
+        base_no = order.get("wo_no")
+        existing_nos = set()
+        for idx, qty in enumerate(qtys, start=1):
+            child_no = f"{base_no}-S{idx}"
+            if await self.repo.query_one(
+                    "SELECT id FROM work_orders WHERE wo_no = :n", {"n": child_no}):
+                raise _bad_request(
+                    f"子单号 {child_no} 已存在（该工单可能已拆分过），"
+                    f"请先确认历史子单", "400-0023")
+            payload = {f: order.get(f) for f in self._INHERIT_FIELDS}
+            payload.update({
+                "tenant_id": tenant_id or order.get("tenant_id"),
+                "wo_no": child_no,
+                "planned_qty": qty,
+                "completed_qty": 0,
+                "scrap_qty": 0,
+                "material_check_status": "pending",
+                "remark": f"由工单 {base_no} 拆出（第 {idx} 张）",
+            })
+            cid = await self.repo.create_work_order(payload)
+            existing_nos.add(child_no)
+            children.append({"id": cid, "wo_no": child_no, "planned_qty": qty})
+
+        remain = planned - total
+        # 拆分不改变母单状态（还是 draft），所以不写状态流水（会变成
+        # draft→draft 的噪音行），而是把痕迹写进母单备注 —— 打开这张单
+        # 就能看到"拆过几张、单号是什么"。
+        note = (f"{order.get('remark') + '；' if order.get('remark') else ''}"
+                f"已拆分：{planned} → {remain}，拆出 "
+                f"{len(qtys)} 张子单（{'、'.join(existing_nos)}）")
+        await self.repo.update_work_order(
+            id, {"planned_qty": remain, "remark": note})
+        if order.get("route_id") is None:
+            warnings.append("母单没有关联工艺路线，子单也就没有工艺可继承；"
+                            "建议先补工艺再拆")
+        return {
+            "message": f"已拆出 {len(children)} 张子单",
+            "parent": {"id": id, "wo_no": base_no,
+                       "planned_qty_before": planned, "planned_qty": remain},
+            "children": children,
+            "warnings": warnings,
+        }
+
+    async def merge_work_orders(self, order_ids: list, wo_no: str = None,
+                                operator_id: int = None,
+                                tenant_id: str = None) -> dict:
+        """工单合并（C-S7）：多张同产品同工艺的草稿单合成一张。
+
+        为什么要校验「同产品同工艺」：合并的意义是**凑一批生产、少一次换型**。
+        产品不同或工艺不同还合并，等于把两次独立的换型硬塞进一张单，
+        报工、齐套、成本全部算不清 —— 那不是合并，是把两件事记成一笔。
+
+        被合并的单**不删**，置 ``cancelled`` 并在状态流水写明合并到哪张单：
+        删掉的话，原来那张单的齐套快照、派工记录就成了没有归属的孤儿。
+        """
+        if not isinstance(order_ids, list) or len(set(order_ids)) < 2:
+            raise _bad_request("合并至少要两张不同的工单", "400-0030")
+        ids = list(dict.fromkeys(order_ids))
+
+        orders = []
+        for oid in ids:
+            o = await self.repo.get_work_order(oid)
+            if not o:
+                raise _bad_request(f"工单 {oid} 不存在", "400-0031")
+            orders.append(o)
+
+        bad = [o for o in orders if o.get("wo_status") not in self._SPLIT_MERGE_ALLOWED]
+        if bad:
+            raise _bad_request(
+                "只有草稿工单可以合并：" + "、".join(
+                    f"{o.get('wo_no')}（{status_label(o.get('wo_status'))}）"
+                    for o in bad), "400-0032")
+
+        first = orders[0]
+        for o in orders[1:]:
+            if o.get("product_code") != first.get("product_code"):
+                raise _bad_request(
+                    f"只能合并同产品工单：{first.get('wo_no')} 是 "
+                    f"{first.get('product_code')}，{o.get('wo_no')} 是 "
+                    f"{o.get('product_code')}", "400-0033")
+            if (o.get("route_id") or None) != (first.get("route_id") or None):
+                raise _bad_request(
+                    f"只能合并同工艺路线工单：{first.get('wo_no')} 路线="
+                    f"{first.get('route_id')}，{o.get('wo_no')} 路线="
+                    f"{o.get('route_id')}", "400-0034")
+
+        total_qty = sum(int(o.get("planned_qty") or 0) for o in orders)
+
+        new_no = wo_no or f"{first.get('wo_no')}-M1"
+        n = 1
+        while await self.repo.query_one(
+                "SELECT id FROM work_orders WHERE wo_no = :n", {"n": new_no}):
+            n += 1
+            new_no = wo_no or f"{first.get('wo_no')}-M{n}"
+            if n > 50:
+                raise _bad_request("合并单号冲突过多，请显式指定 wo_no", "400-0035")
+
+        warnings = []
+        # 设备/工作中心不一致只告警：合并的目的是凑批量，不该因为
+        # 计划挂在两台设备上就不让合（真到现场还是一台一台做）。
+        others = {o.get("equipment_id") for o in orders}
+        if len(others) > 1:
+            warnings.append(
+                "被合并工单的设备不一致，合并单沿用 "
+                f"{first.get('equipment_id')}；其余设备的排产信息需重新安排")
+        wcs = {o.get("work_center_id") for o in orders}
+        if len(wcs) > 1:
+            warnings.append(
+                "被合并工单的工作中心不一致，合并单沿用 "
+                f"{first.get('work_center_id')}")
+
+        payload = {f: first.get(f) for f in self._INHERIT_FIELDS}
+        payload.update({
+            "tenant_id": tenant_id or first.get("tenant_id"),
+            "wo_no": new_no,
+            "planned_qty": total_qty,
+            "completed_qty": 0,
+            "scrap_qty": 0,
+            "material_check_status": "pending",
+            "remark": ("合并自 " + "、".join(str(o.get("wo_no")) for o in orders)),
+        })
+        new_id = await self.repo.create_work_order(payload)
+
+        merged = []
+        for o in orders:
+            await self.change_status(
+                o["id"], "cancelled", operator_id,
+                remark=f"action=merge；已合并到工单 {new_no}")
+            merged.append({"id": o["id"], "wo_no": o.get("wo_no"),
+                           "planned_qty": o.get("planned_qty")})
+
+        return {
+            "message": f"已合并 {len(orders)} 张工单为 {new_no}",
+            "merged_order": {"id": new_id, "wo_no": new_no,
+                             "planned_qty": total_qty},
+            "sources": merged,
+            "warnings": warnings,
+        }
+
     async def get_available_actions(self, id: int) -> dict:
         """当前状态下可执行的动作（供前端渲染按钮，避免前端各写一份判断）。"""
         order = await self._require_order(id)

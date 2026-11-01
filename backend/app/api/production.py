@@ -9,8 +9,10 @@ from app.schemas.production import (
     CreateWorkOrderRequest,
     CreateWorkReportRequest,
     AssignWorkOrderRequest,
+    MergeWorkOrdersRequest,
     PauseWorkOrderRequest,
     ReleaseWorkOrderRequest,
+    SplitWorkOrderRequest,
     UpdateWorkOrderRequest,
 )
 from datetime import date
@@ -49,6 +51,27 @@ async def create_work_order(
     return {"code": 0, "message": result["message"],
             "data": {"id": result.get("id"), "wo_no": result.get("wo_no"),
                      "warnings": result.get("warnings") or []}}
+
+# 注意顺序：/work-orders/merge 必须注册在 /work-orders/{order_id} 之前。
+# 虽然当前没有 POST /work-orders/{order_id}，但一旦有人补上，静态段就会被
+# 当成 order_id 解析成 int 而 422 —— 这个坑在 route 遮蔽上踩过一次了。
+@router.post("/work-orders/merge")
+async def merge_work_orders(
+    req: MergeWorkOrdersRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """多张同产品同工艺草稿单合成一张（C-S7）。
+
+    被合并的单不删除，置 cancelled 并在状态流水点名合并到哪张单 ——
+    删掉的话，原单的齐套快照与派工记录就成了没有归属的孤儿。
+    """
+    svc = ProductionService(repo)
+    data = await svc.merge_work_orders(
+        req.order_ids, req.wo_no,
+        operator_id=current_user.get("id"),
+        tenant_id=current_user.get("tenant_id"))
+    return {"code": 0, "message": data["message"], "data": data}
 
 @router.get("/work-orders/{order_id}")
 async def get_work_order(
@@ -210,6 +233,22 @@ async def cancel_work_order(
         order_id, current_user["id"], reason=req.reason,
         force=req.force, force_reason=req.force_reason,
     )
+    return {"code": 0, "message": result["message"], "data": result}
+
+@router.post("/work-orders/{order_id}/split")
+async def split_work_order(
+    order_id: int, req: SplitWorkOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """拆分草稿工单（C-S6）：``qtys=[30,30]`` → 两张子单，母单留余量。
+
+    子单号 ``{母单号}-S1/-S2``，继承母单的产品/工艺路线/设备/交期，
+    拆完母单计划量减为余量、备注里写明拆出哪几张 —— 打开任一张单
+    都能顺着单号找回"这批活从哪来"。
+    """
+    result = await ProductionService(repo).split_work_order(
+        order_id, req.qtys, tenant_id=current_user.get("tenant_id"))
     return {"code": 0, "message": result["message"], "data": result}
 
 @router.post("/work-orders/{order_id}/assign")

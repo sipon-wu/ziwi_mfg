@@ -240,7 +240,25 @@ class CancelWorkOrderRequest(BaseModel):
     force_reason: Optional[str] = None
 
 
+# ── C-S6 工单拆分 ────────────────────────────────────────────
+class SplitWorkOrderRequest(BaseModel):
+    """拆分工单：按给定数量拆出若干子单，母单留下余量。
+
+    只传数量不传其他字段 —— 子单的产品、工艺路线、设备、工作中心、
+    班组、交期一律从母单继承：拆出来的单和母单做的是**同一件事**，
+    让调用方再填一遍只会填错。
+    """
+    qtys: List[int]
+
+
+# ── C-S7 工单合并 ────────────────────────────────────────────
+class MergeWorkOrdersRequest(BaseModel):
+    """合并工单：多张同产品同工艺的草稿单合成一张。"""
+    order_ids: List[int]
+    wo_no: Optional[str] = None
+    """合并单号。不传则自动生成 ``{首单号}-M1``（冲突时递增）。"""
+
+
 class WorkOrderActionItem(BaseModel):
     action: str
     label: str
-

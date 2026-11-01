@@ -49,6 +49,7 @@ DEFAULT_PROBES = [
     "tpm_edge_e2e",
     "trial_edge_e2e",
     "perm_base_edge_e2e",
+    "work_order_split_merge_e2e",
     "batch_trace_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",
