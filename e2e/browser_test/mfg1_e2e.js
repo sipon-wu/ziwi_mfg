@@ -190,9 +190,14 @@ const rid = (b) => (b && b.request_id) || '';
   try {
     const andon = await api('POST', '/andon/calls', { call_type: 'material', title: `${PFX}缺料呼叫`, level: 'urgent', source: 'manual', description: 'E2E浏览器测试触发', work_order_id: ids.woId || null });
     const andonOk = andon.status === 200 || andon.status === 201;
-    record('TC-07', '异常与看板', 'PARTIAL',
-      `驾驶舱可加载；安灯(andon)呼叫创建 ${andon.status}${andonOk ? '(可达)' : ''}；看板数值与底层一致性因汇总接口 500 无法自动核对。`,
-      { andonStatus: andon.status, andonBody: andon.body });
+    // ★原来这里写死了一句「看板数值与底层一致性因汇总接口 500 无法自动核对」，
+    //   是 7 月的状态文案，脚本压根没去调汇总接口 —— 每次跑都把这个陈旧结论
+    //   原样打出来，等于用一个假信号掩盖了"其实没测"。改成真调一次。
+    const summ = await api('GET', '/wms/reports/summary');
+    const summOk = summ.status === 200;
+    record('TC-07', '异常与看板', andonOk && summOk ? 'PASS' : 'FAIL',
+      `安灯呼叫 ${andon.status}｜收发存汇总接口 ${summ.status}`,
+      { andonStatus: andon.status, summaryStatus: summ.status });
   } catch (e) { record('TC-07', '异常与看板', 'PARTIAL', '异常: ' + e.message, null); }
 
   // ===================== TC-08 跨模块一致性总核对 =====================
@@ -202,7 +207,9 @@ const rid = (b) => (b && b.request_id) || '';
       note: '工单-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成，矩阵框架已建，待服务端部署修复后重跑。'
     };
     record('TC-08', '跨模块一致性总核对', 'BLOCKED',
-      `工单(${ids.woId})-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成（见 consistency-matrix.json）。`,
+      // ★原来写的是「因 BUG-1/2/3/4/5 阻断」—— 那批 BUG 早已修复，文案没跟着改。
+      //   这里如实说明：**四方对账的逻辑尚未实现**，不是被阻断。
+      `工单(${ids.woId})-库存-流水-看板 四方对账**逻辑尚未实现**（仅建了矩阵骨架，见 consistency-matrix.json），不要把它当成已验证。`,
       matrix);
     fs.writeFileSync(path.join(__dirname, 'consistency-matrix.json'), JSON.stringify(matrix, null, 2));
   } catch (e) { record('TC-08', '跨模块一致性总核对', 'BLOCKED', '异常: ' + e.message, null); }

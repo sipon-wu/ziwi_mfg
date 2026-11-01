@@ -8,7 +8,7 @@
 > - 状态只有三种：`待拍板` / `已排期` / `已闭`
 > - 已闭项保留在表里不删（留痕），只改状态 + 补 commit
 >
-> 最后更新：2026-11-01 晚（C-82 / C-83 收口；待拍板 2 项：B-17 收发存报表口径、B-18 staging 重复单号处置）
+> 最后更新：2026-11-01 深夜（C-84 / C-85 收口：全端点参数扫描 + 3 个游离探针纳管；待拍板 3 项：B-17 收发存报表口径、B-18 staging 重复单号处置、B-19 `mfg1_e2e` 陈旧结论文案）
 
 ---
 
@@ -23,6 +23,7 @@
 | B-16 | ~~**实验室委托详情在"还没出报告"时打一条 404 到控制台**~~ **已闭 → C-81** | 打开 `#/lab/1`，页面内容正常（单号、状态、基本信息都在），但控制台有 `[HTTP 404] /api/v1/lab/requests/1/report` + 一条 `Failed to load resource` | 纯噪音：全模块扫描把它判成 WARN（72 项里唯一一条）。危害是以后真出 404 时没人再当回事 | 详情页无条件拉报告，把"报告还没生成"当成错误而不是空态 | 验收：无报告时控制台 0 错误（前端捕获 404 视为空态）。属 M15 实验室模块，与 C-79 无关 |
 | B-17 | **`/wms/reports/summary` 名叫"收发存汇总"，实际只给期末快照** | 端点声明 `start_date` / `end_date` 两个参数，**从头到尾没被使用**；返回只有 `current_qty` / `locked_qty` / `available_qty` —— 没有期初、没有收入、没有发出。前端报表页拿它当"库存汇总"用，数字对得上，所以一直没人发现 | 客户要"本月收发存"时给不出来；更要紧的是**参数收下不报错**，调用方以为区间生效了，实际拿到的是"此刻" —— 这是最容易让对账对不上的形态（口径错但不报错） | 建端点时只实现了库存表聚合，`start_date`/`end_date` 是从别的报表抄来的签名，没落地 | 二选一：①真的实现收发存（期初取区间前余额、收入/发出按 `inventory_transactions` 按类型汇总、期末=期初+收入−发出）；②把两个参数删掉、改名为"库存快照"，别让人以为能查历史。**倾向②**，真要做收发存应当独立端点 |
 | B-18 | **staging 上有 5 组 2026-07 遗留的重复单号，唯一索引一直建不起来** | `PO-RCV-07130753-001~004` 各 2 条、`ISO-07130753-001` 2 条，全是 07-12 23:53 那批"重复建单"测试留下的（同一秒建两遍）。`migrations/20261031_unique_doc_no.py` 遇到重复会**拒绝建索引并留给人判** —— 于是 `uq_receipt_order_tenant_no` / `uq_issue_order_tenant_no` 从来没建成，单号唯一性在 staging 上一直是空的 | 探针 `doc_no_unique D10` 恒红；更实际的是这条防线在预发布环境等于没有 | 迁移设计如此（不自动清理单号是有意的，见该文件说明） | 11-01 已把后建的那批加 `-DUP{id}` 后缀释放唯一键并补建索引。**待拍板**：这批 `-DUP` 单要不要从 staging 彻底删掉（含其实收明细），还是留着当"当年踩过的坑"的物证 |
+| B-19 | **`mfg1_e2e` 里还有写死的陈旧结论文案（PARTIAL 项）** | TC-04 说「BOM 快照/齐套性随下达链路阻断」，但同一条输出里「下达: 下达成功」—— BUG-5 早已修复，文案没跟着改；TC-02 说「供应商/客户主数据后端无路由」，那是产品决策（见 B-11），不是缺陷 | 每次跑都把一个**陈旧结论**原样打出来，读报告的人会以为链路仍是断的。属于「假信号」，和 C-85 修的 TC-07/TC-08 同一类 | 只改了结论文案，没跟上真实状态；TC-07/TC-08 已在 `a829819` 之后顺手改成真调接口，TC-04/TC-02 还没动 | 要么把 TC-04 补成真验证（completed_qty 回写 + BOM 快照比对），要么把 PARTIAL 降级成明确的「未实现」；TC-02 直接引用 B-11 说明即可。**不要**只改字面让它看起来绿 |
 
 
 ## 二、已排期
@@ -118,6 +119,8 @@
 
 | C-82 | **上架确认把库内移库写成了「入库」：流水入库量翻倍，账实对不上**（深度闭环探针 10 缺陷收口） | `96f366a` | `ReceiptService.store_item` 把**待检区 → 正式库位**这条库内移库的流水写成了 `transaction_type='receipt'`，于是同一批货在流水上出现两条「入库」：收货登记 receipt +100（`from_location_id=NULL`）、上架确认 receipt +100（from=待检区）。而 `inventory` 只加了 100 —— 按类型汇总入库量直接翻倍（实测某物料 `Σquantity=170`、现存量 `70`）。出库流水又是**负数**（净变动口径），两套口径混在一张表里，任何净额汇总都错。同时 `/wms/transfers` 端点只查 `transfer`，上架移库在本该看到它的页面里根本不可见 —— 同模块的调拨移库（`wms_service` 调拨分支）本来就写 `transfer`，两处语义一致才算闭环。改 `transfer` + 幂等迁移 `20261103_putaway_tx_transfer.py` 改判存量（判别条件 `receipt AND from_location_id IS NOT NULL`，真入库该列恒为 NULL），staging 实测改判 **59 条**。**★探针自身四处误判一并修掉**（否则修好也看不出来）：①工单号内嵌 product_code → `source_doc_no` 67 字符超 `varchar(64)`，PG 直接 500，看着像"建领料单接口坏了"；②批次余量读 `/wms/batches.quantity`，该表**没有 quantity 列**（余量在 `inventory` 上按 batch_no 分行）→ 恒 0，既让"A 已出空"假通过、又让"B 剩 5"假失败，把正确的 FIFO 判成缺陷；③`judge` 返回体里**没有** `result`（只有 ncr_id / batch_locked 等回执），要回读检验单；④出库流水的 `quantity` 是负值（`/wms/reports/turnover` 也用 `ABS()`），断言应取绝对值。深度闭环探针 **10 → 0 缺陷** |
 | C-83 | **四处「SQLite 收下、PG 拒绝」的方言/类型缺陷：两个接口 100% 500、两条派生链全断** + 静态闸补 2 条规则 | `e27135a` | 全量回归从 820/24 收敛到 833/24 后逐条定位，其中四处是真缺陷：**①库存预警扫描 100% 500** —— `wms_repo.list_below_safety_stock` 的 `HAVING current_stock < m.safety_stock_qty` 引用了 SELECT 别名；PG 的 HAVING 在 GROUP BY 之后求值、**看不到 select-list 别名**（`UndefinedColumnError`），SQLite 允许。改为 HAVING 里重复写聚合表达式。**②月报接口 100% 500** —— `production_repo.monthly_report` 里 `SELECT :month_start as month ... WHERE report_date >= :month_start` 把**同一参数**既当无类型常量又当日期比较，asyncpg 推断不出统一类型（`AmbiguousParameterError`）；拆出独立的 `:month_label`（`YYYY-MM`）专供回显。**③停机起点补录从来没通过** —— `PUT /tpm/downtimes/{id}` 收裸 `dict`，`started_at` 的 ISO 串原样进 `TIMESTAMPTZ` 参数（`DataError: expected datetime, got 'str'`）；改收 `UpdateDowntimeRequest(Optional[datetime])`。**④NCR 判返工两条派生链全断** —— `ncr_service._spawn_rework` 把 `"priority": "high"` 塞进 `work_orders.priority`（Integer），SQLite 亲和性兜住、PG 直接 `DataError`；连带"处置→自动生成返工工单"与"→自动生成再检检验单"在 staging 上跑不出来。改 `5`（0-5，越大越急）。**★静态闸补两条**：H「HAVING 引用 SELECT 别名」、I「写接口用裸 dict 收请求体」。**★刻意不做的一条**：整数列被赋字符串字面量 —— `priority` 是同名多态列（`work_orders`/`maintenance_tasks`/`trial_orders` 是 Integer，`lab_requests`/`andon_call` 是 String），行级扫描要么漏掉真正要拦的、要么误报 14 处合法写法，**一个 14 处误报的闸等于没有闸**，理由写进脚本 docstring 留档。pytest 1274 passed、静态闸 0 命中 |
+| C-84 | **全端点查询参数扫描一次性捞出 8 个 500，归为 6 个根因**（含 2 处「参数挂错表」的静默错数） | `b36336b` | 新写的 `e2e/query_param_sweep_e2e.py` 从 OpenAPI 枚举 192 个 GET / 339 个查询参数逐条注入样本值，**只把 5xx 判失败**，一次跑出全部 8 个断点 —— 换成"改一处、部署一次、再发现下一处"要来回 8 趟。根因六条：**①`work-reports?report_date=`** DATE 列绑字符串（`expected a date, got 'str'`）→ 仓储层转 `date`，API 层补 422。**②`inspection-orders?start_date=/end_date=`** TIMESTAMPTZ 绑字符串 → 新增 `_day_start()` 转当天零点；顺带修正语义 `<= end_date`→`< 次日零点`（原先查 11-01 反而查不到 11-01 的单）。**③`inspection-standards?qc_point_id=` / `quality-reports?qc_point_id=` 参数挂错表** —— 这两张表**根本没有 qc_point_id 列**，仓储层签名是 `(…, name, standard_type, is_enabled)` / `(…, report_type, period)`，多传的位置参数顺次落进下一个槽位：传数字 500、**传字符串则静默按错误字段过滤（接口 200、数据全错）**。删除伪参数，`quality-reports` 换成仓储层真正支持的 `report_type`/`period`。**④`collect/health`** `data_time >= :today::date` —— `::` 被 SQLAlchemy `text()` 当成第二个绑定参数，编出来就是 `syntax error at or near ":"`。**⑤`wms/reports/turnover`** `round(double precision, integer) does not exist`（PG 的 `round(x,n)` 只吃 numeric）→ 除法与舍入挪到 Python。**★同时修掉双表一对多 JOIN 互相放大**：原 SQL 同时 LEFT JOIN `inventory` 和 `inventory_transactions`，3 条库存行 × 10 条流水 = 30 行，`SUM(i.quantity)` 放大 10 倍、`SUM(t.quantity)` 放大 3 倍，周转率算错**且不报错**。改为三个单表 GROUP BY 后在 Python 合并。**⑥`wms/reports/slow-moving`** `can't subtract offset-naive and offset-aware datetimes`（TIMESTAMPTZ 读回来 aware、`datetime.now()` naive）→ 统一 UTC aware。另：`test_quality_api.py` 两条用例原先在**给有缺陷的契约背书**（`assert args[2] == 1  # qc_point_id`），改为断言真实筛选 + 钉死参数个数 |
+| C-85 | **测试覆盖缺口：3 个探针长期游离在套件外 + 浏览器脚本 6 处过时假设** | `b36336b` / `a829819` | 「全面测试」的实质是**先盘点再跑**：`e2e/` 下 42 个 py、`browser_test/` 下 24 个 js，`run_all.py` 只覆盖 38 个 py、浏览器只跑过 2 个。**①纳管**：`query_param_sweep_e2e`（新增）、`copilot_smoke`、`n5_posting_spec` 三个长期躺目录里没进套件的探针并入 `DEFAULT_PROBES`（38→41）；`run_all` 的汇总识别补 `"6/6 通过"` 形态（注意它是 通过数/总数，直接当通X断Y 会把 6/6 记成 6 通 6 断）。`closed_loop_probe.py` 是打印式排查脚本、无 PASS/FAIL，明确**不纳管**。**②浏览器脚本 6 处过时假设**（每一条都单独核过代码/接口才定性为"探针错"而非产品缺陷）：登录写死 `sleep(2000)`（staging 实测 ~4s 才跳转，后面 12~20 条断言全被带成假红）｜`role_perm_ui_e2e` 的 `API` 写死 `127.0.0.1:8000` → **界面打 staging、API 打本地库**，角色建到本地去了｜角色编码 `__e2e_role` 下划线开头违反「小写字母开头」规则 → 400｜U2b 写死权限总数 332（现 371，等于给权限体系设天花板）｜`permission_enforce` 把驾驶舱**可选 KPI 探活**的 403 算成页面故障（Cockpit 每个调用都 try/catch、无权限按设计降级成"暂不可用"）｜`stage5_rowdetail`/`stage5_union` 用旧标记 `.rd-row`（新版并集网格是 `.rd-cell`）+ 基础数据 4 页已改表格版 |
 
 ### "读错表/读错范围"专项（C-44 暴露的缺陷形态）
 比"报错"更贵的一类是**静默读错**：接口 200、字段齐全、界面正常渲染，只是数据是别的范围/另一张表的。症状统一为"某个功能一直给出恒定值"，而查代码往往看不出问题（SQL 是合法的、只是条件少了）。
@@ -163,6 +166,33 @@ SQLite 宽容、PG 直接 `operator does not exist: boolean = integer`。
 `user_repo`（`is_primary`），`ppap_repo` 的 `due_reminder` 已随 C-42 顺手修掉。
 注意 `excel_import` 的 `is_active` 是 **Integer** 列，`= 1` 是对的，不能一刀切。
 计划：做一次专门清扫 + 加静态闸（需先确认哪些列真是 Boolean）。
+
+### 参数绑定类型专项（C-84 暴露的缺陷形态，**新增，累计 10+ 例**）
+
+比"SQL 方言"更隐蔽的一类：**SQL 本身跨库通用，但绑定值的 Python 类型不对**。
+SQLite 驱动什么都不挑（日期给字符串、布尔给整数都收），asyncpg 却按**列类型**
+反推参数类型并严格校验，于是同一段代码本地全绿、PG 上必 500：
+
+| 列类型 | 传字符串的报错 | 正确做法 |
+|---|---|---|
+| `DATE` | `expected a date, got 'str'` | `date.fromisoformat(...)` |
+| `TIMESTAMPTZ` | `expected a datetime, got 'str'` | `datetime.combine(d, time.min)` |
+| `VARCHAR` | `expected str, got int` | 参数声明成 `str`，别声明 `int` |
+| `BOOLEAN` | `operator does not exist: boolean = integer` | 传 `True/False` |
+
+**读出来**同理：`TIMESTAMPTZ` 读回来是 **tz-aware**，和 `datetime.now()`（naive）
+相减直接 `TypeError`。相减前必须统一时区口径。
+
+**★为什么静态闸拦不住这一类**：闸只能看字面量（`is_active = 1` 这种），
+而这里的值来自 `params["x"] = some_variable`，是数据流问题不是语法问题。
+**所以靠探针覆盖**：`e2e/query_param_sweep_e2e.py` 从 OpenAPI 枚举所有查询参数
+逐个注样本值，专抓"参数一传就 500"。**新增任何带日期/布尔/外键查询参数的端点，
+不必手写用例，跑这个探针即可覆盖。**
+
+**★这个探针本身也踩过一个"永远绿"的坑**：OpenAPI 的 path 已经含 `/api/v1`
+（如 `/api/v1/work-reports`），第一版又拼了一次 `API_BASE`，拼出
+`/api/v1/api/v1/...` 全 404，而 404 不计失败 → 388 项"全绿"，实际一个端点
+都没打到。现已加护栏：**底噪大面积 404 直接判 FATAL**，不许静默通过。
 
 ---
 
