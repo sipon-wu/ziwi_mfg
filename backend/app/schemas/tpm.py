@@ -128,6 +128,23 @@ class UpdateEquipmentRequest(BaseModel):
     status: Optional[EQUIPMENT_STATUS] = None
 
 
+class UpdateDowntimeRequest(BaseModel):
+    """修正停机记录（补录 / 报障时间填错）。
+
+    ★时间字段必须是 ``datetime`` 而不是 ``str``：这两个值直接落进
+    ``UPDATE equipment_downtimes SET started_at = :started_at`` 的参数。
+    SQLite 会把字符串收下（列亲和性宽松），PG 的 TIMESTAMPTZ 不收 ——
+    asyncpg 直接 ``invalid input for query argument $1: '2026-11-01T11:36:59+00:00'
+    (expected a datetime.date or datetime.datetime instance, got 'str')``，
+    端点 500。改造前这个端点收的是裸 ``dict``，连这层校验都没有。
+    """
+
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    downtime_type: Optional[str] = None
+    reason: Optional[str] = None
+
+
 class CreateSparePartRequest(BaseModel):
     part_code: str
     part_name: str

@@ -10,6 +10,7 @@ from app.schemas.tpm import (
     CreateMaintenancePlanRequest,
     CreateSparePartRequest,
     ConsumeSparePartRequest,
+    UpdateDowntimeRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["M02-TPM"])
@@ -363,7 +364,7 @@ async def list_downtimes(
 @router.put("/downtimes/{dt_id}")
 async def update_downtime(
     dt_id: int,
-    payload: dict,
+    payload: UpdateDowntimeRequest,
     repo: EquipmentDowntimeRepository = Depends(
         get_tenant_repo(EquipmentDowntimeRepository, require_auth=True)),
 ):
@@ -371,8 +372,12 @@ async def update_downtime(
 
     停机时间靠人工上报，填错是常态；不能改的话 OEE 可用率会一直错下去。
     只接受 ``started_at`` / ``ended_at`` / ``downtime_type`` / ``reason``。
+
+    ★入参用 ``UpdateDowntimeRequest`` 而不是裸 ``dict``：时间字段必须经
+    pydantic 解析成 ``datetime`` 才能进 ``TIMESTAMPTZ`` 列，收字符串在 PG 上
+    直接 500（详见该 schema 的说明）。
     """
-    affected = await repo.update_record(dt_id, payload)
+    affected = await repo.update_record(dt_id, payload.model_dump(exclude_unset=True))
     if not affected:
         raise HTTPException(404, detail={"code": "404-0000",
                                          "message": "停机记录不存在或无可改字段"})

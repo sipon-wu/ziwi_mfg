@@ -25,6 +25,21 @@ SQLite，一条都测不出来 —— 每次都是部署到 staging 才炸。
 A. boolean 列被赋 int 字面量：`SET col = 0/1`、`col = 0/1`、`COALESCE(:x, 0/1)`
 B. boolean 列被赋 Python int：`params["col"] = 0/1`、`{"col": 0}`
 C. schema 里时间/日期字段被声明成 str：`xxx_at: Optional[str]`
+D. INSERT 位置参数与列顺序对位后是 boolean 列却写 0/1
+E. 时间列被喂 isoformat 字符串
+F. 时间被 `isoformat()` 降级后存进变量再写库（E 看不见的变量中转）
+H. `HAVING` 引用 SELECT 别名（PG 在 GROUP BY 之后求值，看不到别名）
+I. 写接口用裸 `dict` 收请求体（时间字段无从校验，ISO 串直落 SQL）
+
+刻意**没有**做的检查
+---------------------
+「整数列被赋字符串字面量」（`"priority": "high"` 写进 `work_orders.priority`）
+—— 这一类确实炸过（`NcrService._spawn_rework`，PG `DataError`），但**行级静态
+扫描拦不住**：`priority` 是同名多态列，`work_orders`/`maintenance_tasks`/
+`trial_orders` 是 Integer，`lab_requests`/`andon_call` 是 String。按列名判定
+要么漏掉真正要拦的、要么误报 14 处合法写法（`"severity": "major"` 之类），
+而一个 14 处误报的闸等于没有闸。这类只能靠「写接口收 pydantic 模型 + service
+层不手搓 dict」来收口，属于设计约束而非静态检查。
 
 用法
 ----
@@ -231,6 +246,89 @@ def scan_local_iso(roots, hits):
                                  line.strip()[:110]))
 
 
+HAVING_ALIAS = re.compile(r'\bHAVING\b(?P<body>.+)$', re.I)# HAVING 体只到下一个子句为止：`HAVING COUNT(*) > 1 ORDER BY c DESC` 里的
+# `c` 是 ORDER BY 的别名引用（合法），截断后不会误判。
+HAVING_TAIL = re.compile(r'\b(ORDER\s+BY|LIMIT|GROUP\s+BY)\b', re.I)
+SELECT_ALIAS = re.compile(r'\bAS\s+(?P<alias>\w+)', re.I)
+
+
+def scan_having_alias(roots, hits):
+    """H：``HAVING`` 引用 SELECT 别名。
+
+    PG 的 HAVING 在 GROUP BY 之后才求值，**看不到 select-list 别名**：
+
+        HAVING current_stock < m.safety_stock_qty
+        → UndefinedColumnError: column "current_stock" does not exist
+
+    SQLite 允许，于是全部 1274 个 pytest + 本地手工点测都正常，只有 staging
+    的库存预警扫描 100% 500。修法是 HAVING 里重复写聚合表达式。
+    """
+    for root in roots:
+        for py in Path(root).rglob("*.py"):
+            text = py.read_text(encoding="utf-8")
+            if "HAVING" not in text.upper():
+                continue
+            aliases = {m.group("alias") for m in SELECT_ALIAS.finditer(text)}
+            if not aliases:
+                continue
+            for lineno, line in enumerate(text.splitlines(), 1):
+                m = HAVING_ALIAS.search(line)
+                if not m or _is_prose(line):
+                    continue
+                body = m.group("body")
+                tail = HAVING_TAIL.search(body)
+                if tail:
+                    body = body[:tail.start()]
+                for alias in aliases:
+                    # 排除函数调用（alias( ）与自身声明行
+                    if re.search(rf'\b{re.escape(alias)}\b(?!\s*\()', body):
+                        hits.append((py, lineno, "HAVING 引用了 SELECT 别名（PG 不认）",
+                                     line.strip()[:110]))
+                        break
+
+
+# 白名单：确有必要用裸 dict 的接口（(相对 app 的路径, 函数名)）。
+# iot_ingest_batch 的 records 是设备原样上报，字段随型号千变万化，
+# 且协议层要求"坏记录进 rejected、不拖垮整批" —— 强行 pydantic 化会把
+# 这条语义做坏。其余写接口一律要求 pydantic 模型。
+ALLOW_BARE_DICT = {
+    ("app/api/data_collection.py", "iot_ingest_batch"),
+}
+
+
+def scan_bare_dict_body(roots, hits):
+    """I：写接口用裸 ``dict`` 接收请求体。
+
+    裸 dict 意味着**没有任何类型校验**：前端传 `"started_at": "2026-11-01T11:36:59Z"`
+    这类 ISO 字符串会原样进 SQL 参数，PG 的 TIMESTAMPTZ 只收 datetime 对象 →
+    ``invalid input for query argument $1 (expected a datetime.date or
+    datetime.datetime instance, got 'str')``，端点 500。
+    `update_downtime` 就是这么挂的（补录停机起点这个功能从来没通过）。
+
+    这类接口应当收 pydantic 模型（时间字段声明成 ``Optional[datetime]``，
+    由框架完成解析），而不是把类型判断留到 SQL 层。
+    """
+    pat = re.compile(r'^\s*(?:payload|body|data|req)\s*:\s*dict\b')
+    def_re = re.compile(r'^\s*(?:async\s+)?def\s+(?P<name>\w+)')
+    for root in roots:
+        for py in Path(root).rglob("*.py"):
+            if "api" not in str(py):
+                continue
+            lines = py.read_text(encoding="utf-8").splitlines()
+            rel = str(py.relative_to(BACKEND)).replace("\\", "/")
+            cur_fn = ""
+            for lineno, line in enumerate(lines, 1):
+                dm = def_re.match(line)
+                if dm:
+                    cur_fn = dm.group("name")
+                    continue
+                if pat.match(line):
+                    if (rel, cur_fn) in ALLOW_BARE_DICT:
+                        continue
+                    hits.append((py, lineno, "写接口用裸 dict 收请求体（无类型校验）",
+                                 line.strip()[:110]))
+
+
 def main() -> int:
     bool_cols, time_cols = collect_types()
 
@@ -256,6 +354,10 @@ def main() -> int:
     scan_time_as_str(roots, time_cols, hits)
     # F：时间降级后存变量（变量中转，前几条规则看不见）
     scan_local_iso(roots, hits)
+    # H：HAVING 引用 SELECT 别名
+    scan_having_alias(roots, hits)
+    # I：写接口裸 dict 收请求体
+    scan_bare_dict_body(roots, hits)
 
     # C：schema 里时间字段声明成 str
     schema_dir = BACKEND / "app" / "schemas"

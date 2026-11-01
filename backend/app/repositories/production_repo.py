@@ -152,10 +152,16 @@ class ProductionRepository(MultiTenantRepository):
         SQLite 下直接语法错误（本地/单测点开报表就 500）。
         这里本来就只汇总一个月，改用 ``[月初, 下月初)`` 区间过滤，
         分组键直接用月初这个常量，语义等价且两种方言都吃。
+
+        ★月份回显必须用**独立的** ``:month_label`` 参数，不能拿 ``:month_start``
+        一参两用：同一个占位符既作 SELECT 里的常量（无类型上下文）又参与
+        ``report_date >= :month_start`` 的日期比较，asyncpg 推断不出统一类型
+        （``AmbiguousParameterError: inconsistent types deduced for parameter $1``），
+        月报接口在 PG 上 100% 500 —— SQLite 不做参数类型推断，本地全绿。
         """
         start = date(year, month, 1)
         end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-        sql = """SELECT :month_start as month,
+        sql = """SELECT :month_label as month,
                  COUNT(DISTINCT wr.work_order_id) as order_count,
                  SUM(wr.output_qty) as total_output,
                  SUM(wr.scrap_qty) as total_scrap,
@@ -164,7 +170,8 @@ class ProductionRepository(MultiTenantRepository):
                  FROM work_reports wr
                  WHERE wr.report_date >= :month_start AND wr.report_date < :month_end
                    AND wr.status = 'submitted'"""
-        params = {"month_start": start, "month_end": end}
+        params = {"month_label": f"{year:04d}-{month:02d}",
+                  "month_start": start, "month_end": end}
         if tenant_id:
             sql += " AND wr.tenant_id = :tid"
             params["tid"] = tenant_id

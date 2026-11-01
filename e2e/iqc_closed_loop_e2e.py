@@ -43,6 +43,7 @@ def err_code(r):
 
 
 def main():
+    global WAREHOUSE_ID, LOCATION_ID
     c = httpx.Client(timeout=25)
     r = c.post(f"{API}/auth/login", json={
         "username": USER, "password": PWD, "tenant_id": TENANT})
@@ -51,6 +52,25 @@ def main():
         return 1
     c.headers.update({"Authorization": f"Bearer {r.json()['access_token']}",
                       "X-Tenant-Id": TENANT})
+
+    # ★仓库/库位按环境实际解析，不写死：staging 上 warehouse=1 未必带库位，
+    #   写死 location=1 会让上架确认返回 404 WMS_404_LOCATION「目标库位不存在」，
+    #   看起来像上架接口坏了，实际是探针拿了个不存在的库位。
+    def _items(path, params):
+        rr = c.get(f"{API}{path}", params=params)
+        d = (rr.json() or {}).get("data")
+        if isinstance(d, dict):
+            return d.get("items") or []
+        return d or []
+
+    if "E2E_WH" not in os.environ:
+        ws = _items("/wms/warehouses", {"page_size": 20})
+        if ws:
+            WAREHOUSE_ID = ws[0]["id"]
+    if "E2E_LOC" not in os.environ:
+        ls = _items("/wms/locations", {"warehouse_id": WAREHOUSE_ID, "page_size": 20})
+        if ls:
+            LOCATION_ID = ls[0]["id"]
     print(f"登录成功 tenant={TENANT} warehouse={WAREHOUSE_ID} location={LOCATION_ID}\n")
 
     tag = datetime.now().strftime("%m%d%H%M%S")

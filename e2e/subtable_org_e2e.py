@@ -166,24 +166,21 @@ def main():
     check("S5 admin 的报工数恰好 +1（没有误伤）", admin_after == base_reports + 1,
           f"{base_reports} → {admin_after}")
 
-    # 直接查库确认落的是「一号车间」而不是 NULL/根节点
-    import sqlite3
-    db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend", "ziwi.db")
+    # 直接回读接口确认落的是「一号车间」而不是 NULL/根节点。
+    # ★不能读本地 SQLite：探针打的是 staging（API_BASE=https://mfg1.ziwi.cn），
+    #   报工行落在 staging 的 PostgreSQL 里，本地 sqlite 一行都没有 ——
+    #   原写法让 org_id=[] 恒报"归属没生效"，把做对了的事显示成缺陷。
     try:
-        conn = sqlite3.connect(db)
-        rows = conn.execute(
-            "SELECT wr.org_id, wr.reporter_id FROM work_reports wr "
-            "JOIN work_orders wo ON wo.id = wr.work_order_id WHERE wo.wo_no = ?",
-            (wo_no,),
-        ).fetchall()
-        conn.close()
-        orgs = [r[0] for r in rows]
+        rr = admin.get(f"{API}/work-reports",
+                       params={"work_order_id": wo_id, "page_size": 50})
+        reps = (data_of(rr) or {}).get("items") or []
+        orgs = [x.get("org_id") for x in reps]
         check("S3 报工行 org_id 非 NULL（写入归属生效）",
-              rows and all(o is not None for o in orgs), f"org_id={orgs}")
-        check("S3 报工行 org_id = 一号车间(2)", orgs and all(o == 2 for o in orgs),
+              bool(reps) and all(o is not None for o in orgs), f"org_id={orgs}")
+        check("S3 报工行 org_id = 一号车间(2)", bool(reps) and all(o == 2 for o in orgs),
               f"org_id={orgs}（报工人组织，不是工单归属）")
     except Exception as exc:
-        check("S3 查库校验报工归属", False, f"查库失败：{exc}")
+        check("S3 回读校验报工归属", False, f"回读失败：{exc}")
 
     # ── S6 inspection_result 继承父单组织 ──
     print("── S6 检验明细：子表不能比父单更宽 ──")
@@ -202,8 +199,25 @@ def main():
                 target, n_admin = o, n
                 break
     if not target:
+        # 库里扫不到「有明细的根节点单」时**自己造一张**，而不是判失败。
+        # staging 的存量检验单几乎都是只有单头没有明细（历史上明细录不进去，
+        # 见 C-40），拿数据现状当缺陷会把这条验证永久卡死。
+        # 用 admin 建单 → 落在根组织；再录一条明细，就有了可对比的父单。
+        rc = admin.post(f"{API}/inspection-orders",
+                        json={"order_type": "iqc", "material_id": 1,
+                              "remark": f"org-scope 探针 {tag}"})
+        oid = data_of(rc).get("id")
+        if rc.status_code == 200 and oid:
+            admin.post(f"{API}/inspection-orders/{oid}/results/batch",
+                       json={"results": [{"item_name": f"外观{tag}", "result": "PASS",
+                                          "measured_value": 1.0, "unit": "项"}]})
+            rr = admin.get(f"{API}/inspection-orders/{oid}/results")
+            n = len(body(rr).get("data") or []) if rr.status_code == 200 else 0
+            if n > 0:
+                target, n_admin = {"id": oid, "order_no": f"probe-{oid}"}, n
+    if not target:
         check("S6 存在「有明细的根节点检验单」可用于对比", False,
-              f"扫了 {len(orders)} 张单都没有明细，无法验证")
+              f"扫了 {len(orders)} 张单都没有明细，自建也没成功")
     else:
         oid = target["id"]
         r_scoped = scoped.get(f"{API}/inspection-orders/{oid}/results")

@@ -200,6 +200,11 @@ class MaterialRepository(MultiTenantRepository):
 
         JOIN 补 ``tenant_id`` 对齐：``query()`` 的自动注入只限定主表 ``materials``，
         被 JOIN 的 ``inventory`` 不受限。
+
+        ★``HAVING`` 里必须**重复写聚合表达式**，不能引用 ``current_stock`` 别名：
+        SQLite 允许 HAVING 用 SELECT 别名，PG 不允许（``UndefinedColumnError:
+        column "current_stock" does not exist``）→ 预警扫描接口在 staging 上
+        100% 500、本地一路绿。改别名要连同下面 HAVING 一起改。
         """
         return await self.query(
             """SELECT m.*, COALESCE(SUM(
@@ -213,7 +218,10 @@ class MaterialRepository(MultiTenantRepository):
                     AND b.tenant_id = m.tenant_id
                WHERE m.is_active = true AND m.safety_stock_qty > 0
                GROUP BY m.id
-               HAVING current_stock < m.safety_stock_qty"""
+               HAVING COALESCE(SUM(
+                    CASE WHEN COALESCE(b.is_locked, FALSE) = FALSE
+                         THEN i.quantity - COALESCE(i.locked_qty, 0)
+                         ELSE 0 END), 0) < m.safety_stock_qty"""
         )
 
     async def search(self, keyword: str, limit: int = 20) -> List[Dict]:

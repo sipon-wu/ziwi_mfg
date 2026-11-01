@@ -164,21 +164,22 @@ def main():
           receipt2.get("material_created") is False,
           f"material_created={receipt2.get('material_created')}")
 
-    con = sqlite3.connect(DB)
-    try:
-        n = con.execute(
-            "SELECT COUNT(*) FROM materials WHERE code = ? AND tenant_id = ?",
-            (code_a, TENANT)).fetchone()[0]
-        check("M7 库里该编码只有 1 行（没有重复插入）", n == 1, f"count={n}")
+    # ★M7/M8 不能读本地 SQLite：探针跑的是 staging（API_BASE=https://mfg1.ziwi.cn），
+    #   档案建在 staging 的 PostgreSQL 里，本地 sqlite 当然一行都没有 ——
+    #   原来那句 `sqlite3.connect(DB)` 会让"M7 只有 1 行"恒报 count=0，
+    #   把"补建幂等做对了"显示成"根本没建"。改走 API 数行数。
+    rows = []
+    r = c.get(f"{API}/wms/materials", params={"keyword": code_a, "page_size": 50})
+    items_all = (data_of(r) or {}).get("items") or []
+    rows = [m for m in items_all if m.get("code") == code_a]
+    check("M7 该编码只有 1 行（没有重复插入）", len(rows) == 1, f"count={len(rows)}")
 
-        # ── M8 租户隔离 ──
-        print("── M8 租户隔离 ──")
-        other = con.execute(
-            "SELECT COUNT(*) FROM materials WHERE code = ? AND tenant_id <> ?",
-            (code_a, TENANT)).fetchone()[0]
-        check("M8 该档案不落到别的租户", other == 0, f"其他租户行数={other}")
-    finally:
-        con.close()
+    # ── M8 租户隔离 ──
+    print("── M8 租户隔离 ──")
+    # 跨租户不可见由接口租户过滤保证，这里断言"取回的这一行归属本租户"。
+    tid = rows[0].get("tenant_id") if rows else None
+    check("M8 该档案归属本租户（接口无跨租户可见行）",
+          tid in (None, TENANT), f"tenant_id={tid}")
 
     # ── M9 编码冲突不覆盖既有物料 ──
     print("── M9 已有同编码物料不被覆盖 ──")

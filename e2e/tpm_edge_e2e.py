@@ -15,6 +15,7 @@
     F-B3  能耗数据补录：业务时间与写库时间分离（is_backfill），未来时间一律拒，
           批量写入不做部分写入
 """
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,19 @@ def err_msg(r):
         return d.get("message", "") if isinstance(d, dict) else str(d)
     except Exception:
         return ""
+
+
+def flat(v):
+    """把审计日志的 before/after 值拍平成字符串再判断包含关系。
+
+    ★audit_logs 的 before/after 落库是 **JSON 对象**（`{"location": "冲压车间"}`），
+    不是字符串。直接写 `"冲压车间" in value` 会退化成 dict 的**键**成员判断
+    （判断的是 "冲压车间" 是不是某个键名），恒为 False ——
+    审计明明写对了，也会被判成"没留痕"。
+    """
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return v or ""
 
 
 def main():
@@ -217,8 +231,8 @@ def main():
     items = r.json().get("data", {}).get("items", [])
     check("F-B1 审计表落 equipment.transfer（含前后归属）",
           r.status_code == 200 and len(items) >= 1
-          and "冲压车间" in (items[0].get("before") or "")
-          and "装配车间" in (items[0].get("after") or ""),
+          and "冲压车间" in flat(items[0].get("before"))
+          and "装配车间" in flat(items[0].get("after")),
           f"hits={len(items)} {str(items[:1])[:200]}")
 
     r = c.put(f"{API}/equipment/{eq_b1}", json={"location": "装配车间"})

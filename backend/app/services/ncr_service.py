@@ -337,7 +337,12 @@ class NcrService:
             "product_code": product_code,
             "product_name": product_name,
             "planned_qty": qty,
-            "priority": "high",
+            # ★必须是整数：work_orders.priority 是 Integer（0-5，越大越急）。
+            # SQLite 会把 'high' 塞进 INTEGER 列（亲和性转换失败就原样存文本），
+            # 本地一路绿；PG 直接 DataError: invalid input for query argument $10:
+            # 'high' ('str' object cannot be interpreted as an integer) ——
+            # NCR 判返工/再检两条自动派生链全断。
+            "priority": 5,
             "scheduled_start_at": None,
             "scheduled_end_at": None,
             "workshop": None,
