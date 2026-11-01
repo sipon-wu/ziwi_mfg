@@ -87,25 +87,57 @@ async def ensure_material(client: httpx.AsyncClient) -> int:
 
 
 async def current_stock(client: httpx.AsyncClient, material_id: int) -> float:
-    """现存量 = 该物料在所有库位（含待检区）的 quantity 之和。"""
-    resp = await client.get(f"{API}/wms/inventory", params={
-        "material_id": material_id, "page_size": 100,
-    })
-    data = resp.json().get("data", {})
-    items = data.get("items", []) if isinstance(data, dict) else []
-    return float(sum(i.get("quantity", 0) or 0 for i in items))
+    """现存量 = 该物料在所有库位（含待检区）的 quantity 之和。
+
+    同样要翻页：inventory 是按 (库位 × 批次) 分行的，批次多起来一页装不下。
+    """
+    total = None
+    collected = 0
+    acc = 0.0
+    page = 1
+    while True:
+        resp = await client.get(f"{API}/wms/inventory", params={
+            "material_id": material_id, "page": page, "page_size": 100,
+        })
+        data = resp.json().get("data", {})
+        items = data.get("items", [])
+        if total is None:
+            total = int(data.get("total") or 0)
+        acc += sum(float(i.get("quantity", 0) or 0) for i in items)
+        collected += len(items)
+        if not items or collected >= total or page > 100:
+            break
+        page += 1
+    return acc
 
 
 async def tx_summary(client: httpx.AsyncClient, material_id: int):
-    """返回 (流水条数, 数量增量和)。"""
-    resp = await client.get(f"{API}/wms/inventory-transactions", params={
-        "material_id": material_id, "page_size": 100,
-    })
-    data = resp.json().get("data", {})
-    items = data.get("items", []) if isinstance(data, dict) else []
-    count = len(items)
-    total = float(sum(t.get("quantity", 0) or 0 for t in items))
-    return count, total
+    """返回 (流水总条数, 全部流水的数量增量和)。
+
+    ★两个都必须按**全量**算，不能只数第一页：
+      本脚本刻意复用已有物料（避免污染主数据），历史流水早就超过一页
+      （staging 实测 total=174，而 page_size 上限 100）。只数当前页会恒等于
+      100，收货多了一条也看不出变化 → 假红「收货后流水+1: actual=0」。
+      这是探针假设错，不是过账算错（同一次运行的现存量 +100 是对的）。
+    """
+    total = None
+    collected = 0
+    acc = 0.0
+    page = 1
+    while True:
+        resp = await client.get(f"{API}/wms/inventory-transactions", params={
+            "material_id": material_id, "page": page, "page_size": 100,
+        })
+        data = resp.json().get("data", {})
+        items = data.get("items", [])
+        if total is None:
+            total = int(data.get("total") or 0)
+        acc += sum(float(t.get("quantity", 0) or 0) for t in items)
+        collected += len(items)
+        if not items or collected >= total or page > 100:
+            break
+        page += 1
+    return (total or 0), acc
 
 
 _OK = 0
@@ -118,6 +150,24 @@ def check(label: str, actual, expected):
     print(f"  [{mark}] {label}: actual={actual} expected={expected}")
     if not ok:
         raise SpecError(f"{label} 不满足：actual={actual} expected={expected}")
+    _OK += 1
+
+
+def check_ge(label: str, actual, floor: int):
+    """至少多少条 —— 用在"流水条数"这类会随批次拆分而变化的断言上。
+
+    ★为什么不能钉死条数：本脚本复用已有物料，库存分散在多个批次/库位。
+    FIFO 出库 10 时，若最早批次只剩 5，会拆成两条腿（5 + 5），于是写 **2 条**
+    出库流水 —— 这是正确行为，不是缺陷。钉成"发-10 后流水正好 +2"只在
+    "全新、单批次"的物料上成立，复用物料必然假红。
+    **权威口径是数量增量和**（下面单独断言），条数只作弱校验。
+    """
+    global _OK
+    ok = actual >= floor
+    mark = "PASS" if ok else "FAIL"
+    print(f"  [{mark}] {label}: actual={actual} expected>={floor}")
+    if not ok:
+        raise SpecError(f"{label} 不满足：actual={actual} expected>={floor}")
     _OK += 1
 
 
@@ -189,7 +239,8 @@ async def main():
                    await current_stock(client, material_id) - base_stock,
                    float(EXP_RECEIVE - EXP_ISSUE_1))
         c2, s2 = await tx_summary(client, material_id)
-        check("发-10后流水+2", c2 - base_tx, 2)
+        check_ge("发-10后流水至少+2（批次拆分可能更多）", c2 - base_tx, 2)
+        check_near("发-10后增量和=基线+90", s2 - base_sum, float(EXP_RECEIVE - EXP_ISSUE_1))
 
         # ③ 出库确认 -5
         io2 = await client.post(f"{API}/wms/issue-orders", json={
@@ -207,7 +258,7 @@ async def main():
         check_near("出-5后现存量=基线+85",
                    await current_stock(client, material_id) - base_stock, float(EXP_FINAL_STOCK))
         c3, s3 = await tx_summary(client, material_id)
-        check("出-5后流水+3", c3 - base_tx, EXP_TX_COUNT)
+        check_ge("出-5后流水至少+3（批次拆分可能更多）", c3 - base_tx, EXP_TX_COUNT)
         check_near("增量和=85", s3 - base_sum, float(EXP_TX_SUM))
 
         # ============================================
@@ -235,7 +286,10 @@ async def main():
         check_near("cancel-10 库存不变", await current_stock(client, material_id),
                    base_stock + EXP_FINAL_STOCK)
         c10, _ = await tx_summary(client, material_id)
-        check("cancel-10 流水数不变", c10 - base_tx, EXP_TX_COUNT)
+        # 拿「出-5 之后」的读数做基准，而不是 base_tx + 3：取消一张 **pending**
+        # 入库单不产生任何流水，所以条数应当与取消前**完全一致**。用常量 3 会
+        # 被前面 FIFO 拆腿的条数变化带偏。
+        check("cancel-10 流水数不变", c10, c3)
 
         # cancel-11：取消已收货（inspecting）状态的收货单
         N_CANCEL11 = 30
@@ -271,8 +325,8 @@ async def main():
                    await current_stock(client, material_id),
                    float(stock_before_c11 - N_CANCEL11))
         c11, _ = await tx_summary(client, material_id)
-        check("cancel-11 流水+1（多一条 cancel 流水）",
-              c11, tx_before_c11 + 1)
+        check_ge("cancel-11 流水至少+1（多一条 cancel 流水）",
+                 c11 - tx_before_c11, 1)
 
         # cancel-12：取消已出库（issued）状态的出库单
         M_CANCEL12 = 8
@@ -308,8 +362,9 @@ async def main():
                    await current_stock(client, material_id),
                    float(stock_before_c12 + M_CANCEL12))
         c12, _ = await tx_summary(client, material_id)
-        check("cancel-12 流水+1（多一条 cancel 流水）",
-              c12, tx_before_c12 + 1)
+        # 出库红冲按**原始出库流水逐腿回滚**，原出库拆了几条腿就写几条 cancel 流水
+        check_ge("cancel-12 流水至少+1（多一条 cancel 流水）",
+                 c12 - tx_before_c12, 1)
 
     print("\n== N5 验收全部通过 ✅ ==")
     # run_all.py 靠这一行统计，缺了就会被判成"未输出可识别汇总"
