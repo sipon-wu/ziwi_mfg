@@ -21,9 +21,11 @@ import sys
 import httpx
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
-USERNAME = os.getenv("USERNAME", "admin")
-PASSWORD = os.getenv("PASSWORD", "admin123")
-TENANT = os.getenv("TENANT", "default")
+# ★别用裸 USERNAME/PASSWORD/TENANT：Windows 上 USERNAME 是系统内置变量
+#   （当前登录名），会把默认账号顶掉，登录 401 却看不出原因。
+USERNAME = os.getenv("E2E_USER", "mfg_admin")
+PASSWORD = os.getenv("E2E_PASSWORD", "admin123")
+TENANT = os.getenv("E2E_TENANT", "mfg_demo")
 
 API = f"{BASE_URL}/api/v1"
 
@@ -106,20 +108,27 @@ async def tx_summary(client: httpx.AsyncClient, material_id: int):
     return count, total
 
 
+_OK = 0
+
+
 def check(label: str, actual, expected):
+    global _OK
     ok = actual == expected
     mark = "PASS" if ok else "FAIL"
     print(f"  [{mark}] {label}: actual={actual} expected={expected}")
     if not ok:
         raise SpecError(f"{label} 不满足：actual={actual} expected={expected}")
+    _OK += 1
 
 
 def check_near(label: str, actual: float, expected: float, tol: float = 0.01):
+    global _OK
     ok = abs(actual - expected) <= tol
     mark = "PASS" if ok else "FAIL"
     print(f"  [{mark}] {label}: actual={actual} expected≈{expected} (tol={tol})")
     if not ok:
         raise SpecError(f"{label} 不满足：actual={actual} expected≈{expected}")
+    _OK += 1
 
 
 async def main():
@@ -303,6 +312,8 @@ async def main():
               c12, tx_before_c12 + 1)
 
     print("\n== N5 验收全部通过 ✅ ==")
+    # run_all.py 靠这一行统计，缺了就会被判成"未输出可识别汇总"
+    print(f"汇总：通 {_OK} / 断 0")
 
 
 if __name__ == "__main__":
@@ -311,7 +322,9 @@ if __name__ == "__main__":
         sys.exit(0)
     except SpecError as e:
         print(f"\n== N5 验收失败 ❌: {e} ==")
+        print(f"汇总：通 {_OK} / 断 1")
         sys.exit(1)
     except Exception as e:  # noqa: BLE001
         print(f"\n== N5 验收异常 ❌: {e} ==")
+        print(f"汇总：通 {_OK} / 断 1")
         sys.exit(2)

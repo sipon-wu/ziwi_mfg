@@ -306,6 +306,13 @@ async def list_reports(
     repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
 ):
     svc = ProductionService(repo)
+    # ★日期格式在入口就校验掉：放给 repo 里的 date.fromisoformat 去炸会变成 500。
+    #   传错格式是调用方问题，应当 422 而不是"内部服务异常"。
+    if report_date:
+        try:
+            date.fromisoformat(report_date.strip())
+        except ValueError:
+            raise HTTPException(status_code=422, detail="report_date 须为 YYYY-MM-DD")
     data = await svc.list_reports(page, page_size, work_order_id, report_date)
     return {"code": 0, "message": "success", "data": data}
 

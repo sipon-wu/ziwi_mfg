@@ -1,5 +1,5 @@
 """M20 仓储管理（WMS）模块 — API 路由"""
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -1112,23 +1112,56 @@ async def report_turnover(
     warehouse_id: Optional[int] = Query(None),
     repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
 ):
-    """库存周转率"""
-    sql = """SELECT m.id as material_id, m.code as material_code, m.name as material_name, m.spec, m.unit,
-             COALESCE(SUM(i.quantity), 0) as current_qty,
-             COALESCE(ABS(SUM(CASE WHEN t.transaction_type = 'issue' THEN t.quantity ELSE 0 END)), 0) as total_issue_qty,
-             CASE WHEN COALESCE(SUM(i.quantity), 0) > 0
-                  THEN ROUND(COALESCE(ABS(SUM(CASE WHEN t.transaction_type = 'issue' THEN t.quantity ELSE 0 END)), 0) / SUM(i.quantity), 2)
-                  ELSE 0 END as turnover_rate
-             FROM materials m
-             LEFT JOIN inventory i ON i.material_id = m.id
-             LEFT JOIN inventory_transactions t ON t.material_id = m.id
-             WHERE m.is_active = true"""
-    params = {}
+    """库存周转率。
+
+    ★这里必须绕开两个坑，都是 staging（PostgreSQL）上实测炸出来的：
+
+    ① **`ROUND(x, 2)` 在 PG 上对 double precision 不存在**：PG 的
+       `round(numeric, int)` 只接受 numeric，双精度要先 `::numeric` 转，
+       而 `::` 是 PG 专有语法、SQLite 不认 —— 本地是 SQLite，永远测不出来。
+       索性把除法和四舍五入挪到 Python，两端行为一致。
+       报错原文：`function round(double precision, integer) does not exist`。
+
+    ② **两条一对多 JOIN 会互相放大**：原 SQL 同时 LEFT JOIN inventory 和
+       inventory_transactions，一个有 3 条库存行、10 条流水的物料会产出 30 行，
+       `SUM(i.quantity)` 被放大 10 倍、`SUM(t.quantity)` 被放大 3 倍，
+       两边倍数不同 → 周转率算出来是错的（而且接口 200、不报错，最阴）。
+       改成三个单表查询各自 GROUP BY，再在 Python 里按 material_id 合并。
+    """
+    mats = await repo.query(
+        """SELECT id as material_id, code as material_code, name as material_name,
+                  spec, unit
+           FROM materials WHERE is_active = true ORDER BY code""")
+
     if warehouse_id:
-        sql += " AND (i.warehouse_id = :wid OR i.warehouse_id IS NULL)"
-        params["wid"] = warehouse_id
-    sql += " GROUP BY m.id ORDER BY turnover_rate DESC"
-    data = await repo.query(sql, params)
+        inv = await repo.query(
+            """SELECT material_id, COALESCE(SUM(quantity), 0) as qty
+               FROM inventory WHERE warehouse_id = :wid GROUP BY material_id""",
+            {"wid": warehouse_id})
+    else:
+        inv = await repo.query(
+            """SELECT material_id, COALESCE(SUM(quantity), 0) as qty
+               FROM inventory GROUP BY material_id""")
+
+    # 出库流水 quantity 记的是负值（净变动口径），取绝对值才是出库量
+    iss = await repo.query(
+        """SELECT material_id, COALESCE(SUM(ABS(quantity)), 0) as qty
+           FROM inventory_transactions
+           WHERE transaction_type = 'issue' GROUP BY material_id""")
+
+    cur_qty = {r["material_id"]: float(r["qty"] or 0) for r in inv}
+    iss_qty = {r["material_id"]: float(r["qty"] or 0) for r in iss}
+
+    data = []
+    for m in mats:
+        mid = m["material_id"]
+        c = cur_qty.get(mid, 0.0)
+        i = iss_qty.get(mid, 0.0)
+        m["current_qty"] = c
+        m["total_issue_qty"] = i
+        m["turnover_rate"] = round(i / c, 2) if c > 0 else 0
+        data.append(m)
+    data.sort(key=lambda x: x["turnover_rate"], reverse=True)
     return {"code": 0, "message": "success", "data": data}
 
 @router.get("/reports/slow-moving")
@@ -1158,7 +1191,7 @@ async def report_slow_moving(
     sql += " GROUP BY m.id"
     rows = await repo.query(sql, params)
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     out = []
     for r in rows:
         last = r.get("last_transaction_date")
@@ -1167,8 +1200,18 @@ async def report_slow_moving(
                 last = datetime.fromisoformat(last.replace(" ", "T"))
             except ValueError:
                 last = None
+        # ★从 TIMESTAMPTZ 列读回来的 datetime 是 **tz-aware** 的，
+        #   而 datetime.now() 是 naive —— 两者相减会抛
+        #   `TypeError: can't subtract offset-naive and offset-aware datetimes`，
+        #   接口在 PG 上直接 500。SQLite 存的是无时区字符串，本地永远复现不了。
+        #   所以读回来的值先统一成 aware（无时区按 UTC 解释），再和 UTC now 相减。
+        if isinstance(last, datetime):
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+        else:
+            last = None
         # 从未交易过：给一个足够大的值，等价于原来 COALESCE 到 1970-01-01 的语义
-        idle_days = (now - last).days if isinstance(last, datetime) else 36500
+        idle_days = (now - last).days if last else 36500
         if idle_days < days:
             continue
         r["idle_days"] = idle_days

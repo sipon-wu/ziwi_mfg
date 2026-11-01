@@ -70,6 +70,12 @@ DEFAULT_PROBES = [
     "wms_realistic_e2e",
     "factory_full_flow_e2e",
     "closed_loop_test",
+    # ── 2026-11-01 纳入的三个「长期没人跑」的探针 ────────────────────
+    # 此前 DEFAULT_PROBES 只有 38 项，而这 3 个文件一直躺在目录里没进套件。
+    # "只跑一部分就下结论，和没跑是一样的"——本脚本开头那段话说的就是这事。
+    "query_param_sweep_e2e",   # 全端点查询参数扫描（专治参数一传就 500）
+    "copilot_smoke",           # AI Copilot 只读问数四大边界（进程内 ASGI 烟测）
+    "n5_posting_spec",         # N5 过账语义 + 红冲三态（收+100/发-10/出-5）
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL
@@ -82,7 +88,9 @@ _SUMMARY_RE = re.compile(
     r"(?:通\s*(?P<ok1>\d+)\s*/\s*断\s*(?P<bad1>\d+))"
     r"|(?:PASS\s*(?P<ok2>\d+)\s*/\s*FAIL\s*(?P<bad2>\d+))"
     r"|(?:(?P<ok4>\d+)\s*PASS\s*/\s*(?P<bad4>\d+)\s*FAIL)"
-    r"|(?:(?P<ok3>\d+)\s*段通\s*/\s*(?P<bad3>\d+)\s*段断)", re.IGNORECASE)
+    r"|(?:(?P<ok3>\d+)\s*段通\s*/\s*(?P<bad3>\d+)\s*段断)"
+    # copilot_smoke 只打 "端到端烟测：6/6 通过"，数字在前、用斜杠分隔
+    r"|(?:(?P<ok5>\d+)\s*/\s*(?P<bad5>\d+)\s*通过)", re.IGNORECASE)
 
 
 def _child_env() -> dict:
@@ -121,6 +129,12 @@ def run_one(name: str, py: str, timeout: int = 300):
 
     ok = bad = 0
     for m in _SUMMARY_RE.finditer(out):
+        if m.group("ok5") is not None:
+            # "6/6 通过" 的语义是 **通过数/总数**，不是 通过/失败。
+            # 直接当 通X断Y 用会把 6/6 记成 6 通 6 断（100% 假红）。
+            _p, _t = int(m.group("ok5")), int(m.group("bad5"))
+            ok, bad = _p, max(_t - _p, 0)
+            continue
         o = m.group("ok1") or m.group("ok2") or m.group("ok4") or m.group("ok3")
         b = m.group("bad1") or m.group("bad2") or m.group("bad4") or m.group("bad3")
         if o is not None:

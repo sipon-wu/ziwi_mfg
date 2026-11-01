@@ -1,6 +1,22 @@
 from app.repositories.base import MultiTenantRepository
 from typing import Optional, Dict, List
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+
+
+def _day_start(value, plus_days: int = 0) -> datetime:
+    """把 'YYYY-MM-DD'（或 date/datetime）规整成当天零点的 datetime。
+
+    TIMESTAMPTZ 列不接受字符串参数（asyncpg 严格类型），必须给 datetime。
+    用 naive datetime 而非 tz-aware：项目里其它 TIMESTAMPTZ 绑定（如 tpm
+    停机补录）走的就是 naive，asyncpg 按 UTC 解释，保持一致。
+    """
+    if isinstance(value, datetime):
+        d = value.date()
+    elif isinstance(value, date):
+        d = value
+    else:
+        d = date.fromisoformat(str(value).strip()[:10])
+    return datetime.combine(d + timedelta(days=plus_days), time.min)
 
 
 class QcPointRepository(MultiTenantRepository):
@@ -153,11 +169,19 @@ class InspectionOrderRepository(MultiTenantRepository):
             sql += " AND result = :result"
             params["result"] = result
         if start_date:
+            # ★created_at 是 TIMESTAMPTZ，直接把 'YYYY-MM-DD' 字符串绑进去，
+            #   asyncpg 会以列类型推断参数类型并拒收字符串：
+            #   `invalid input for query argument $2: '2026-11-01'
+            #    (expected a datetime.date or datetime.datetime instance, got 'str')`
+            #   SQLite 里字符串能隐式比较，所以本地探针一直全绿、只有 PG 上炸。
             sql += " AND created_at >= :start_date"
-            params["start_date"] = start_date
+            params["start_date"] = _day_start(start_date)
         if end_date:
-            sql += " AND created_at <= :end_date"
-            params["end_date"] = end_date
+            # 用**左闭右开**而不是 `<= end_date`：原先字符串比较时 `<= '2026-11-01'`
+            # 会把当天 00:00 之后的记录全排除（"查 11-01 查不到 11-01 的单"）。
+            # 改成 `< 次日零点`，语义是"含结束日全天"。
+            sql += " AND created_at < :end_date_excl"
+            params["end_date_excl"] = _day_start(end_date, plus_days=1)
         sql += " ORDER BY created_at DESC"
         return await self.query_page(sql, params, page, page_size)
 

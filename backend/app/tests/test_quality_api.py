@@ -224,10 +224,13 @@ class TestInspectionStandardAPI:
     async def test_list_with_filters(self, mock_list, async_client):
         mock_list.return_value = _page_data([STANDARD_ITEM])
         await async_client.get(
-            "/api/v1/inspection-standards?keyword=国标&qc_point_id=1"
+            "/api/v1/inspection-standards?keyword=国标"
         )
         args = mock_list.call_args[0]
         assert args[2] == "国标"  # keyword 模糊匹配参数 (第3个参数)
+        # inspection_standard 没有 qc_point_id 列，第 4 个位置参数会串到
+        # standard_type 上（传数字 500 / 传字符串静默按错字段过滤）。钉死参数个数。
+        assert len(args) == 3
 
     @patch("app.api.quality.InspectionStandardRepository.get_inspection_standard")
     async def test_get(self, mock_get, async_client):
@@ -691,12 +694,17 @@ class TestQualityReportAPI:
 
     @patch("app.api.quality.QualityReportRepository.list_reports")
     async def test_list_with_filters(self, mock_list, async_client):
+        # ★这条用例原先断言的是 `qc_point_id`，而 quality_report 表**根本没有
+        #   qc_point_id 列**。那个参数会被当成第 3 个位置参数塞进 report_type，
+        #   于是「传数字 500、传字符串静默按错误字段过滤」。用例原本是在给
+        #   一个有缺陷的契约背书，改成验仓储层真正支持的两个筛选。
         mock_list.return_value = _page_data([REPORT_ITEM])
         await async_client.get(
-            "/api/v1/quality-reports?qc_point_id=1"
+            "/api/v1/quality-reports?report_type=monthly&period=2026-11"
         )
         args = mock_list.call_args[0]
-        assert args[2] == 1  # qc_point_id
+        assert args[2] == "monthly"  # report_type
+        assert args[3] == "2026-11"  # period
 
     @patch("app.api.quality.QualityReportRepository.list_reports")
     async def test_list_empty(self, mock_list, async_client):

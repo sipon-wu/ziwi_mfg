@@ -1,6 +1,6 @@
 # M12 数据采集模块 — Repository 层
 from typing import Optional, Dict, List
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from app.repositories.base import MultiTenantRepository
 
 
@@ -162,10 +162,22 @@ class DataCollectionRepository(MultiTenantRepository):
         return result.rowcount
 
     async def get_today_record_count(self) -> int:
-        """获取当日采集记录总数"""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        sql = "SELECT COUNT(*) as cnt FROM collect_data_record WHERE data_time >= :today::date"
-        result = await self.query_one(sql, {"today": today})
+        """获取当日采集记录总数。
+
+        ★两个坑叠在一起，别再踩：
+        ① `data_time >= :today::date` 里的 `::` 会被 SQLAlchemy 的 text()
+           当成第二个绑定参数（`:today` + `:date`），编出来的 SQL 直接是
+           `syntax error at or near ":"`。要 cast 必须用 `CAST(:x AS DATE)`，
+           不能写 PG 的 `::` 简写。
+        ② 但这里连 cast 都不该用 —— `data_time` 是 TIMESTAMPTZ，asyncpg 严格
+           类型，绑字符串会报 `expected a datetime..., got 'str'`。直接绑一个
+           当天零点的 datetime，两端都干净：PG 走 timestamptz 比较，
+           SQLite 走 ISO 字符串比较，语义一致。
+        """
+        today_start = datetime.combine(
+            datetime.now(timezone.utc).date(), time.min)
+        sql = "SELECT COUNT(*) as cnt FROM collect_data_record WHERE data_time >= :today"
+        result = await self.query_one(sql, {"today": today_start})
         return result["cnt"] if result else 0
 
     # ==================== IoT 网关 ====================

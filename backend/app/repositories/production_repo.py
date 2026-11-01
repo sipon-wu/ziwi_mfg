@@ -76,7 +76,7 @@ class ProductionRepository(MultiTenantRepository):
 
     # ==================== 报工 ====================
     async def list_reports(self, page: int = 1, page_size: int = 20,
-                            work_order_id: int = None, report_date: str = None) -> dict:
+                            work_order_id: int = None, report_date=None) -> dict:
         sql = """SELECT wr.id, wr.tenant_id, wr.work_order_id, wr.report_date, wr.reporter_id,
                  wr.org_id,
                  wr.operation_code, wr.operation_name, wr.output_qty, wr.scrap_qty, 
@@ -90,8 +90,15 @@ class ProductionRepository(MultiTenantRepository):
             sql += " AND wr.work_order_id = :woid"
             params["woid"] = work_order_id
         if report_date:
+            # ★必须把 'YYYY-MM-DD' 转成 date 对象再绑定：work_reports.report_date
+            #   是 DATE 列，asyncpg 是严格类型，传字符串会直接
+            #   `invalid input for query argument $N: '2026-11-01' (expected a date, got str)`
+            #   → 500。SQLite 里字符串能隐式转成日期，所以本地一直是绿的、
+            #   只有 PostgreSQL 上爆。同一个坑在 tpm 停机补录（TIMESTAMPTZ）、
+            #   月报（参数一参两用）上都踩过。
             sql += " AND wr.report_date = :rdate"
-            params["rdate"] = report_date
+            params["rdate"] = (report_date if isinstance(report_date, date)
+                               else date.fromisoformat(str(report_date).strip()))
         sql += " ORDER BY wr.created_at DESC"
         return await self.query_page(sql, params, page, page_size)
 

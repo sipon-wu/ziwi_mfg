@@ -111,10 +111,20 @@ async def list_standards(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     keyword: str = Query(None),
-    qc_point_id: int = Query(None),
     repo: InspectionStandardRepository = Depends(get_tenant_repo(InspectionStandardRepository)),
 ):
-    data = await repo.list_inspection_standards(page, page_size, keyword, qc_point_id)
+    """检验标准列表。
+
+    ★原先这里还有一个 `qc_point_id` 查询参数，但它**挂错了表**：
+      `inspection_standard` 表根本没有 qc_point_id 列（只有 name / standard_type
+      / version / is_enabled）。因为仓储层签名是
+      `(page, page_size, name, standard_type, is_enabled)`，多传的这个位置参数
+      会顺次落进 `standard_type` 槽位 —— 表现为
+      `DataError: invalid input for query argument $2: 1 (expected str, got int)`。
+      更糟的是：若传的是字符串，它不会报错，而是**静默地按 standard_type 过滤**，
+      返回一批看似正常、其实完全不对的数据。已删除。
+    """
+    data = await repo.list_inspection_standards(page, page_size, keyword)
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -231,6 +241,14 @@ async def list_orders(
     end_date: str = Query(None),
     repo: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
 ):
+    # 日期格式在入口校验：交给仓储层的 date.fromisoformat 去炸会变成 500，
+    # 而传错格式是调用方问题，应当 422。
+    for _k, _v in (("start_date", start_date), ("end_date", end_date)):
+        if _v:
+            try:
+                date.fromisoformat(_v.strip()[:10])
+            except ValueError:
+                raise HTTPException(status_code=422, detail=f"{_k} 须为 YYYY-MM-DD")
     data = await repo.list_inspection_orders(page, page_size, order_type, result, start_date, end_date)
     return {"code": 0, "message": "success", "data": data}
 
@@ -816,10 +834,18 @@ async def delete_result(
 async def list_reports(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    qc_point_id: int = Query(None),
+    report_type: str = Query(None),
+    period: str = Query(None),
     repo: QualityReportRepository = Depends(get_tenant_repo(QualityReportRepository)),
 ):
-    data = await repo.list_reports(page, page_size, qc_point_id)
+    """品质报表列表。
+
+    ★原先声明的是 `qc_point_id`，但 `quality_report` 表只有
+      report_type / period / report_data，**没有 qc_point_id 列**。多传的位置
+      参数会顺次落进 `report_type` 槽位 → 同样是「传数字报 500、传字符串静默
+      按错误字段过滤」。这里换成仓储层真正支持、且业务上确实要用的两个筛选。
+    """
+    data = await repo.list_reports(page, page_size, report_type, period)
     return {"code": 0, "message": "success", "data": data}
 
 
