@@ -195,7 +195,7 @@ class TrialService:
         if conclusion == "terminated" and not term_reason:
             return {"error": "评审结论为终止时必须填写终止原因（terminated_reason）"}
 
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         await self.review_repo.update_review(review_id, {
             "conclusion": conclusion,
             "reviewed_at": now,
@@ -275,7 +275,7 @@ class TrialService:
         # 不补的话完工自动建入库单会走 skipped（产品 PRO-xxx 与物料 M-xxx 两套编码）。
         material_result = await self._ensure_product_material(order, warnings)
 
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         await self.order_repo.update_order(order_id, {
             "status": "production",
             "completed_at": now,
@@ -849,7 +849,7 @@ class TrialService:
             return {"error": "终止原因必填：试产失败归档后要靠它复盘，"
                              "空原因等于把这次失败的经验丢掉"}
 
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         await self.order_repo.update_order(order_id, {
             "status": "terminated",
             "completed_at": now,

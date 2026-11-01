@@ -612,7 +612,7 @@ class InventoryRepository(MultiTenantRepository):
             "      OR (expiry_date IS NOT NULL AND expiry_date < :today))) "
             "ORDER BY (quantity - locked_qty) DESC",
             {"mid": material_id, "wid": warehouse_id,
-             "today": date.today().isoformat()},
+             "today": date.today()},
         )
 
     async def find_available_batches(self, material_id: int, warehouse_id: int,

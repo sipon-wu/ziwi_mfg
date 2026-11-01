@@ -203,6 +203,34 @@ ALLOW_TIME_ISO = {
 }
 
 
+LOCAL_ISO = re.compile(
+    r"^\s*\w+\s*=\s*(?:datetime\.now|date\.today)\(\)\.isoformat\(\)")
+
+
+def scan_local_iso(roots, hits):
+    """兜住 `now = datetime.now().isoformat()` 之后再写库的写法。
+
+    这一形态躲过了前两条规则（既不是 dict 字面量，也不是 `["列"] =`）：
+    trial_service 里 `now` 先被降级成字符串，随后 `{"completed_at": now}`
+    原样进 update —— 又是 PG 侧 toordinal 报错。变量中转一次就检测不到了，
+    所以单列一条：只要出现这种赋值，就让人确认一次。
+    """
+    for root in roots:
+        if root.name == "migrations":
+            continue
+        for py in root.rglob("*.py"):
+            if "__pycache__" in py.parts or "tests" in py.parts:
+                continue
+            try:
+                text = py.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if LOCAL_ISO.match(line):
+                    hits.append((py, lineno, "时间被降级成字符串后存进变量",
+                                 line.strip()[:110]))
+
+
 def main() -> int:
     bool_cols, time_cols = collect_types()
 
@@ -226,6 +254,8 @@ def main() -> int:
     scan_insert_values(roots, bool_cols, hits)
     # E：isoformat 字符串塞给时间列
     scan_time_as_str(roots, time_cols, hits)
+    # F：时间降级后存变量（变量中转，前几条规则看不见）
+    scan_local_iso(roots, hits)
 
     # C：schema 里时间字段声明成 str
     schema_dir = BACKEND / "app" / "schemas"
