@@ -71,6 +71,14 @@ function specText(item: any) {
   return `≥${lo}`
 }
 
+// 后端时间戳有两种形态（SQLite 出来的 'YYYY-MM-DD HH:MM:SS'、
+// 新写入的带微秒与时区的 ISO），原样显示成
+// "2026-11-01 10:33:11.850327+00:00" 现场没人看得下去。
+function fmtTime(v?: string) {
+  if (!v) return '-'
+  return String(v).replace('T', ' ').slice(0, 16)
+}
+
 function draftSpec(d: Draft) {
   const it = items.value.find((i) => i.id === d.item_id)
   return it ? specText(it) : ''
@@ -142,7 +150,10 @@ async function submitResults() {
     if (res?.conflicts?.length) {
       showToast({ message: `数值与结论不一致：${res.conflicts[0]}`, duration: 5000 })
     }
+    // 提交后立刻补一行空行：现场是"一整套量完再录"，录完手还在键盘上，
+    // 让界面变回"零行 + 一个添加按钮"等于逼人多点一次。
     drafts.value = []
+    addRow()
     await fetch()
   } catch (e: any) {
     showToast(e?.response?.data?.detail?.message || '录入失败')
@@ -188,7 +199,7 @@ onMounted(async () => {
         <van-cell title="判定结果" :value="RESULT_MAP[order.result] || order.result || '未判定'" />
         <van-cell v-if="order.ac != null" title="抽样方案"
           :value="`样本 ${order.sample_qty ?? '-'} · Ac ${order.ac} / Re ${order.re}`" />
-        <van-cell title="创建时间" :value="order.created_at || '-'" />
+        <van-cell title="创建时间" :value="fmtTime(order.created_at)" />
         <van-cell v-if="order.remark" title="备注" :value="order.remark" />
       </van-cell-group>
 
@@ -210,7 +221,7 @@ onMounted(async () => {
           <div style="color:#646566;font-size:13px;margin-top:4px;">
             实测 {{ r.measured_value ?? '-' }}{{ r.unit || '' }}
             <span v-if="r.device_code"> · 设备 {{ r.device_code }}</span>
-            <span v-if="r.measured_at"> · {{ r.measured_at }}</span>
+            <span v-if="r.measured_at"> · {{ fmtTime(r.measured_at) }}</span>
           </div>
           <div v-if="r.remark" style="color:#969799;font-size:12px;margin-top:2px;">{{ r.remark }}</div>
         </div>
@@ -252,7 +263,7 @@ onMounted(async () => {
           <div style="padding:12px;display:flex;gap:10px;">
             <van-button size="small" plain type="primary" @click="addRow">添加一行</van-button>
             <van-button size="small" type="primary" :loading="submitting"
-              :disabled="!canEntry" @click="submitResults">
+              :disabled="!canEntry || !filledDrafts.length" @click="submitResults">
               提交录入（{{ filledDrafts.length }} 项）
             </van-button>
           </div>
