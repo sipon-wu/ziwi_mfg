@@ -1232,6 +1232,66 @@ class IssueOrderService:
                 if issued_qty <= 0:
                     continue
 
+                # ★按**原始出库流水逐条**回滚，而不是"给这个明细行找一个库存行"。
+                # 一次领料可能跨多行（多批次 / 多库位），出库本来就是逐行
+                # stock_out 扣的；回滚若只定位"可用量最大的那一行"，就会把货
+                # 还到别的行 —— 总数对得上、行归属全乱。实测一次 5 件的领料：
+                # 出库从 187(4)+185(1) 扣，红冲把整 5 件还进了 354
+                # （100→105 / 71→67 / 1→0），批次账与库位账从此对不上。
+                legs = await self.tx_repo.query(
+                    """SELECT from_location_id, batch_no, quantity
+                       FROM inventory_transactions
+                       WHERE reference_type = 'issue_order'
+                         AND reference_id = :rid
+                         AND material_id = :mid
+                         AND transaction_type = 'issue'""",
+                    {"rid": order_id, "mid": item["material_id"]},
+                )
+                if legs:
+                    for leg in legs:
+                        leg_qty = abs(float(leg.get("quantity") or 0))
+                        if leg_qty <= 0:
+                            continue
+                        leg_loc = leg.get("from_location_id")
+                        leg_batch = leg.get("batch_no")
+                        row = await self._resolve_rollback_row(
+                            item["material_id"], order["warehouse_id"],
+                            leg_loc, leg_batch)
+                        if row:
+                            await self.inv_repo.add_quantity(row["id"], leg_qty)
+                        else:
+                            await self.inv_repo.stock_in(
+                                tenant_id=tenant_id,
+                                material_id=item["material_id"],
+                                warehouse_id=order["warehouse_id"],
+                                location_id=leg_loc,
+                                quantity=leg_qty,
+                                unit=item.get("unit", ""),
+                                batch_no=leg_batch,
+                            )
+                        await self._create_cancel_tx(
+                            tenant_id=tenant_id,
+                            material_id=item["material_id"],
+                            warehouse_id=order["warehouse_id"],
+                            voucher_no=order.get("issue_no", ""),
+                            quantity=leg_qty,
+                            from_location_id=None,
+                            to_location_id=leg_loc,
+                            batch_no=leg_batch,
+                            unit=item.get("unit", ""),
+                            source_type=order.get("source_type", "production"),
+                            source_doc_no=order.get("issue_no", ""),
+                            reference_type="issue_order",
+                            reference_id=order_id,
+                            remark=f"取消出库单: {reason}",
+                            created_by=created_by,
+                        )
+                        total_reversed += leg_qty
+                        tx_count += 1
+                    continue
+
+                # 无出库流水的历史单（改造前过账不回写流水）→ 退回单行定位：
+                # 至少保证总量回到库里，行归属只能尽力而为。
                 # 优先使用 item 上的 from_location_id
                 location_id = item.get("from_location_id")
                 if not location_id:

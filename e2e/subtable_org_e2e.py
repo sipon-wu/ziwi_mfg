@@ -175,10 +175,15 @@ def main():
                        params={"work_order_id": wo_id, "page_size": 50})
         reps = (data_of(rr) or {}).get("items") or []
         orgs = [x.get("org_id") for x in reps]
+        # ★不能写死「一号车间=2」：组织 id 是各环境自增的，staging 上
+        #   一号车间不是 2。基准取报工人自己的 org_id（/auth/me），
+        #   断言"子表归属 = 报工人的组织"，这才是要验证的东西。
+        want_org = me_scoped.get("org_id")
         check("S3 报工行 org_id 非 NULL（写入归属生效）",
               bool(reps) and all(o is not None for o in orgs), f"org_id={orgs}")
-        check("S3 报工行 org_id = 一号车间(2)", bool(reps) and all(o == 2 for o in orgs),
-              f"org_id={orgs}（报工人组织，不是工单归属）")
+        check("S3 报工行 org_id = 报工人所属组织",
+              bool(reps) and want_org is not None and all(o == want_org for o in orgs),
+              f"org_id={orgs} 期望={want_org}（报工人组织，不是工单归属）")
     except Exception as exc:
         check("S3 回读校验报工归属", False, f"回读失败：{exc}")
 
