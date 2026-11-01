@@ -103,7 +103,7 @@ const EXPECT_BOM_TH = ['物料名称', '物料编码', '类型', '用量', '版�
       await page.evaluate(() => window.scrollTo(0, 0));
       await sleep(500);
 
-      const arrow = page.locator('.van-cell .van-icon-arrow-down').first();
+      const arrow = page.locator('.van-cell .van-icon-arrow-down, table .van-icon-arrow-down').first();
       if (await arrow.count() === 0) {
         const empty = await page.locator('.van-empty').count();
         record(`A-${pg.name}`, 'FAIL', empty ? '列表为空(仅 van-empty)，无数据行可展开' : '未找到行内展开(.van-icon-arrow-down)按钮');
