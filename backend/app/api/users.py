@@ -52,9 +52,18 @@ async def update_user(
     repo: UserRepository = Depends(get_tenant_repo(UserRepository, require_auth=True)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
-    """B9: 更新用户，支持 `org_id` 变更主组织、`org_ids` 调整兼任组织。"""
+    """B9: 更新用户，支持 `org_id` 变更主组织、`org_ids` 调整兼任组织。
+
+    A-E4：停用（inactive/disabled/locked）前会检查名下在办单据，
+    有则 409 并列出「工单 3 张、待审批节点 1 个」这类明细；
+    确需立即停用传 ``force=true``（会写审计留痕）。
+    """
     svc = UserService(repo, role_repo)
-    result = await svc.update(user_id, req.model_dump(exclude_unset=True))
+    try:
+        result = await svc.update(user_id, req.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=409,
+                            detail={"code": "409-0004", "message": str(e)})
     return {"code": 0, "message": "更新成功", "data": result}
 
 @router.delete("/{user_id}")

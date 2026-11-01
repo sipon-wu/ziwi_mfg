@@ -44,6 +44,9 @@ class UpdateUserRequest(BaseModel):
     """全量兼任组织（与 org_id 合并为目标集合，其余旧关联被删除）"""
     role_ids: Optional[List[int]] = None
     """全量同步角色（D-B2：与创建对齐，传 [] 即清空全部角色）"""
+    force: Optional[bool] = False
+    """A-E4：名下仍有在办单据时是否强制停用。默认 false —— 让人先转交，
+    逼着操作者看一眼「这几张单子还没人接」。强制停用会写审计留痕。"""
 
 
 class UserOrgResponse(BaseModel):
