@@ -96,6 +96,65 @@ def scan_bool(patterns, roots, bool_cols, hits):
                         hits.append((py, lineno, desc, line.strip()[:110]))
 
 
+def _split_top(text: str) -> list:
+    """按顶层逗号切分（忽略引号内的逗号）。"""
+    out, buf, quote = [], [], None
+    for ch in text:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            continue
+        if ch == ",":
+            out.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+INSERT_RE = re.compile(
+    r"INSERT\s+INTO\s+(?P<table>\w+)\s*\((?P<cols>[^()]*)\)\s*VALUES\s*\((?P<vals>[^()]*)",
+    re.I | re.S)
+
+
+def scan_insert_values(roots, bool_cols, hits):
+    """兜住 `INSERT INTO t (.., is_x) VALUES (.., 1)` 这种位置参数写法。
+
+    ★这一条是补漏补出来的：先前只认 `col = 0/1`，于是
+    `seed_organizations` 里 `INSERT INTO user_organizations (... is_primary)
+    VALUES (:t, :u, :o, 1)` 完全逃过扫描，直到在 staging 上跑种子才炸出
+    DataError: column "is_primary" is of type boolean but expression is of type integer。
+    """
+    for root in roots:
+        for py in root.rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                text = py.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for m in INSERT_RE.finditer(text):
+                cols = [c.strip().strip('"') for c in _split_top(m.group("cols"))]
+                vals = _split_top(m.group("vals"))
+                if len(cols) != len(vals):
+                    continue
+                for col, val in zip(cols, vals):
+                    if col not in bool_cols:
+                        continue
+                    if val.strip("'") in ("0", "1"):
+                        lineno = text[:m.start()].count("\n") + 1
+                        hits.append((py, lineno, "INSERT 的 VALUES 给 boolean 列传 int",
+                                     f"{m.group('table')}.{col} <- {val}"))
+
+
 def main() -> int:
     bool_cols, time_cols = collect_types()
 
@@ -107,13 +166,16 @@ def main() -> int:
         r'''["'](?P<col>\w+)["']\s*\]?\s*[:=]\s*(?P<val>[01])\b''')
 
     hits = []
+    roots = [BACKEND / "app", BACKEND / "migrations", BACKEND / "seeds",
+             BACKEND / "scripts"]
     # A/B：SQL 字面量与 Python 参数
     scan_bool(
         [(sql_assign, "SQL 里给 boolean 列赋 int"),
          (coalesce, "COALESCE 兜底值给 boolean 列写 int"),
          (py_param, "Python 参数给 boolean 列传 int")],
-        [BACKEND / "app", BACKEND / "migrations", BACKEND / "seeds"],
-        bool_cols, hits)
+        roots, bool_cols, hits)
+    # D：INSERT 位置参数
+    scan_insert_values(roots, bool_cols, hits)
 
     # C：schema 里时间字段声明成 str
     schema_dir = BACKEND / "app" / "schemas"

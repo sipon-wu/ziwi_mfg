@@ -55,8 +55,8 @@ async def inv_repo():
             (4, "t", 30, 6, 904, None, 999, 0),
             (5, "t", 30, 5, 905, 11, 50, 0),
         ]
-        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (10, 0)"))
-        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (11, 1)"))
+        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (10, false)"))
+        await conn.execute(text("INSERT INTO batches (id, is_locked) VALUES (11, true)"))
         for r in rows:
             await conn.execute(text(
                 "INSERT INTO inventory (id, tenant_id, material_id, warehouse_id,"

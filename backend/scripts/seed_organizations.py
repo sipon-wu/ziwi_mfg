@@ -189,7 +189,7 @@ async def seed() -> dict:
             await conn.execute(
                 text("""INSERT INTO user_organizations
                           (tenant_id, user_id, org_id, is_primary)
-                        VALUES (:t, :u, :o, 1)"""),
+                        VALUES (:t, :u, :o, true)"""),
                 {"t": TENANT, "u": uid, "o": root_id},
             )
             await conn.execute(
@@ -241,7 +241,7 @@ async def seed() -> dict:
             await conn.execute(
                 text("""INSERT INTO user_organizations
                           (tenant_id, user_id, org_id, is_primary)
-                        VALUES (:t, :u, :o, 1)"""),
+                        VALUES (:t, :u, :o, true)"""),
                 {"t": TENANT, "u": uid, "o": org_id},
             )
             # 角色绑定（先删后建，保证与本表声明一致）
