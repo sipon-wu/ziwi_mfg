@@ -222,11 +222,15 @@ async def seed() -> dict:
                     text("""INSERT INTO users
                               (tenant_id, username, password_hash, real_name,
                                primary_org_id, status)
-                            VALUES (:t, :u, :p, :rn, :o, 'active')"""),
+                            VALUES (:t, :u, :p, :rn, :o, 'active')
+                            RETURNING id"""),
                     {"t": TENANT, "u": uname, "p": hash_password(password),
                      "rn": real_name, "o": org_id},
                 )
-                uid = res.lastrowid
+                # ★不能用 res.lastrowid：asyncpg 的游标没有这个属性，直接
+                # AttributeError（SQLite 上却正常）。RETURNING id 两种方言都支持
+                # （SQLite >= 3.35），与 repositories/base.py 的做法保持一致。
+                uid = res.scalar()
                 if uid is None:
                     uid = (await conn.execute(
                         text("SELECT id FROM users WHERE tenant_id = :t AND username = :u"),
