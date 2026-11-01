@@ -51,13 +51,23 @@ async function fetch() {
 }
 
 async function fetchReport() {
+  // B-16：报告只有在委托归档（status='done'）后才可能存在 —— 后端
+  // publish_report 明确要求 `仅已完成状态的委托可发布报告`，且一单只能发一次。
+  // 未归档时去请求 /report 必然 404，浏览器会往控制台打一条
+  // "Failed to load resource: 404"（这条由浏览器发，catch 掉异常也拦不住）。
+  // 危害不是多一条日志：全模块扫描把它算 WARN，等哪天真出 404 时没人再看。
+  // 所以按状态前置判断，压根不发这个请求。
+  if (request.value?.status !== 'done') {
+    report.value = null
+    return
+  }
   try { report.value = await getReport(id) }
   catch { report.value = null }
 }
 
-onMounted(() => {
-  fetch()
-  fetchReport()
+onMounted(async () => {
+  await fetch()
+  await fetchReport()
 })
 
 async function handleReceive() {
