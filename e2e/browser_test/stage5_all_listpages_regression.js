@@ -145,7 +145,12 @@ const EXPECT_BOM_TH = ['物料名称', '物料编码', '类型', '用量', '版�
         const scRect = scroll ? scroll.getBoundingClientRect() : null;
         const rdScrollW = scRect ? Math.round(scRect.width) : 0;
         const vanCell = el.closest('.van-cell');
-        const vanCellW = vanCell ? vanCell.clientWidth : 0;
+        // 容器基准：列表版明细挂在 van-cell 里；**表格版**（产品/工序/工艺路线/
+        // 工作中心）挂在 `<td colspan>` 里，td 就是那个约束容器。
+        // 早期只认 .van-cell，这四页取不到 → vanCellW=0 → 任何明细都被判
+        // "容器被撑宽 → 被祖先裁剪"，与真实情况无关（假红，掩盖了真差异）。
+        const cellHost = vanCell || el.closest('td');
+        const vanCellW = cellHost ? cellHost.clientWidth : 0;
         const innerScroll = scrollW > clientW + 2;
         const containerOverflow = rdScrollW > vanCellW + 2;
         // 末列可达性：把 .rd-scroll 滚到最右，检查末列右沿是否进入可视区

@@ -344,6 +344,9 @@ onMounted(() => {
 .op-table tbody tr.row-detail-row td {
   background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
   padding: 0;
+  /* B-15：同 ProductList —— colspan 单元格要能收缩，明细区才会内部横滚，
+     否则末几列被表格祖先裁掉且滚不到。 */
+  max-width: 0;
 }
 
 .op-table tbody tr:hover:not(.row-detail-row) {

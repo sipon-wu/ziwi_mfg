@@ -345,6 +345,11 @@ onMounted(fetchData)
 .prod-table tbody tr.row-detail-row td {
   background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
   padding: 0;
+  /* B-15：colspan 单元格必须能收缩。不加这条时 td 被明细网格撑到 1845px，
+     .rd-scroll 的 clientWidth == scrollWidth（没有可滚动基准）→ 网格被表格
+     祖先裁掉，1440 屏下末 4 个字段既看不见也滚不到。max-width:0 让 td 收缩到
+     表宽，子元素 overflow 才真正生效。 */
+  max-width: 0;
 }
 
 .prod-table tbody tr:hover:not(.row-detail-row) {
