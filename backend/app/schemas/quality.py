@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 
 
@@ -172,7 +172,8 @@ class UpdateInspectionOrderRequest(BaseModel):
 
 class JudgeOrderRequest(BaseModel):
     # 检验单判定结论，与 models/quality.py InspectionOrder.result 注释一致。
-    # 未判定状态 pending 由创建接口写入，不经过本判定接口。
+    # 未判定状态就是 `result IS NULL` —— 建单接口**不再**写 'pending' 占位
+    # （C-79：录入侧以 result 为空判断能否改明细，占位值会让新单不可录入）。
     result: Literal["ACC", "REJ", "UAI"]
     remark: Optional[str] = None
 
@@ -242,3 +243,51 @@ class QualityReportResponse(BaseModel):
 class GenerateReportRequest(BaseModel):
     report_type: str
     period: str
+
+# ============================================================
+# 检验结果录入（C-79：PC / 小程序 / 扫码 / 量具直连 共用一条写入路径）
+# ============================================================
+class InspectionResultEntry(BaseModel):
+    """单条检验明细。
+
+    `result` 不传时由服务端按检验项的上下限**自动判定** —— 现场最常见的是
+    "只报测量值"，逼人再选一次 PASS/FAIL 既多余又容易与数值矛盾
+    （数值超上限却手选了 PASS，判据就和人话打架）。人工仍可显式覆盖
+    （让步接收等场景），显式值优先。
+    """
+    item_id: Optional[int] = None
+    item_name: Optional[str] = None
+    measured_value: Optional[float] = None
+    unit: Optional[str] = None
+    result: Optional[str] = None          # PASS / FAIL
+    remark: Optional[str] = None
+    measured_at: Optional[datetime] = None
+
+
+class SubmitInspectionResultsRequest(BaseModel):
+    """批量录入（一次提交一张单的多条明细）。
+
+    `source` 记录录入通道：web（PC 手录）/ miniapp（小程序/手持）/ device（量具直连）。
+    通道不同，数据可信度不同，事后追责要能分开看。
+    """
+    results: List[InspectionResultEntry]
+    source: str = "web"
+    device_code: Optional[str] = None
+
+
+class DeviceResultEntry(BaseModel):
+    """量具/检测设备推送的单条结果（预留接口）。"""
+    order_no: Optional[str] = None
+    order_id: Optional[int] = None
+    item_id: Optional[int] = None
+    item_name: Optional[str] = None
+    measured_value: float
+    unit: Optional[str] = None
+    measured_at: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class DevicePushRequest(BaseModel):
+    """设备推送批次。设备只需知道「单号 + 项 + 值」，不需登录态。"""
+    device_code: str
+    results: List[DeviceResultEntry]

@@ -121,6 +121,16 @@ class InspectionResult(Base):
     # ★ 录入人归属（D-B2）：同一检验单可由多名检验员分工录明细，
     #   没有这一列，出了问题追溯不到是谁录的。
     created_by = Column(BigInteger, comment="录入人 user id")
+    # ── 录入通道（C-79）────────────────────────────────────
+    # 同一个数，人手抄进 PC 界面、手机扫码录、还是量具直连推上来的，
+    # 可信度完全不同：设备直采可以追溯到 calibrate 记录，手抄不行。
+    # 不记通道的话，事后争论"这个 8.02 到底是谁录的"只能靠猜。
+    source = Column(String(20), default="web",
+                    comment="录入通道: web PC / miniapp 小程序 / device 量具直连")
+    device_code = Column(String(50), comment="设备编码（source=device 时必填）")
+    # 测量时刻与写库时刻分开：设备离线缓存后会补传，两者能差几天。
+    # 判定仍按 measured_at 算，否则"先测后判"时序会被写库时间洗掉。
+    measured_at = Column(DateTime(timezone=True), comment="实际测量时刻（设备推送可补传）")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

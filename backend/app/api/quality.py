@@ -33,6 +33,13 @@ from app.schemas.quality import (
     UpdateInspectionResultRequest,
     QualityReportResponse,
     GenerateReportRequest,
+    SubmitInspectionResultsRequest,
+    DevicePushRequest,
+)
+from app.services.inspection_entry_service import (
+    InspectionEntryService,
+    EntryInvalid,
+    EntryNotFound,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["M03-Quality"])
@@ -252,6 +259,50 @@ async def calc_aql_plan(
     return {"code": 0, "message": "success", "data": p}
 
 
+@router.get("/inspection-orders/scan")
+async def scan_inspection_order(
+    code: str = Query(..., description="扫到的码：检验单号 / 流转卡工单号"),
+    orders: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    results: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
+):
+    """C-79 扫码定位待检单（小程序 / 手持终端的入口）。
+
+    ★ 必须注册在 `/{order_id}` **之前** —— 否则 `scan` 被当整数解析成 422。
+    路由遮蔽第四次复发（C-53 / C-60 / C-73 aql-plan），有静态闸兜着。
+
+    为什么扫码要单独一个端点，而不是让前端自己拼 `?keyword=` 查列表：
+    现场扫的三种码（检验单号 / 工单号 / 物料条码）匹配规则不同，且结果
+    需要带"能不能录"的结论。让前端各实现一遍的结果是三端行为不一致，
+    而现场只有一部手机，没法对比哪个是对的。
+    """
+    svc = InspectionEntryService(orders, results)
+    try:
+        data = await svc.by_scan(code)
+    except EntryInvalid as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+    except EntryNotFound as e:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(e)})
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.get("/inspection-orders/pending-entry")
+async def list_pending_entry(
+    limit: int = Query(50, ge=1, le=200),
+    mine: bool = Query(False, description="只看派给我（inspector_id=本人）的单"),
+    user: dict = Depends(get_current_user),
+    orders: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    results: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
+):
+    """C-79 待录入清单（小程序首页 / 手持终端用）。
+
+    口径：`result IS NULL` 即未判定。带 `recorded_count` 是因为现场关心的
+    不是"这单建了多久"，而是"还差几项没测"。
+    """
+    svc = InspectionEntryService(orders, results)
+    data = await svc.pending_tasks(user.get("id") if mine else None, limit)
+    return {"code": 0, "message": "success", "data": data}
+
+
 @router.get("/inspection-orders/{order_id}")
 async def get_order(
     order_id: int,
@@ -350,8 +401,13 @@ async def create_order(
 ):
     data = req.model_dump()
     data["tenant_id"] = current_user.get("tenant_id", "default")
-    if not data.get("result"):
-        data["result"] = "pending"
+    # ★ 不再预置 result='pending'。`result` 的取值域是 ACC/REJ/UAI，
+    # 空值才表示"尚未判定"——录入侧（C-79）以 `result` 是否为空判断能不能改明细，
+    # 预置 'pending' 会让新单一创建就"已判定、不可录入"。
+    # 之所以现在才敢删：仓储层 `create_inspection_order` 的固定列清单里
+    # 本来就没有 result（写不进去，库里一直是 NULL），删掉这行不改任何行为，
+    # 但把那颗"谁哪天顺手把 result 补进列清单、所有新单立刻变成不可录入"的
+    # 定时炸弹拆了。
     # ── D-E5：关联不存在的工单 → 400 ─────────────────────────
     # 不校验的话，检验单指向幽灵工单：过程检验的产出数无处回写、
     # 追溯链从工单查检验单也查不到，单子成了无主孤儿。
@@ -644,6 +700,77 @@ async def list_results(
 ):
     data = await repo.list_results_by_order(order_id)
     return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/inspection-orders/{order_id}/results/batch")
+async def submit_results_batch(
+    order_id: int,
+    req: SubmitInspectionResultsRequest,
+    current_user: dict = Depends(get_current_user),
+    orders: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    results: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
+    items: InspectionItemRepository = Depends(get_tenant_repo(InspectionItemRepository)),
+):
+    """C-79 一次录入一张检验单的多条明细（PC / 小程序 / 设备三通道共用）。
+
+    与旧的 `POST /inspection-results`（单条、不判定、不幂等）并存：
+    旧端点保持兼容不动，新界面与小程序走这里。差别有三点，都是线上真实
+    会踩的：
+
+    1. **自动判定**：只报测量值时按检验项上下限判 PASS/FAIL ——
+       逼检验员再手选一次既多余又容易与数值矛盾。
+    2. **同单同项幂等**：复测是常态，同项重复提交是**更新**而不是再插一行；
+       留两行会让"这项到底合格没"变成翻时间戳才能回答的问题。
+    3. **已判定单拒录**：判定是终态，判完还能改数等于判定依据被篡改。
+    """
+    svc = InspectionEntryService(orders, results, items)
+    try:
+        data = await svc.submit(
+            order_id,
+            [r.model_dump() for r in req.results],
+            source=req.source,
+            device_code=req.device_code,
+            tenant_id=orders.tenant_id,
+            actor_id=current_user.get("id"),
+        )
+    except EntryInvalid as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+    except EntryNotFound as e:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(e)})
+    return {"code": 0, "message": "录入成功", "data": data}
+
+
+# ── ★静态段端点必须注册在 `/inspection-results/{result_id}` 之前 ──
+@router.post("/inspection-results/device-push")
+async def push_device_results(
+    req: DevicePushRequest,
+    orders: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    results: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
+    items: InspectionItemRepository = Depends(get_tenant_repo(InspectionItemRepository)),
+):
+    """C-79 检测设备 / 量具批量推送结果（**预留接口**）。
+
+    契约：设备只知道「单号 + 检验项 + 测量值」，不知道内部 id、也没有
+    交互式登录。所以只收 `order_no`/`order_id` + `item_id`/`item_name`，
+    服务端按单聚合成批次，与人工录入走**同一条写路径**（同样的上下限判定、
+    同样的幂等规则），区别只在 `source='device'` 与 `device_code` 落库，
+    事后能分清哪些数是设备直采、哪些是人手抄的。
+
+    预留的含义：接口形态与落库口径现在就定死，设备侧（三丰/徕卡/海克斯康
+    等量具网关、或 OPC UA 边缘网关）接入时只需把数据按此格式 POST 上来，
+    不需要再改后端。当前要求调用方带机器账号的登录态（设备网关持有），
+    不开放匿名写 —— 匿名写品质数据等于让任何人都能改判合格。
+    """
+    svc = InspectionEntryService(orders, results, items)
+    try:
+        data = await svc.device_push(
+            req.device_code,
+            [r.model_dump() for r in req.results],
+            tenant_id=orders.tenant_id,
+        )
+    except EntryInvalid as e:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+    return {"code": 0, "message": "已接收", "data": data}
 
 
 @router.post("/inspection-results")

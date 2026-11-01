@@ -257,22 +257,39 @@ class InspectionResultRepository(MultiTenantRepository):
         """
         # created_by 进固定列 INSERT 后，没传它的旧调用方（实验室模块等）会
         # 缺绑定参数 500 → 缺省补 None，归属由 API 层显式传入才生效。
-        data = {"created_by": None, **data}
+        # 同理 C-79 的录入通道三列：不传就是 PC 手录（改造前的唯一口径），
+        # 必须给缺省值 —— 固定列清单多一列就多一个必填绑定参数，
+        # 这是本项目最高频的一族缺陷（C-34 至今十余次）。
+        # ★ deviation（偏差）是同一族的最新一例：它在列清单里躺着，却从来
+        # 没人传过 —— 老的 POST /inspection-results 能跑只是因为它的 schema
+        # 恰好带了这个字段。C-79 的批量录入不带偏差，直接 500。
+        # 教训：**写进固定列清单的每一列，都要有缺省值**，哪怕它明显是"可选"。
+        data = {"created_by": None, "source": "web", "device_code": None,
+                "measured_at": None, "deviation": None, **data}
+        # ★ 列清单**必须写字面量**，不要抽成常量再拼进去：
+        # `scripts/check_insert_defaults.py` 用正则读 INSERT 的列清单，
+        # 看到的是 `({_COLS})` 这个变量名而不是列名 —— 它会把该表所有
+        # Python 侧 default 列判成"漏写"（本次就是 inspection_result.source），
+        # 那道闸正是用来防这族缺陷的，抽常量等于把它戳瞎。
         if data.get("org_id") is None:
             return await self.execute(
-                "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
-                "spec_value, measured_value, deviation, unit, result, remark, created_by) "
+                "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, "
+                "item_name, spec_value, measured_value, deviation, unit, result, remark, "
+                "created_by, source, device_code, measured_at) "
                 "VALUES (:tenant_id, :order_id, "
                 "(SELECT org_id FROM inspection_order WHERE id = :order_id), "
-                ":item_id, :item_name, :spec_value, "
-                ":measured_value, :deviation, :unit, :result, :remark, :created_by)",
+                ":item_id, :item_name, :spec_value, :measured_value, :deviation, "
+                ":unit, :result, :remark, :created_by, :source, :device_code, "
+                ":measured_at)",
                 data,
             )
         return await self.execute(
-            "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, item_name, "
-            "spec_value, measured_value, deviation, unit, result, remark, created_by) "
-            "VALUES (:tenant_id, :order_id, :org_id, :item_id, :item_name, :spec_value, "
-            ":measured_value, :deviation, :unit, :result, :remark, :created_by)",
+            "INSERT INTO inspection_result (tenant_id, order_id, org_id, item_id, "
+            "item_name, spec_value, measured_value, deviation, unit, result, remark, "
+            "created_by, source, device_code, measured_at) "
+            "VALUES (:tenant_id, :order_id, :org_id, :item_id, :item_name, "
+            ":spec_value, :measured_value, :deviation, :unit, :result, :remark, "
+            ":created_by, :source, :device_code, :measured_at)",
             data,
         )
 

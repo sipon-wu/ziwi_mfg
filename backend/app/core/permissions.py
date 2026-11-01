@@ -98,6 +98,21 @@ EXECUTE_SUFFIXES: Set[str] = {
     # 权限码 M03:inspection_order_aql_plan:read 无人拥有 → 除通配 * 外全员 403。
     # 登记后收敛回 M03:inspection_order:read —— 检验员与品质工程师都已拥有。
     "aql-plan",
+    # C-79 检验结果录入四端点。**必须登记**，否则四个端点会各造一个新资源名
+    # （inspection_order_scan / inspection_order_pending_entry /
+    # inspection_order_result_batch / inspection_result_device_push），
+    # 变成四个没有任何角色拥有的权限码 —— 强制模式下除 admin 外全员 403，
+    # 且报错文案指向页面上不存在的权限项（C-44 / C-45 / A-S1 / C-65 / C-73
+    # 同一形态，第 N 次）。登记后收敛成两个**本来就该有**的码：
+    #   扫码 / 待录入 → M03:inspection_order:read（检验员已有）
+    #   批量录入     → M03:inspection_order_result:execute
+    #   设备推送     → M03:inspection_result:execute
+    # 后两个是新码，由 seed_permissions 建码并随 inspector 的
+    # `M03:inspection_order*:*` / `M03:inspection_result:*` 授权自动覆盖。
+    "scan",
+    "pending-entry",
+    "batch",
+    "device-push",
 }
 
 

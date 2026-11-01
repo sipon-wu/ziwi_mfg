@@ -131,8 +131,14 @@ ROLE_GRANTS: Dict[str, List[str]] = {
     # 品质检验员：检验 / NCR / 实验室
     # 注：不给 M01:work_order:read —— 品质页面不调工单接口（已 grep 确认），
     #     给了会让「生产管理」菜单对检验员出现，属于越权可见。
+    # ★ 用 `M03:inspection_order*:*`（资源名前缀通配）而不是 `M03:inspection_order:*`：
+    #   后者前缀是 `M03:inspection_order:`，覆盖不到 `M03:inspection_order_result:*`
+    #   —— 那是 `GET /inspection-orders/{id}/results`（读明细）与
+    #   `POST .../results/batch`（录入）推导出的资源名。改造前这是**真实的漏授**：
+    #   检验员能调单头、调不了明细列表，强制模式下"点开检验单看不到已录的项"。
+    #   C-79 加批量录入端点后同一个前缀问题会一起暴露，故改为前缀通配。
     "inspector": OPEN_MODULE_READ + [
-        "M03:inspection_order:*", "M03:inspection_result:*",
+        "M03:inspection_order*:*", "M03:inspection_result:*",
         "M03:inspection_item:*", "M03:inspection_standard:*", "M03:qc_point:read",
         "M30:*", "M15:*",
     ],

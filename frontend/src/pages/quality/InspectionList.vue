@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '@/api/client'
+import { showToast } from 'vant'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import SearchBar from '@/components/SearchBar.vue'
@@ -76,6 +77,36 @@ function onStatusChange() {
   loadData()
 }
 
+// ── 扫码定位（C-79）────────────────────────────────────────
+// 现场扫的是三类码：检验单号 / 流转卡上的工单号 / 物料条码。
+// 统一交给后端 /inspection-orders/scan 判，前端不做匹配规则 ——
+// 三端（PC / 小程序 / 手持）各实现一遍必然不一致，而现场只有一部手机。
+const scanCode = ref('')
+const scanning = ref(false)
+async function onScan() {
+  const code = scanCode.value.trim()
+  if (!code) {
+    showToast('请输入或扫描检验单号 / 工单号')
+    return
+  }
+  scanning.value = true
+  try {
+    const d: any = await get('/inspection-orders/scan', { code })
+    const o = d?.order
+    if (!o?.id) {
+      showToast('未匹配到检验单')
+      return
+    }
+    if (d.judged) showToast('该单已判定，仅供查看')
+    router.push('/quality/' + o.id)
+  } catch (e: any) {
+    // 后端 404 带人话（"可能扫的是物料条码"），直接透出让现场自己判断
+    showToast(e?.response?.data?.detail?.message || '扫码定位失败')
+  } finally {
+    scanning.value = false
+  }
+}
+
 onMounted(loadData)
 </script>
 
@@ -86,6 +117,21 @@ onMounted(loadData)
     </van-cell-group>
 
     <SearchBar v-model:keyword="keyword" @search="onSearch" />
+
+    <!-- 扫码定位：扫检验单号或流转卡工单号直接跳到该单（现场在货架前用） -->
+    <van-field
+      v-model="scanCode"
+      placeholder="扫码 / 输入检验单号、工单号"
+      clearable
+      style="margin:8px 16px 0;"
+      @keyup.enter="onScan"
+    >
+      <template #button>
+        <van-button size="small" type="primary" :loading="scanning" @click="onScan">
+          定位
+        </van-button>
+      </template>
+    </van-field>
 
     <div style="display:flex; gap:8px; margin:12px 0; flex-wrap:wrap;">
       <van-tag v-for="opt in statusOptions" :key="opt.value"

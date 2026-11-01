@@ -126,6 +126,47 @@ def test_resolve_pattern_variants():
     assert resolve_pattern("NOPE:x:read", codes) == set()
 
 
+# ── 反向闸：角色必须覆盖它该管的端点（漏授才是真实故障）────────
+#
+# 上面那条只验"写下的模式能命中码"（正向）。真实故障恰恰是**反向**的：
+# 端点的资源名被推导成一个没有任何角色拥有的码 —— 所有人 403，
+# 而 ROLE_GRANTS 里一个字都没写错，正向闸一条都拦不住。
+#
+# C-79 就是活例：`GET /inspection-orders/{id}/results` 的资源名被推成
+# `inspection_order_result`（单数化 + 拼接），而 inspector 写的是
+# `M03:inspection_order:*` —— 前缀是 `M03:inspection_order:`，**覆盖不到**。
+# 于是"检验员能开单、能判定，点开明细列表却 403"。上线后表现为
+# "这个角色权限配了呀"，查起来极费劲。
+def test_inspector_covers_every_inspection_code():
+    from app.main import app
+    from app.core.permissions import all_permission_codes
+
+    codes = {c for c in all_permission_codes() if c.startswith("M03:inspection")}
+    assert codes, "M03 检验类权限码采集异常"
+    covered = set()
+    for pat in ROLE_GRANTS["inspector"]:
+        covered |= resolve_pattern(pat, codes)
+    missing = sorted(codes - covered)
+    assert not missing, (
+        f"品质检验员漏授以下检验类权限码（强制模式下会 403）：{missing}")
+
+
+def test_every_role_grants_are_nonempty_after_resolution():
+    """除 admin 的通配外，每个角色至少要命中一条真实码。
+
+    防止"角色建了但权限清单写错模块前缀"这类整体失效。
+    """
+    from app.main import app
+    from app.core.permissions import all_permission_codes
+
+    codes = all_permission_codes()
+    for role, patterns in ROLE_GRANTS.items():
+        got = set()
+        for pat in patterns:
+            got |= resolve_pattern(pat, codes)
+        assert got, f"角色 {role} 展开后权限为空"
+
+
 # ── preset_roles 行为（服务层）──────────────────────────────
 
 class FakeTenantRepo:
