@@ -9,7 +9,7 @@ FMEA 失效模式分析业务服务
 - 与 M03 工艺路线联动（is_critical 回写）
 """
 from typing import Optional, Dict, List
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from app.repositories.fmea_repo import (
     FmeaDocumentRepository,
     FmeaHierarchyRepository,
@@ -212,7 +212,7 @@ class FmeaService:
 
         await self.doc_repo.update_doc(doc_id, {
             "status": "published",
-            "published_at": datetime.now().isoformat(),
+            "published_at": datetime.now(timezone.utc),
         })
 
         # 自动触发工艺路线联动

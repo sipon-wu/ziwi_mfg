@@ -1,6 +1,12 @@
-import requests, json, datetime, uuid, traceback
+import os, json, datetime, uuid, traceback
 
-BASE = "https://mfg1.ziwi.cn/api/v1"
+# 用 httpx 而不是 requests：backend/.venv 里没有 requests（项目依赖的是 httpx），
+# 之前这一行让探针直接 ModuleNotFoundError，全量回归里永远是一条 💥。
+# 本脚本只用到 post / request / raise_for_status / json / status_code，
+# httpx 的模块级 API 与之完全一致，改一行别名即可。
+import httpx as requests
+
+BASE = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1").rstrip("/")
 TENANT = "mfg_demo"
 PW = "test123456"
 TS = datetime.datetime.now().strftime("%Y%m%d%H%M%S")

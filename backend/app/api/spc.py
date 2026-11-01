@@ -4,7 +4,7 @@ SPC 统计分析 API 路由
 架构：API → Repository + spc_engine（跳过 Service 层）
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
 from app.repositories.spc_repo import (
@@ -219,7 +219,7 @@ async def calculate_control_limits(
             "lsl": req.lsl,
             "mode": "auto",
             "subgroup_count": limits.get("subgroup_count", 0),
-            "calculated_at": datetime.now().isoformat(),
+            "calculated_at": datetime.now(timezone.utc),
         }
         limit_id = await repo.create_limit(limit_data)
 

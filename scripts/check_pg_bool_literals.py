@@ -155,6 +155,54 @@ def scan_insert_values(roots, bool_cols, hits):
                                      f"{m.group('table')}.{col} <- {val}"))
 
 
+def scan_time_as_str(roots, time_cols, hits):
+    """找「时间列名 + .isoformat()」的组合。
+
+    时间列在 PG 上只认 datetime/date 对象，传 'YYYY-MM-DD' 字符串会报
+    `('str' object has no attribute 'toordinal')`；SQLite 则按文本比较，安安静静。
+
+    注意本规则会有误报：把时间字段放进响应体（`out["x"] = dt.isoformat()`）是
+    正常做法。因此命中需人工确认"这个 dict 是不是直接喂给 execute/query"。
+    """
+    dict_form = re.compile(
+        r'''["'](?P<col>\w+)["']\s*:\s*[^,}\n]*\.isoformat\(\)''')
+    assign_form = re.compile(
+        r'''\[["'](?P<col>\w+)["']\]\s*=\s*[^\n]*\.isoformat\(\)''')
+    for root in roots:
+        if root.name in ("migrations",):
+            continue
+        for py in root.rglob("*.py"):
+            if "__pycache__" in py.parts or "tests" in py.parts:
+                continue
+            try:
+                text = py.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if _is_prose(line):
+                    continue
+                for pat in (dict_form, assign_form):
+                    m = pat.search(line)
+                    if not m or m.group("col") not in time_cols:
+                        continue
+                    rel = str(py.relative_to(BACKEND.parent / "backend")).replace("\\", "/")
+                    if (rel, m.group("col")) in ALLOW_TIME_ISO:
+                        continue
+                    hits.append((py, lineno, "时间列被塞了 isoformat 字符串",
+                                 line.strip()[:110]))
+
+
+# 人工确认过「只是把时间回显给前端」的位置：这里的 dict 进的是 HTTP 响应体，
+# 不喂给 execute/query，isoformat 是正确做法。按 (文件相对路径, 字段名) 记录，
+# 不写行号 —— 行号会漂，字段名不会。
+ALLOW_TIME_ISO = {
+    ("app/api/data_collection.py", "data_time"): "写库用的是 dt 对象，isoformat 只用于响应回显",
+    ("app/api/sync.py", "expires_at"): "返回给调用方的 key 过期时间，非写库参数",
+    ("app/services/maintenance_service.py", "actual_start_at"): "update 用 now 对象，isoformat 只进 out 响应体",
+    ("app/services/maintenance_service.py", "actual_end_at"): "同上",
+}
+
+
 def main() -> int:
     bool_cols, time_cols = collect_types()
 
@@ -176,6 +224,8 @@ def main() -> int:
         roots, bool_cols, hits)
     # D：INSERT 位置参数
     scan_insert_values(roots, bool_cols, hits)
+    # E：isoformat 字符串塞给时间列
+    scan_time_as_str(roots, time_cols, hits)
 
     # C：schema 里时间字段声明成 str
     schema_dir = BACKEND / "app" / "schemas"

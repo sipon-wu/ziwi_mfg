@@ -7,7 +7,7 @@ PPAP 提交管理业务服务
 - 状态流转（提交→审批→重新提交）
 """
 from typing import Optional, Dict, List
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from app.repositories.ppap_repo import (
     PpapLevelRepository,
     PpapElementRepository,
@@ -152,7 +152,7 @@ class PpapService:
 
         await self.sub_repo.update_submission(submission_id, {
             "status": "pending",
-            "submitted_at": datetime.now().isoformat(),
+            "submitted_at": datetime.now(timezone.utc),
         })
         submission = await self.sub_repo.get_submission(submission_id)
         return {"message": "提交成功", "submission": submission}
@@ -180,7 +180,7 @@ class PpapService:
 
         updates = {"status": new_status}
         if new_status == "approved":
-            updates["approved_at"] = datetime.now().isoformat()
+            updates["approved_at"] = datetime.now(timezone.utc)
         if comment:
             updates["remark"] = comment
 

@@ -22,8 +22,10 @@ import httpx
 
 # ── 环境配置 ──────────────────────────────────────────────────────
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8092").rstrip("/")
-USERNAME = os.environ.get("USERNAME", "test_admin")
-PASSWORD = os.environ.get("PASSWORD", "test123456")
+# ★同 wms_realistic_e2e：Windows 的 USERNAME 环境变量是系统登录用户名，
+# 不能当 API 账号用，否则必 401 且看不出原因。
+USERNAME = os.environ.get("E2E_USER", "mfg_admin")
+PASSWORD = os.environ.get("E2E_PWD", "admin123")
 TENANT   = os.environ.get("TENANT", "mfg_demo")
 
 API = f"{BASE_URL}/api/v1"

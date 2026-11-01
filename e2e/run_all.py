@@ -82,6 +82,24 @@ _SUMMARY_RE = re.compile(
     r"|(?:(?P<ok3>\d+)\s*段通\s*/\s*(?P<bad3>\d+)\s*段断)", re.IGNORECASE)
 
 
+def _child_env() -> dict:
+    """给子探针补齐基址环境变量。
+
+    探针历史上分两派：一派读 `API_BASE`（含 /api/v1），一派读 `BASE_URL`
+    （站点根）。只设 API_BASE 时，读 BASE_URL 的两个探针会退到默认的
+    http://localhost:8092 —— 跑 staging 全量回归时必然 ConnectError，
+    看上去像"业务挂了"，其实是探针打错了地址。
+
+    这里以 API_BASE 为准推出站点根，两个变量一起下发。
+    """
+    env = dict(os.environ)
+    api = env.get("API_BASE", "").rstrip("/")
+    if api and not env.get("BASE_URL"):
+        root = api[:-len("/api/v1")] if api.endswith("/api/v1") else api
+        env["BASE_URL"] = root
+    return env
+
+
 def run_one(name: str, py: str, timeout: int = 300):
     path = os.path.join(HERE, f"{name}.py")
     if not os.path.exists(path):
@@ -90,7 +108,8 @@ def run_one(name: str, py: str, timeout: int = 300):
     t0 = time.time()
     try:
         p = subprocess.run([py, path], capture_output=True, text=True,
-                           timeout=timeout, cwd=os.path.join(HERE, "..", "backend"))
+                           timeout=timeout, cwd=os.path.join(HERE, "..", "backend"),
+                           env=_child_env())
         out = (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "TIMEOUT", "ok": 0, "bad": 1,

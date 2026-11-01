@@ -1,5 +1,5 @@
 """M20 仓储管理（WMS）模块 — Service 层"""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from app.core.transaction import posting_scope, PostingError
 from app.constants.wms_constants import (
@@ -776,7 +776,7 @@ class ReceiptOrderService:
         """完成入库单"""
         return await self.update(id, {
             "status": "stored",
-            "completed_at": datetime.now().isoformat(),
+            "completed_at": datetime.now(timezone.utc),
         })
 
     async def cancel_receipt_order(self, order_id: int, reason: str,
@@ -1551,7 +1551,7 @@ class InventoryAlertService:
         return {"id": await self.repo.create(data)}
 
     async def resolve(self, id: int, resolved_by: int = None):
-        data = {"status": "resolved", "resolved_by": resolved_by, "resolved_at": datetime.now().isoformat()}
+        data = {"status": "resolved", "resolved_by": resolved_by, "resolved_at": datetime.now(timezone.utc)}
         return {"affected": await self.repo.update(id, data)}
 
     async def acknowledge(self, id: int):

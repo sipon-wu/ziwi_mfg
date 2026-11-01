@@ -6,7 +6,7 @@ M16 试产管理业务服务
 - 阶段跳过规则（根据试产类型）
 """
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, Dict, List
 from app.repositories.trial_repo import (
     TrialOrderRepository,
@@ -140,7 +140,7 @@ class TrialService:
 
         updates = {"status": next_stage}
         if next_stage == "lab_trial":
-            updates["started_at"] = datetime.now().isoformat()
+            updates["started_at"] = datetime.now(timezone.utc)
 
         await self.order_repo.update_order(order_id, updates)
         order = await self.order_repo.get_order(order_id)

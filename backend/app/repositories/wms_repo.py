@@ -636,8 +636,14 @@ class InventoryRepository(MultiTenantRepository):
                      AND b.status = 'active'
                      AND (b.expiry_date IS NULL OR b.expiry_date >= :today)
                    ORDER BY b.created_at {order_dir}"""
+        # ★传 date 对象，不要 .isoformat()：b.expiry_date 是 DATE 列，asyncpg 只接受
+        # datetime.date，收到 'YYYY-MM-DD' 字符串会报
+        #   DataError: invalid input for query argument $4: '2026-11-01'
+        #   ('str' object has no attribute 'toordinal')
+        # SQLite 会安静地把字符串按文本比较，所以本地永绿 —— 但那条路在 staging 上
+        # 让整个 WMS 拣选出库 500。
         return await self.query(sql, {"mid": material_id, "wid": warehouse_id,
-                                      "today": date.today().isoformat()})
+                                      "today": date.today()})
 
     async def resolve_inspection_location(self, tenant_id: str, warehouse_id: int) -> int:
         """解析（必要时惰性创建）待检区库位，返回 location_id。
