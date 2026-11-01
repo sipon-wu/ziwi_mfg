@@ -66,8 +66,11 @@ BACKFILLS = [
     ("issue_orders", "total_qty", 0),
     ("issue_orders", "status", "pending"),
     ("route_steps", "step_type", "production"),
-    ("route_steps", "is_outsource", 0),
-    ("route_steps", "is_parallel_eligible", 0),
+    # ★布尔列必须传 Python False，不能传 0：0 会被绑定成 int，PG 侧直接
+    # `asyncpg.exceptions.DataError: a boolean is required (got type int)` 拒绝，
+    # 该列回填被静默 skip（脚本是单列 try/except，失败只打一行 skip 就过去了）。
+    ("route_steps", "is_outsource", False),
+    ("route_steps", "is_parallel_eligible", False),
     ("andon_call", "escalation_level", 0),
 ]
 

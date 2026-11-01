@@ -78,8 +78,13 @@ async def apply() -> tuple:
                     "NOT NULL DEFAULT 0"))
                 created = True
 
+        # ★这里必须是 SQL 关键字 false，不能写 0：PG 的该列是 BOOLEAN，
+        # `SET col = 0` 会直接 DatatypeMismatchError（"expression is of type integer"），
+        # 而 CREATE COLUMN 那步是成功的 —— 于是留下"列建了、值没回填"的半成品状态。
+        # SQLite >= 3.23 同样接受 false 关键字，两方言通用。
         res = await conn.execute(text(
-            "UPDATE users SET must_change_password = 0 WHERE must_change_password IS NULL"))
+            "UPDATE users SET must_change_password = false "
+            "WHERE must_change_password IS NULL"))
         n = res.rowcount or 0
     return created, n
 
