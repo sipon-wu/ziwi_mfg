@@ -98,8 +98,12 @@ def main():
         return c.get(f"{API}/work-orders/{oid}").json()["data"]
 
     def set_status(oid, status):
-        r = c.put(f"{API}/work-orders/{oid}", json={"wo_status": status})
-        assert r.status_code == 200, f"改状态失败 {r.status_code} {r.text[:300]}"
+        """把单子推到非草稿态（走动作端点，不走 PUT —— PUT 直接写 wo_status 已被封）。"""
+        assert status == "released", "本探针只用下达造非草稿单"
+        r = c.post(f"{API}/work-orders/{oid}/release",
+                   json={"force_release": True,
+                         "force_reason": "E2E 造非草稿单（不需要真实齐套）"})
+        assert r.status_code == 200, f"下达失败 {r.status_code} {r.text[:300]}"
 
     # ==================== C-S6 拆分 ====================
     print("--- C-S6 工单拆分 ---")
@@ -170,6 +174,17 @@ def main():
     check("C-S6 子单数量为 0 → 400（不做 0 量空单）",
           r.status_code == 400 and err_code(r) == "400-0021",
           f"HTTP {r.status_code} code={err_code(r)}")
+
+    # 状态只能走动作端点：改单接口直接写 wo_status 会把状态机、齐套检查、
+    # 产出检查与状态流水全部绕过（C-75 追加）
+    pid4 = mk_order(f"E2E-SP4-{tag}", qty=10, product=f"P-SP4-{tag}")
+    r = c.put(f"{API}/work-orders/{pid4}", json={"wo_status": "completed"})
+    check("C-75 改单接口不接受 wo_status（否则状态机形同虚设）",
+          r.status_code == 400 and err_code(r) == "400-0003",
+          f"HTTP {r.status_code} code={err_code(r)} msg={err_msg(r)[:60]}")
+    check("C-75 被拒后状态未变（仍是草稿）",
+          get_order(pid4).get("wo_status") == "draft",
+          f"wo_status={get_order(pid4).get('wo_status')}")
 
     # ==================== C-S7 合并 ====================
     print("\n--- C-S7 工单合并 ---")

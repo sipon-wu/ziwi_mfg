@@ -177,6 +177,21 @@ class ProductionService:
         return warnings
 
     async def update_work_order(self, id: int, data: dict) -> dict:
+        # ★状态只能走动作端点（C-75 追加）：改造前
+        # `PUT /work-orders/{id} {"wo_status":"completed"}` 一句就能把草稿单
+        # 设成已完工 —— 没有报工、没有 BOM 快照、没有状态流水，
+        # 「完工 → 成品入库」（C-S4）整条链被绕过；`cancelled` 同样能绕过
+        # 「原因必填」与「已有产出需 force」（C-E5）。只要留着这个后门，
+        # 「状态机是唯一入口」就等于没有 —— 校验全在 change_status 里，
+        # 而这里能直接写列。
+        if data.get("wo_status") is not None:
+            raise _bad_request(
+                "工单状态不能通过改单接口直接设置，请用对应的动作端点："
+                "/release 下达、/start 开工、/pause 暂停、/resume 恢复、"
+                "/complete 完工、/close 关闭、/cancel 作废 —— "
+                "这些端点会做状态机校验、齐套与产出检查，并写状态流水",
+                "400-0003",
+            )
         # 改单同样要校验：把在制工单改挂到一条已停用的线上，
         # 与新建时挂上去是同一个后果。
         if "work_center_id" in data or "equipment_id" in data:

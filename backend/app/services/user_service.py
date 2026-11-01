@@ -123,6 +123,34 @@ class UserService:
             result["roles"] = await self.user_repo.sync_user_roles(id, role_ids)
         return result
 
-    async def delete(self, id: int) -> dict:
+    async def delete(self, id: int, force: bool = False) -> dict:
+        """删除用户 —— 与停用同一条守卫（A-E4 同源）。
+
+        停用至少人还在、还能查；**删除更彻底**：工单 `assignee_id` 从此指向
+        一个不存在的 id，车间看不到「这活派给谁了」，系统里也再没有地方能
+        回答。所以有在办单据时一律 409，确需删除必须显式 ``force``。
+        """
+        docs = await self.open_documents(id)
+        if docs and not force:
+            detail = "、".join(f"{d['type']} {d['count']} 张" for d in docs)
+            raise ValueError(
+                f"该用户名下还有在办单据（{detail}），不能直接删除；"
+                f"请先转交或办结，或改用停用（可恢复）。"
+                f"确需立即删除请显式传 force=true")
+        extra = {}
+        if docs and force:
+            try:
+                from app.services.audit_service import AuditService
+                await AuditService(self.user_repo._session).log(
+                    "user.force_delete",
+                    tenant_id=getattr(self.user_repo, "tenant_id", None),
+                    object_type="user", object_id=id,
+                    after={"open_documents": docs},
+                    message=("强制删除用户（名下仍有在办单据，单据负责人将悬空）："
+                             + "、".join(f"{d['type']} {d['count']} 张" for d in docs)),
+                )
+            except Exception:  # noqa: BLE001 —— 审计不可用不阻断
+                pass
+            extra = {"forced_open_documents": docs}
         count = await self.user_repo.delete(id)
-        return {"affected": count}
+        return {"affected": count, **extra}

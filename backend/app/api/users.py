@@ -69,9 +69,21 @@ async def update_user(
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
+    force: bool = Query(False, description="名下仍有在办单据时强制删除"),
     repo: UserRepository = Depends(get_tenant_repo(UserRepository, require_auth=True)),
     role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
+    """删除用户。**与停用同一条守卫**（A-E4 同源）：名下还有在办单据时 409。
+
+    改造前 `DELETE /users/{id}` 不看任何东西，直接删 —— 比停用更彻底地制造
+    僵尸单：停用至少人还在、还能查；删掉之后工单 `assignee_id` 指向一个
+    不存在的 id，车间看不到「这活派给谁了」，系统里也再没有一个地方能回答。
+    确需删除传 ``force=true``（会写 `user.force_delete` 审计留痕）。
+    """
     svc = UserService(repo, role_repo)
-    result = await svc.delete(user_id)
+    try:
+        result = await svc.delete(user_id, force=force)
+    except ValueError as e:
+        raise HTTPException(status_code=409,
+                            detail={"code": "409-0005", "message": str(e)})
     return {"code": 0, "message": "删除成功", "data": result}

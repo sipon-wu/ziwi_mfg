@@ -201,6 +201,48 @@ def main():
     check("A-E4 无在办单据 → 正常停用不受影响",
           r.status_code == 200, f"HTTP {r.status_code} {err_msg(r)[:60]}")
 
+    # ── A-E4 同源：删除比停用更彻底，守卫必须一致 ──
+    print("\n── A-E4 同源 删除有在办单据的用户 ──")
+    r = c.post(f"{API}/users", json={
+        "username": f"delu{tag}", "password": "Test@12345",
+        "real_name": f"待删用户{tag}"})
+    del_uid = (r.json().get("data") or {}).get("id")
+    r = c.post(f"{API}/work-orders", json={
+        "wo_no": f"WO-A4D-{tag}", "product_code": f"P-A4D-{tag}",
+        "product_name": f"产品A4D{tag}", "planned_qty": 5,
+        "assignee_id": del_uid})
+    del_wo = (r.json().get("data") or {}).get("id")
+    check("A-E4d 前置：建一张派给他的工单", r.status_code == 200, f"wo={del_wo}")
+    c.post(f"{API}/work-orders/{del_wo}/release",
+           json={"force_release": True, "force_reason": "A-E4d 探针"})
+
+    r = c.delete(f"{API}/users/{del_uid}")
+    check("A-E4d 有在办工单 → 删除被拒 409 且点名",
+          r.status_code == 409 and "工单" in err_msg(r),
+          f"HTTP {r.status_code} msg={err_msg(r)[:90]}")
+    r = c.get(f"{API}/users/{del_uid}")
+    check("A-E4d 被拒后用户仍存在（没被删掉）",
+          r.status_code == 200, f"HTTP {r.status_code}")
+
+    r = c.delete(f"{API}/users/{del_uid}", params={"force": "true"})
+    forced = (r.json().get("data") or {}).get("forced_open_documents") or []
+    check("A-E4d force=true 可强制删除并回带在办单据清单",
+          r.status_code == 200 and forced and forced[0].get("type") == "工单",
+          f"HTTP {r.status_code} forced={forced}")
+    r = c.get(f"{API}/audit-logs", params={"action": "user.force_delete",
+                                           "page_size": 5})
+    check("A-E4d 强制删除写审计留痕",
+          r.status_code == 200 and len(r.json().get("data", {}).get("items", [])) >= 1,
+          f"hits={len(r.json().get('data', {}).get('items', []))}")
+
+    r = c.post(f"{API}/users", json={
+        "username": f"delidle{tag}", "password": "Test@12345",
+        "real_name": f"空闲待删{tag}"})
+    del_idle = (r.json().get("data") or {}).get("id")
+    r = c.delete(f"{API}/users/{del_idle}")
+    check("A-E4d 无在办单据 → 直接删除不受影响",
+          r.status_code == 200, f"HTTP {r.status_code} {err_msg(r)[:60]}")
+
     # ══════════════════════════════════════════════════════
     # A-B1 用户无任何角色
     # ══════════════════════════════════════════════════════

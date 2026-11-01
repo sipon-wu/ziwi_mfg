@@ -256,3 +256,39 @@ async def test_merge_auto_increments_on_conflict_and_honors_explicit_no():
     repo2 = FakeRepo([draft(1, "WO-3", qty=10), draft(2, "WO-4", qty=10)])
     r2 = await ProductionService(repo2).merge_work_orders([1, 2], wo_no="BATCH-9")
     assert r2["merged_order"]["wo_no"] == "BATCH-9"
+
+
+# ── C-75 追加：状态只能走动作端点 ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_update_rejects_wo_status():
+    """改单接口直接写 wo_status 会把状态机/齐套/产出检查/流水全部绕过。
+
+    `PUT /work-orders/{id} {"wo_status":"completed"}` 一句就能把草稿单设成
+    已完工 —— 没有报工、没有 BOM 快照、没有状态流水，「完工→成品入库」
+    整条链被跳过；`cancelled` 同样能绕过"原因必填"与"已有产出需 force"。
+    """
+    repo = FakeRepo([draft(1, "WO-1")])
+    s = ProductionService(repo)
+    with pytest.raises(HTTPException) as ei:
+        await s.update_work_order(1, {"wo_status": "completed"})
+    assert ei.value.detail["code"] == "400-0003"
+    assert "/complete" in ei.value.detail["message"]   # 给出可执行指引
+    assert repo.updates == []                          # 被拒时未写库
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_empty_status_too():
+    """空串/None 也不能当作"清空状态"写进去（列是 NOT NULL）。"""
+    repo = FakeRepo([draft(1, "WO-1")])
+    s = ProductionService(repo)
+    assert await call(s.update_work_order(1, {"wo_status": ""})) == "400-0003"
+
+
+@pytest.mark.asyncio
+async def test_update_other_fields_still_work():
+    """只改交期/数量这类字段不受守卫影响。"""
+    repo = FakeRepo([draft(1, "WO-1")])
+    out = await ProductionService(repo).update_work_order(1, {"planned_qty": 88})
+    assert out["message"] == "更新成功"
+    assert repo.updates == [(1, {"planned_qty": 88})]

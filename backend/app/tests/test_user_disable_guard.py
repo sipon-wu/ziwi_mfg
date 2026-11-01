@@ -17,6 +17,7 @@ class FakeUserRepo:
         self._session = ctx.get("session")
         self._tenant_id = "t1"
         self.updates = []
+        self.deleted = []
         self.queries = []
 
     @property
@@ -32,6 +33,10 @@ class FakeUserRepo:
 
     async def update(self, uid, data):
         self.updates.append(dict(data))
+        return 1
+
+    async def delete(self, uid):
+        self.deleted.append(uid)
         return 1
 
     async def sync_user_orgs(self, uid, org_id, org_ids):
@@ -113,3 +118,38 @@ async def test_other_fields_unaffected_by_guard():
     out = await svc.update(7, {"real_name": "李四"})
     assert out["affected"] == 1
     assert repo.queries == []
+
+
+# ── A-E4 同源：删除比停用更彻底，守卫必须一致 ─────────────
+
+async def test_delete_blocked_when_open_work_orders():
+    svc, repo, _ = build([("FROM work_orders", {"c": 2})])
+    with pytest.raises(ValueError) as ei:
+        await svc.delete(7)
+    msg = str(ei.value)
+    assert "工单 2 张" in msg and "force=true" in msg
+    # 被拒时绝不能已经删掉
+    assert repo.deleted == []
+
+
+async def test_delete_hints_soft_disable_as_alternative():
+    """删除被拒要给出可行退路：停用可恢复，删除不可逆。"""
+    svc, _, _ = build([("FROM work_orders", {"c": 1})])
+    with pytest.raises(ValueError) as ei:
+        await svc.delete(7)
+    assert "停用" in str(ei.value)
+
+
+async def test_delete_without_open_docs_passes():
+    svc, repo, _ = build([("FROM work_orders", {"c": 0})])
+    out = await svc.delete(7)
+    assert repo.deleted == [7]
+    assert out["affected"] == 1
+    assert "forced_open_documents" not in out
+
+
+async def test_force_delete_passes_and_returns_docs():
+    svc, repo, _ = build([("FROM work_orders", {"c": 3})])
+    out = await svc.delete(7, force=True)
+    assert repo.deleted == [7]
+    assert out["forced_open_documents"] == [{"type": "工单", "count": 3}]
