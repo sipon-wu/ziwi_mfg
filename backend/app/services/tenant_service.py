@@ -1,6 +1,12 @@
 import logging
 import re
 from app.core.security import hash_password
+from app.constants.builtin_roles import (
+    BUILTIN_ROLE_META,
+    ROLE_GRANTS,
+    resolve_pattern,
+    roles_for_modules,
+)
 from app.repositories.tenant_repo import TenantRepository
 from typing import Any, Dict, List, Optional
 
@@ -84,11 +90,112 @@ class TenantService:
         if role_id:
             await self.role_repo.add_user(role_id, user_id, tenant_id)  # 契约 3
 
+        # ── 基础角色 + 随模块预置（C-77）─────────────────────────
+        # 改造前开通完只有 admin 一个角色，客户面对空角色列表，实际都拿 admin
+        # 跑业务，权限体系名存实亡。这里补齐其余岗位。
+        # **失败不阻断初始化**：管理员能登录是第一位，缺角色可以事后重跑本方法
+        # （POST /tenants/{id}/preset-roles 幂等），而"初始化失败"会让整条开通链
+        # 卡住、客户连登都登不进来。
+        preset = None
+        try:
+            preset = await self.preset_roles(tenant_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[C-77] 预置内置角色失败 tenant=%s: %s", tenant_id, e)
+
         return {
             "user_id": user_id,
             "role_id": role_id,
             "must_change_password": True,
+            "preset_roles": preset,
         }
+
+    async def preset_roles(self, tenant_id: str,
+                           modules: Optional[List[str]] = None) -> Dict[str, Any]:
+        """按「基础角色 + 随模块预置」补齐内置角色，并授予默认权限（C-77）。
+
+        设计口径见 ``constants/builtin_roles.py``。三条实现约束：
+
+        1. **幂等且不覆盖**：``code`` 已存在的角色一律跳过 —— 预置是"补齐缺的"，
+           不是"每次重置成出厂设置"。客户按自己业务调过的权限必须留着，
+           否则每次改模块开关都把人配好的权限冲掉，谁还敢调权限。
+        2. **`is_system=1`**：内置角色不可删除（`RoleService.delete` 已拦截），
+           但权限可改 —— 岗位是平台的，职责边界是客户的。
+        3. **授权模式未命中必须报出来**：``resolve_pattern`` 返回空集说明清单写错了
+           （历史上 ``PLAT:copilot_*`` / ``M10:fmea*:*`` 被静默丢弃过），
+           静默忽略的症状是"切强制模式后某个按钮 403"，根因极难反查。
+
+        Args:
+            tenant_id: 目标租户（**不是**当前登录租户）
+            modules: 已启用的 feature_flags 扁平键；``None`` 时读库存值，
+                     库存也为空 → 视为全模块（见 ``roles_for_modules``）
+
+        Returns:
+            {"created": [...], "skipped": [...], "granted": {code: n},
+             "unmatched_patterns": [...], "modules": [...]}
+        """
+        if self.role_repo is None:
+            raise ValueError("预置角色需要注入 role_repo")
+
+        # ★先确认租户存在：不校验的话，传一个拼错的 tenant_id 会**凭空建出一整套
+        # 挂在不存在租户下的角色**——它们永远不会有人登录使用，也不会被任何界面
+        # 看到，却实实在在地占着 role_permissions 的授权行（本地实测踩过：
+        # 探针把 tenant_id 写错成自定义值，服务端其实另生成了 t_xxx）。
+        tenant = await self.tenant_repo.get_by_tenant_id(tenant_id)
+        if not tenant:
+            raise ValueError(f"租户不存在：{tenant_id}")
+
+        if modules is None:
+            flags = await self.tenant_repo.get_feature_flags_by_tenant_id(tenant_id)
+            modules = list(flags.keys()) or None
+
+        wanted = roles_for_modules(modules)
+        perms = await self.role_repo.list_all_permissions()
+        code_to_id = {p["code"]: p["id"] for p in perms}
+
+        created: List[str] = []
+        skipped: List[str] = []
+        granted: Dict[str, int] = {}
+        unmatched: List[str] = []
+
+        for code in wanted:
+            name, desc, scope, _ = BUILTIN_ROLE_META[code]
+            role = await self.role_repo.get_by_code_in_tenant(code, tenant_id)
+            if role:
+                skipped.append(code)
+                continue
+            try:
+                await self.role_repo.create({
+                    "tenant_id": tenant_id,
+                    "name": name,
+                    "code": code,
+                    "description": desc,
+                    "scope": scope,
+                    "is_system": True,   # 内置角色：客户可改权限，但不能把岗位删掉
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[C-77] 角色 %s 创建失败 tenant=%s: %s",
+                               code, tenant_id, e)
+                continue
+            # create() 返回受影响行数不是 id，必须回查
+            role = await self.role_repo.get_by_code_in_tenant(code, tenant_id)
+            if not role:
+                continue
+            created.append(code)
+
+            ids = set()
+            for pat in ROLE_GRANTS.get(code, []):
+                hit = resolve_pattern(pat, code_to_id)
+                if not hit:
+                    unmatched.append(f"{code}:{pat}")
+                    continue
+                ids |= {code_to_id[c] for c in hit}
+            if ids:
+                await self.role_repo.assign_permissions(role["id"], sorted(ids))
+            granted[code] = len(ids)
+
+        return {"tenant_id": tenant_id, "created": created, "skipped": skipped,
+                "granted": granted, "unmatched_patterns": unmatched,
+                "modules": modules}
 
     async def _ensure_admin_role(self, tenant_id: str) -> Optional[int]:
         """取**目标租户自己的** admin 角色，没有就按种子口径建一个。
@@ -186,7 +293,18 @@ class TenantService:
         affected = await self.tenant_repo.update_package_modules(tenant_id, package_modules)
         if not affected:
             raise ValueError("租户不存在")
-        return {"package_modules": package_modules, "affected": affected}
+        # 新启用的模块把对应岗位角色补齐（C-77）。关闭模块**不回收**角色：
+        # 客户可能只是暂时停用该模块，人还挂在那个岗位上，删角色会把
+        # user_roles 一起清掉 —— 等于悄悄摘掉一批人的权限。
+        preset = None
+        if self.role_repo is not None:
+            try:
+                preset = await self.preset_roles(tenant_id, module_codes)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[C-77] 模块启用后预置角色失败 tenant=%s: %s",
+                               tenant_id, e)
+        return {"package_modules": package_modules, "affected": affected,
+                "preset_roles": preset}
 
     async def get_modules(self, tenant_id: str) -> Dict[str, Any]:
         """当前租户已启用的 feature_flags 扁平键列表（供前端模块开关页回填）。"""

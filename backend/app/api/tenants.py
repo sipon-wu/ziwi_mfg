@@ -1,4 +1,5 @@
 import logging
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -50,6 +51,37 @@ async def create_tenant(
         message="开通租户",
     )
     return {"code": 0, "message": "租户创建成功", "data": result}
+
+@router.post("/{tenant_id}/preset-roles")
+async def preset_tenant_roles(
+    tenant_id: str,
+    modules: Optional[List[str]] = Query(
+        None, description="显式指定已启用模块（不传则读租户 package_modules）"),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    tenant_repo: TenantRepository = Depends(get_tenant_repo(TenantRepository, require_auth=True)),
+    role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
+):
+    """C-77: 按「基础角色 + 随模块预置」补齐该租户的内置角色（幂等）。
+
+    什么时候用：①老租户（开通时还没有预置逻辑）一次性补齐；
+    ②客户误删了某角色后重跑；③模块新启用但角色没跟上（正常由
+    `PUT /tenant/modules` 自动触发，这里是兜底入口）。
+
+    **不覆盖已有角色**：已存在的 code 一律跳过，客户调过的权限保持原样。
+    """
+    svc = TenantService(tenant_repo, role_repo=role_repo)
+    try:
+        result = await svc.preset_roles(tenant_id, modules)
+    except ValueError as e:
+        raise HTTPException(status_code=400,
+                            detail={"code": "400-0000", "message": str(e)})
+    logger.info("[C-77] tenant=%s 预置角色 created=%s skipped=%s",
+                tenant_id, result.get("created"), result.get("skipped"))
+    return {"code": 0,
+            "message": (f"已补齐 {len(result.get('created') or [])} 个内置角色"
+                        f"（已存在 {len(result.get('skipped') or [])} 个跳过）"),
+            "data": result}
 
 @router.post("/{tenant_id}/init-admin")
 async def init_tenant_admin(
@@ -145,12 +177,16 @@ async def set_tenant_modules(
     req: SetModulesRequest,
     current_user: dict = Depends(get_current_user),
     repo: TenantRepository = Depends(get_tenant_repo(TenantRepository, require_auth=True)),
+    role_repo: RoleRepository = Depends(get_tenant_repo(RoleRepository, require_auth=True)),
 ):
     """B2: 模块启停写回 —— 只写当前登录租户自己的 package_modules（禁止跨租户写）。
 
     Body: {"module_codes": ["M01_WORK_ORDER", "M02_EQUIPMENT"]}
+
+    C-77：新启用的模块会顺带补齐对应岗位角色（如启用品品质模块 → 预置
+    `inspector` / `quality_engineer`），响应里 `preset_roles` 给出补齐结果。
     """
-    svc = TenantService(repo)
+    svc = TenantService(repo, role_repo=role_repo)
     tenant_id = current_user.get("tenant_id", "")
     try:
         result = await svc.set_modules(tenant_id, req.module_codes)

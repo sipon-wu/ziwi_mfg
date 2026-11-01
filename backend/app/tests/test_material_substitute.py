@@ -212,15 +212,11 @@ class TestSubstituteEndpointPermission:
     def test_read_is_covered_by_open_modules(self):
         """OPEN_MODULE_READ 里含 M04:*:read → 所有角色都能读替代料列表。
 
-        只读文件不 import：seed 脚本在模块层就要连库相关的定义链，
-        拿它做断言会把一个"权限码归属"的静态检查变成一次集成测试。
+        C-77 起这份清单从 `scripts/seed_permissions.py` 迁到
+        `app/constants/builtin_roles.py`（预置角色与种子脚本必须同源），
+        这里直接 import 常量模块 —— 它是纯常量、不连库，可以安全引用。
         """
-        import os
-        import re
-        here = os.path.dirname(os.path.abspath(__file__))          # backend/app/tests
-        path = os.path.join(here, "..", "..", "scripts", "seed_permissions.py")
-        text = open(path, encoding="utf-8").read()
-        m = re.search(r"OPEN_MODULE_READ\s*=\s*\[([^\]]*)\]", text)
-        assert m, "未找到 OPEN_MODULE_READ 定义"
-        assert "M04:*:read" in m.group(1)
-        assert re.search(r'"M04:\*"', text), "未找到 M04 写授权"
+        from app.constants.builtin_roles import M04_WRITE, OPEN_MODULE_READ
+
+        assert "M04:*:read" in OPEN_MODULE_READ
+        assert M04_WRITE == "M04:*", "M04 写授权口径变了，检查是否误伤仓储写权限"
