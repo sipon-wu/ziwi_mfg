@@ -77,6 +77,12 @@ def inv_qty(mat_id, wh_id=None):
     return tot, recs
 
 def txn_sum(mat_id, ttype):
+    """按流水类型汇总数量（**带符号**原样求和）。
+
+    ★出库流水 quantity 是负值（存量变动口径）：`issue` 行记 -30 而不是 30。
+    服务端 `/wms/reports/turnover` 也是 `ABS(SUM(issue.quantity))` 这么用的，
+    所以断言出库量要取绝对值，否则"出库 30"会被自己的探针判成 -30 的缺陷。
+    """
     _, b = call("GET", "/wms/inventory-transactions",
                 params={"material_id": mat_id, "transaction_type": ttype})
     s = 0.0
@@ -95,12 +101,35 @@ def create_material(code, name, unit, strategy, wh_default=None):
         return None
     return first_id(b)
 
+_LOC_CACHE = {}
+
+
+def loc_of(wh_id):
+    """取该仓第一个库位（上架确认必须指定目标库位，否则 404 WMS_404_LOCATION）。"""
+    if wh_id in _LOC_CACHE:
+        return _LOC_CACHE[wh_id]
+    _, b = call("GET", "/wms/locations", params={"warehouse_id": wh_id, "page_size": 5})
+    items = items_of(b)
+    lid = items[0]["id"] if items else None
+    _LOC_CACHE[wh_id] = lid
+    return lid
+
+
 def receipt_stock(mat_id, wh_id, qty, unit, batch_no, rtype="purchase"):
-    no = f"{TAG}_RCV_{mat_id}_{batch_no}"
+    # ★单号不能拿 TAG 直接拼：TAG = E2E_LOOP_{14位时间戳}_{随机} 已经 30 字符，
+    # 再拼 "_RCV_{物料}_{批次号}" 会超过 receipt_orders.receipt_no 的 varchar(64)。
+    # SQLite 不校验长度，PG 直接 StringDataRightTruncationError -> 500，
+    # 表现成"建收货单接口坏了"，实际是探针自己把单号写超了。
+    no = f"RCV_{TS}_{mat_id}_{uuid.uuid4().hex[:6]}"
+    # ★建单时**不要**预填 received_qty：收货是按「增量」过账的，
+    #   预填后再调 /receive 传同样数量，delta = 0，服务端走"减量/持平仅更新数量"
+    #   的幂等分支直接返回（posted_qty=0），单据状态停在 pending 不推进到
+    #   inspecting —— 接着上架就必然 409「仅 inspecting/partially_stored 可上架」。
+    #   现象是"收货 200 成功但上架 409"，很容易误判成上架接口坏了。
     s, b = call("POST", "/wms/receipt-orders", json={
         "receipt_no": no, "receipt_type": rtype, "warehouse_id": wh_id,
         "items": [{"line_no": 1, "material_id": mat_id, "expected_qty": qty,
-                   "received_qty": qty, "unit": unit, "batch_no": batch_no}]})
+                   "unit": unit, "batch_no": batch_no}]})
     if s != 200:
         bug("BLOCKER", "setup", "POST /wms/receipt-orders", 200, s, json.dumps(b, ensure_ascii=False)[:200])
         return None
@@ -119,13 +148,45 @@ def receipt_stock(mat_id, wh_id, qty, unit, batch_no, rtype="purchase"):
     if s2 != 200:
         bug("BLOCKER", "setup", "receive", 200, s2, json.dumps(b2, ensure_ascii=False)[:200]); return None
     s3, b3 = call("POST", f"/wms/receipt-order-items/{ritem_id}/store",
-                  json={"stored_qty": qty, "batch_no": batch_no})
+                  json={"location_id": loc_of(wh_id), "stored_qty": qty,
+                        "batch_no": batch_no})
     if s3 != 200:
         bug("BLOCKER", "setup", "store", 200, s3, json.dumps(b3, ensure_ascii=False)[:200]); return None
     return ro_id
 
+_WO_NO_CACHE = {}
+
+def wo_no_of(product_code):
+    """工单号不内嵌 product_code —— TAG 已 30 字符，拼进去就是 67 字符，
+    超 issue_orders.source_doc_no 的 varchar(64)（领料单把它当来源单号回填），
+    PG 上直接 StringDataRightTruncationError → 后端 500，
+    现象是"建领料单接口坏了"，实际是探针把单号写超了。
+    SQLite 不校验长度，所以只有 staging 才暴露。"""
+    if product_code not in _WO_NO_CACHE:
+        _WO_NO_CACHE[product_code] = len(_WO_NO_CACHE) + 1
+    return f"WO_{TS}_{RND}_{_WO_NO_CACHE[product_code]}"
+
+
+def batch_qty(mat_id):
+    """按批次号取真实余量。
+    ★不能读 /wms/batches 的 quantity —— batches 是**批次主数据**表，本身
+    没有 quantity 列，该端点只返回批次档案（batch_no / 效期 / 锁定状态）；
+    余量在 inventory 上按 (batch_no, 库位) 分行存放。
+    用 batches.quantity 会恒得 0：既让"A 已出空"这种断言**假通过**，
+    又让"B 剩 5"**假失败**，把正确的 FIFO 判成缺陷。
+    """
+    _, b = call("GET", "/wms/inventory",
+                params={"material_id": mat_id, "page_size": 100})
+    out = {}
+    for it in items_of(b):
+        no = it.get("batch_no")
+        if no:
+            out[no] = out.get(no, 0.0) + float(it.get("quantity") or 0)
+    return out
+
+
 def create_wo(product_code, product_name, qty):
-    no = f"{TAG}_WO_{product_code}"
+    no = wo_no_of(product_code)
     s, b = call("POST", "/work-orders", json={
         "wo_no": no, "product_code": product_code, "product_name": product_name,
         "planned_qty": qty, "wo_type": "production"})
@@ -163,7 +224,7 @@ def scenario_s1():
     # 领料出库
     s, b = call("POST", "/wms/issue-orders", json={
         "issue_no": f"{TAG}_ISS1", "issue_type": "production", "warehouse_id": WH_RAW,
-        "source_doc_no": f"{TAG}_WO_{TAG}_P1",
+        "source_doc_no": wo_no_of(f"{TAG}_P1"),
         "items": [{"line_no": 1, "material_id": raw, "required_qty": 30.0, "unit": "KG"}]})
     if s != 200:
         bug("BLOCKER", "S1", "POST /wms/issue-orders", 200, s, json.dumps(b, ensure_ascii=False)[:200]); return
@@ -183,8 +244,8 @@ def scenario_s1():
     step(f"S1 领料后原料库存 q1={q1}")
     if abs(q1 - (q0 - 30.0)) > 0.01:
         bug("MAJOR", "S1", "inventory after issue", q0 - 30.0, q1, "领料后库存对不拢(应扣30)")
-    # 流水
-    ti = txn_sum(raw, "issue")
+    # 流水（出库记负值，取绝对值比较）
+    ti = abs(txn_sum(raw, "issue"))
     if abs(ti - 30.0) > 0.01:
         bug("MAJOR", "S1", "issue transaction sum", 30.0, ti, "出库流水数量对不拢")
     # 报工
@@ -238,9 +299,8 @@ def scenario_s2():
             _, b2 = call("GET", f"/wms/issue-orders/{first_id(b)}")
             for it in items_of(b2): iid = it["id"]; break
         call("POST", f"/wms/issue-order-items/{iid}/issue", json={"issued_qty": 15.0})
-    # 查批次余量
-    _, bb = call("GET", "/wms/batches", params={"material_id": mf})
-    bmap = {it.get("batch_no"): float(it.get("quantity") or 0) for it in items_of(bb)}
+    # 查批次余量（走 inventory，见 batch_qty 注释）
+    bmap = batch_qty(mf)
     qa = bmap.get(f"{TAG}_FA"); qb = bmap.get(f"{TAG}_FB")
     step(f"S2 FIFO 批次余量 A={qa} B={qb}")
     # 期望 A=0 B=5
@@ -265,8 +325,7 @@ def scenario_s2():
             _, b2 = call("GET", f"/wms/issue-orders/{first_id(b)}")
             for it in items_of(b2): iid = it["id"]; break
         call("POST", f"/wms/issue-order-items/{iid}/issue", json={"issued_qty": 15.0})
-    _, bb = call("GET", "/wms/batches", params={"material_id": ml})
-    bmap = {it.get("batch_no"): float(it.get("quantity") or 0) for it in items_of(bb)}
+    bmap = batch_qty(ml)
     qc = bmap.get(f"{TAG}_LC"); qd = bmap.get(f"{TAG}_LD")
     step(f"S2 LIFO 批次余量 C={qc} D={qd}")
     if qd is None or qd > 0.01:
@@ -332,8 +391,15 @@ def scenario_s4():
         if s == 200:
             qc_id = first_id(b)
             s2, b2 = call("PUT", f"/inspection-orders/{qc_id}/judge", json={"result": "REJ"})
-            res = b2.get("data", {}).get("result") if s2 == 200 else None
-            step(f"S4 质检REJ status={s2} result={res}")
+            # ★judge 的返回体里**没有** result —— data 只有 ncr_id /
+            #   receipt_inspection_status / batch_locked / batch_unlocked
+            #   等副作用回执。判定结果本身要回读检验单，直接读 data.result
+            #   恒为 None，会把正确的判定误判成"结果对不拢"。
+            dd = b2.get("data") or {}
+            _, b3 = call("GET", f"/inspection-orders/{qc_id}")
+            res = (b3.get("data") or {}).get("result") if s2 == 200 else None
+            step(f"S4 质检REJ status={s2} result={res} "
+                 f"ncr_id={dd.get('ncr_id')} batch_locked={dd.get('batch_locked')}")
             if s2 == 200 and res != "REJ":
                 bug("MAJOR", "S4", "qc judge REJ", "REJ", res, "质检判定结果对不拢")
     # 看板端点

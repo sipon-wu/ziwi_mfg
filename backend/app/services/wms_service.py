@@ -650,9 +650,17 @@ class ReceiptOrderService:
             )
 
             # ③ 流水（待检区 → 目标库位）
+            # ★类型必须是 transfer 而不是 receipt：这是**库内移库**（待检区
+            #   → 正式库位），不是新的一次入库。写成 receipt 会让同一批货
+            #   在流水上出现两条「入库」：收货登记 +100、上架确认再 +100，
+            #   而库存实际只加了 100 → 按类型汇总的入库量翻倍、账实对不上
+            #   （Σquantity=170 而现存量=70）。
+            #   同模块的库内移库（line 357）本来就写 transfer，端点
+            #   /wms/transfers 也只查 transfer —— 上架移库此前在那个页面里
+            #   根本看不到，两处语义一致才算闭环。
             await self.tx_repo.create({
                 "tenant_id": tenant_id,
-                "transaction_type": "receipt",
+                "transaction_type": "transfer",
                 "voucher_no": order["receipt_no"] if order else "",
                 "material_id": item["material_id"],
                 "warehouse_id": order["warehouse_id"],
