@@ -420,7 +420,8 @@ async def _build_cancel_tx_dict(tx_repo, tenant_id: str, material_id: int,
                                  to_location_id, batch_no: str, unit: str,
                                  source_type: str, source_doc_no: str,
                                  reference_type: str, reference_id: int,
-                                 remark: str, created_by: int = None) -> None:
+                                 remark: str, created_by: int = None,
+                                 batch_id: int = None) -> None:
     """写 cancel 冲销流水（模块级共享，供 ReceiptOrderService / IssueOrderService 复用）。"""
     await tx_repo.create({
         "tenant_id": tenant_id,
@@ -430,7 +431,10 @@ async def _build_cancel_tx_dict(tx_repo, tenant_id: str, material_id: int,
         "warehouse_id": warehouse_id,
         "from_location_id": from_location_id,
         "to_location_id": to_location_id,
-        "batch_id": None,
+        # ★batch_id 必须落到流水上。只记 batch_no 文字时，同一批号在同仓挂了
+        # 两行（一行已登记批次、一行是历史遗留的 batch_id IS NULL 幽灵行）
+        # 就分不出"这批货实际在哪一行"，事后对账/再次红冲都会落错行。
+        "batch_id": batch_id,
         "batch_no": batch_no,
         "quantity": quantity,
         "unit": unit,
@@ -1238,7 +1242,9 @@ class IssueOrderService:
                                 used_batches.append(batch_inv["batch_no"])
                             await self._create_issue_tx(tenant_id, item, order, -take,
                                                         batch_inv.get("location_id"),
-                                                        batch_inv.get("batch_no"), created_by)
+                                                        batch_inv.get("batch_no"),
+                                                        created_by,
+                                                        batch_id=batch_inv.get("batch_id"))
                             remaining -= take
                     if remaining > 0:
                         raise ValueError(f"物料库存不足，仍需 {remaining} {item['unit']}")
@@ -1272,7 +1278,8 @@ class IssueOrderService:
                         if used:
                             used_batches.append(used)
                         await self._create_issue_tx(tenant_id, item, order, -take,
-                                                    r.get("location_id"), used, created_by)
+                                                    r.get("location_id"), used, created_by,
+                                                    batch_id=r.get("batch_id"))
                         remaining -= take
             else:
                 # 显式指定库位/批次 → 解析正确的库存行
@@ -1317,7 +1324,8 @@ class IssueOrderService:
                     if used:
                         used_batches.append(used)
                     await self._create_issue_tx(tenant_id, item, order, -take,
-                                                r.get("location_id"), used, created_by)
+                                                r.get("location_id"), used, created_by,
+                                                batch_id=r.get("batch_id"))
                     remaining -= take
 
             # E-E6 部分出库必须**行级可区分**，不能一律标 ``picked``：
@@ -1383,7 +1391,9 @@ class IssueOrderService:
                 f"如需处置请走报废/退换流程")
 
     async def _create_issue_tx(self, tenant_id: str, item: dict, order: dict,
-                               qty: float, from_location_id, batch_no, created_by: int = None) -> None:
+                               qty: float, from_location_id, batch_no,
+                               created_by: int = None,
+                               batch_id: int = None) -> None:
         """写出库流水（统一封装，供自动拣选/回退/显式路径复用）。"""
         await self.tx_repo.create({
             "tenant_id": tenant_id,
@@ -1393,7 +1403,13 @@ class IssueOrderService:
             "warehouse_id": order["warehouse_id"] if order else None,
             "from_location_id": from_location_id,
             "to_location_id": None,
-            "batch_id": None,
+            # ★必须记**库存行自己的 batch_id**，不能留 None。
+            # 红冲靠 (location_id, batch_id) 定位"从哪扣的回哪去"；只留批号文字时，
+            # 同一 batch_no 挂多行（真实行 + 历史幽灵行）就无法区分 —— 实测
+            # material 59：id=92(batch_id=70, qty 21) 与 id=122(batch_id=NULL,
+            # qty 246) 同批号同库位，红冲按"可用量最大"挑到了 122，
+            # 货还进幽灵行，92 永远少 5 个（总数对得上，批次账全乱）。
+            "batch_id": batch_id,
             "batch_no": batch_no,
             "quantity": qty,
             "unit": item["unit"],
@@ -1450,7 +1466,7 @@ class IssueOrderService:
                 # 出库从 187(4)+185(1) 扣，红冲把整 5 件还进了 354
                 # （100→105 / 71→67 / 1→0），批次账与库位账从此对不上。
                 legs = await self.tx_repo.query(
-                    """SELECT from_location_id, batch_no, quantity
+                    """SELECT from_location_id, batch_id, batch_no, quantity
                        FROM inventory_transactions
                        WHERE reference_type = 'issue_order'
                          AND reference_id = :rid
@@ -1465,12 +1481,16 @@ class IssueOrderService:
                             continue
                         leg_loc = leg.get("from_location_id")
                         leg_batch = leg.get("batch_no")
+                        leg_bid = leg.get("batch_id")
                         row = await self._resolve_rollback_row(
                             item["material_id"], order["warehouse_id"],
-                            leg_loc, leg_batch)
+                            leg_loc, leg_batch, leg_bid)
                         if row:
                             await self.inv_repo.add_quantity(row["id"], leg_qty)
                         else:
+                            # 原行已不存在 → 才新建。必须带上 leg_bid：不带时
+                            # stock_in 会走 find_one(batch_id=None)（`batch_id IS NULL`）
+                            # 命中幽灵行，把货加到无批次的那行上。
                             await self.inv_repo.stock_in(
                                 tenant_id=tenant_id,
                                 material_id=item["material_id"],
@@ -1478,6 +1498,7 @@ class IssueOrderService:
                                 location_id=leg_loc,
                                 quantity=leg_qty,
                                 unit=item.get("unit", ""),
+                                batch_id=leg_bid,
                                 batch_no=leg_batch,
                             )
                         await self._create_cancel_tx(
@@ -1496,6 +1517,7 @@ class IssueOrderService:
                             reference_id=order_id,
                             remark=f"取消出库单: {reason}",
                             created_by=created_by,
+                            batch_id=leg_bid,
                         )
                         total_reversed += leg_qty
                         tx_count += 1
@@ -1579,12 +1601,20 @@ class IssueOrderService:
                 "reversed_qty": total_reversed, "tx_count": tx_count}
 
     async def _resolve_rollback_row(self, material_id: int, warehouse_id: int,
-                                    location_id, batch_no: str = None) -> Optional[dict]:
-        """定位红冲该回到的**那一行**库存：优先同批次，其次同库位可用量最大。
+                                    location_id, batch_no: str = None,
+                                    batch_id: int = None) -> Optional[dict]:
+        """定位红冲该回到的**那一行**库存：``(库位, batch_id)`` → ``(库位, 批号)`` → 库位。
 
         刻意不走 ``find_one`` —— 它在 ``batch_id`` 为空时会追加
         ``batch_id IS NULL``，把带批次的库存行全部排除（C-52 移位、C-56 盘点、
         本条红冲，同一陷阱已踩三次）。
+
+        ★**必须先用 ``batch_id`` 匹配，不能只比批号文字**：同一 ``batch_no``
+        可能同时挂在多行上（真实批次行 + 历史遗留的 ``batch_id IS NULL``
+        幽灵行）。只比批号时，排序是"可用量最大优先"，幽灵行往往余额更大 →
+        红冲就落到幽灵行上。实测 material 59：id=92(batch_id=70, qty 21)
+        与 id=122(batch_id=NULL, qty 246) 同批号同库位，红冲把 5 个还进了 122，
+        92 永远少 5 —— 总数对得上，批次账与库位账全乱。
         """
         rows = await self.inv_repo.query(
             """SELECT * FROM inventory
@@ -1594,10 +1624,17 @@ class IssueOrderService:
         )
         pool = [r for r in rows
                 if location_id is None or r.get("location_id") == location_id]
+        if batch_id is not None:
+            exact_bid = [r for r in pool if r.get("batch_id") == batch_id]
+            if exact_bid:
+                return exact_bid[0]
         if batch_no:
-            exact = [r for r in pool if r.get("batch_no") == batch_no]
-            if exact:
-                return exact[0]
+            exact_bn = [r for r in pool if r.get("batch_no") == batch_no]
+            if exact_bn:
+                # 批号为历史流水（没记 batch_id）时的兜底：同批号多行里优先
+                # **已登记批次**的那行，幽灵行（batch_id 为 NULL）排后面。
+                with_bid = [r for r in exact_bn if r.get("batch_id") is not None]
+                return (with_bid or exact_bn)[0]
         return pool[0] if pool else None
 
     async def _create_cancel_tx(self, tenant_id: str, material_id: int,
@@ -1606,14 +1643,15 @@ class IssueOrderService:
                                 to_location_id, batch_no: str, unit: str,
                                 source_type: str, source_doc_no: str,
                                 reference_type: str, reference_id: int,
-                                remark: str, created_by: int = None) -> None:
+                                remark: str, created_by: int = None,
+                                batch_id: int = None) -> None:
         """写 cancel 冲销流水（统一封装，供 cancel_issue_order 复用）。"""
         await _build_cancel_tx_dict(self.tx_repo, tenant_id, material_id,
                                     warehouse_id, voucher_no, quantity,
                                     from_location_id, to_location_id, batch_no,
                                     unit, source_type, source_doc_no,
                                     reference_type, reference_id, remark,
-                                    created_by)
+                                    created_by, batch_id)
 
 
 # ============================================

@@ -60,8 +60,40 @@ def bug(sev, scenario, endpoint, expected, actual, note=""):
 def step(msg):
     print(f"\n--- {msg} ---")
 
-WH_RAW = 41
-WH_FG = 43
+# ★仓库 id 一律**运行时从接口解析**，不写死。
+# 原先写死 WH_RAW=41 / WH_FG=43：staging 上这两个 id 恰好存在，本地库没有 ——
+# 而入库单照样 200（服务端不校验 warehouse_id 是否存在），于是库存挂到了
+# "不存在的仓"上：`/wms/reports/stock-summary?warehouse_id=43` 因 JOIN 不到
+# 仓库返回 0 条，探针把自己判红（INFO）。假红比真红更贵 —— 它会让人习惯性忽略红。
+WH_RAW = None
+WH_FG = None
+
+
+def resolve_warehouses():
+    """按编码解析（缺失则创建）原料仓 / 成品仓，返回 (raw_id, fg_id)。
+
+    编码是业务主键、跨环境稳定；自增 id 不是。
+    """
+    wanted = {"WH-RAW": ("原料库", "raw_material"),
+              "WH-FG": ("成品库", "finished_goods")}
+    got = {}
+    s, b = call("GET", "/wms/warehouses", params={"page": 1, "page_size": 100})
+    for w in (items_of(b) if s == 200 else []):
+        c = w.get("code")
+        if c in wanted and c not in got:
+            got[c] = w.get("id")
+    for code, (name, typ) in wanted.items():
+        if got.get(code):
+            continue
+        s, b = call("POST", "/wms/warehouses",
+                    json={"code": code, "name": name, "type": typ})
+        if s == 200 and first_id(b):
+            got[code] = first_id(b)
+        else:
+            bug("BLOCKER", "setup", "POST /wms/warehouses", 200, s,
+                f"{code} 解析/创建失败: {json.dumps(b, ensure_ascii=False)[:150]}")
+    step(f"仓库解析 WH-RAW={got.get('WH-RAW')} WH-FG={got.get('WH-FG')}")
+    return got.get("WH-RAW"), got.get("WH-FG")
 
 # ---------- helpers ----------
 def inv_qty(mat_id, wh_id=None):
@@ -416,6 +448,7 @@ def scenario_s4():
     print("  S4 DONE")
 
 # ---------- run ----------
+WH_RAW, WH_FG = resolve_warehouses()
 for fn in (scenario_s1, scenario_s2, scenario_s3, scenario_s4):
     try:
         fn()

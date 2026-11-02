@@ -177,6 +177,79 @@ async def test_rollback_works_for_non_batch_stock():
         await engine.dispose()
 
 
+# ==================== 4. 同批号多行（幽灵行）不得抢走回滚量 ====================
+
+async def test_rollback_ignores_ghost_row_with_same_batch_no():
+    """★同一 ``batch_no`` 挂在两行上时，红冲必须按 ``batch_id`` 定位。
+
+    真实库里的形态（material 59，仓库 5，库位 28）：
+
+        id=92   batch_id=70   batch_no=B-1031195744   qty 21   ← 真实批次行
+        id=122  batch_id=NULL batch_no=B-1031195744   qty 246  ← 历史幽灵行
+
+    出库流水改造前写死 ``batch_id=None``，红冲只能按批号文字匹配；而候选池
+    按"可用量最大优先"排序，幽灵行余额更大 → 货还进了幽灵行，真实行永远少 5。
+    总数、接口返回值全对，只有批次账/库位账错 —— **没有任何报错**。
+
+    修法两层：①出库流水记库存行自己的 ``batch_id``；②回滚先按
+    ``(库位, batch_id)`` 精确命中，批号文字只作历史流水的兜底。
+    """
+    engine, Session = await _session()
+    try:
+        async with Session() as s:
+            # 幽灵行：同批号、无 batch_id、余额远大于真实行
+            await s.execute(text(
+                "INSERT INTO inventory (id, tenant_id, material_id, warehouse_id,"
+                " location_id, batch_id, batch_no, quantity, locked_qty, unit) VALUES "
+                "(4, 't', 1, 1, 901, NULL, 'RM-OLD', 500, 0, 'PCS')"))
+            await s.commit()
+            svc, inv_repo = _svc(s)
+            before = await _qtys(inv_repo)
+
+            await svc.issue_item(1, {"issued_qty": 10}, "t", created_by=1)
+            assert abs((await _qtys(inv_repo))[1]["quantity"] - 90) < 1e-9, (
+                "用例前提不成立：自动拣选应先扣真实批次行 id=1")
+
+            # 流水的 batch_id 必须落下来，否则下一次红冲照样只能比批号文字
+            txs = await inv_repo.query(
+                "SELECT batch_id, batch_no FROM inventory_transactions "
+                "WHERE transaction_type = 'issue'")
+            assert txs and txs[0]["batch_id"] == 10, (
+                f"出库流水未记 batch_id（实际 {txs[0] if txs else None}）——"
+                "红冲将无法区分同批号的多行库存")
+
+            await svc.cancel_issue_order(1, "复核", "t", created_by=1)
+            after = await _qtys(inv_repo)
+            assert abs(after[1]["quantity"] - before[1]["quantity"]) < 1e-9, (
+                f"真实批次行未回位：{before[1]['quantity']} → {after[1]['quantity']}")
+            assert abs(after[4]["quantity"] - 500) < 1e-9, (
+                f"货被加进了同批号的幽灵行：500 → {after[4]['quantity']}")
+    finally:
+        await engine.dispose()
+
+
+async def test_rollback_prefers_registered_batch_row_for_legacy_leg():
+    """历史流水没记 ``batch_id`` 时（改造前出的库），回滚仍要优先还回已登记批次行。
+
+    老单据只能靠批号文字匹配，此时同批号多行的取舍必须站到"真实批次行"这边：
+    把货还进 ``batch_id IS NULL`` 的幽灵行，等于把追溯链彻底断掉。
+    """
+    engine, Session = await _session()
+    try:
+        async with Session() as s:
+            await s.execute(text(
+                "INSERT INTO inventory (id, tenant_id, material_id, warehouse_id,"
+                " location_id, batch_id, batch_no, quantity, locked_qty, unit) VALUES "
+                "(4, 't', 1, 1, 901, NULL, 'RM-OLD', 500, 0, 'PCS')"))
+            await s.commit()
+            svc, inv_repo = _svc(s)
+            row = await svc._resolve_rollback_row(1, 1, 901, "RM-OLD", None)
+            assert row and row["id"] == 1, (
+                f"历史流水兜底落到了 {row and row['id']} 行（期望 id=1 的真实批次行）")
+    finally:
+        await engine.dispose()
+
+
 # ==================== 3. 未过账的红冲不该动库存 ====================
 
 async def test_cancel_pending_order_does_not_touch_inventory():

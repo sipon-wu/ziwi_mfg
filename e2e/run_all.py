@@ -174,7 +174,11 @@ def run_one(name: str, py: str, timeout: int = 300):
 
     last = [l for l in out.strip().splitlines() if l.strip()]
     return {"name": name, "status": status, "ok": ok, "bad": bad,
-            "detail": (last[-1][:120] if last else ""), "sec": round(dur, 1)}
+            "detail": (last[-1][:120] if last else ""), "sec": round(dur, 1),
+            # ★把失败现场留下。run_all 用 capture_output 吞掉了探针输出，红了的
+            # 探针只剩一个"通 0 / 断 1"，连是 500 还是断言不符都看不出来 ——
+            # 于是只能单跑复现，而复现不了的就成了"偶发，先不管"。
+            "tail": "\n".join(last[-12:])}
 
 
 def main():
@@ -212,6 +216,12 @@ def main():
         print("有断点的探针：")
         for n in bad_probes:
             print(f"  - {n}")
+            r = next((x for x in results if x["name"] == n), None)
+            if r and r.get("tail"):
+                print("    ┌─ 现场（探针最后 12 行）")
+                for line in r["tail"].splitlines():
+                    print(f"    │ {line}")
+                print("    └─")
     if nosum:
         print("未输出可识别汇总（需人工确认是否真跑完）：")
         for n in nosum:

@@ -37,6 +37,26 @@ def rows_of(r):
     return d.get("items") or d.get("list") or []
 
 
+def paged(c, path, params=None, page_size=100, max_pages=40):
+    """把列表接口按页翻完。
+
+    ★不能只读第一页：``/wms/inventory`` 里一个物料能有 150+ 行库存
+    （每条批次×库位一行，历史收货还会留 0 行）。只取 page 1 会让
+    "逐行回位"这类断言在截断后的窗口上比较 —— 窗口本身会随排序变化，
+    结果是**忽红忽绿的假断言**，比不测更糟。
+    """
+    out, page = [], 1
+    while page <= max_pages:
+        r = c.get(path, params={**(params or {}), "page": page,
+                                "page_size": page_size})
+        chunk = rows_of(r)
+        out.extend(chunk)
+        if len(chunk) < page_size:
+            break
+        page += 1
+    return out
+
+
 def main():
     c = httpx.Client(timeout=30)
     r = c.post(f"{API}/auth/login", json={
@@ -343,10 +363,9 @@ def main():
             但货被加到了另一行（无批次残留行），原批次少的没回来。
             所以这里必须逐行比，不能比合计。
             """
-            rr = c.get(f"{API}/wms/inventory", params={"page": 1, "page_size": 100})
+            rows = paged(c, f"{API}/wms/inventory")
             return {x["id"]: float(x.get("quantity") or 0)
-                    for x in rows_of(rr) if x.get("material_id") == mat["id"]}
-
+                    for x in rows if x.get("material_id") == mat["id"]}
         pre_rows = inv_state()
         pre = sum(pre_rows.values())
 

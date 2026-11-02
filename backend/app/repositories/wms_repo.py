@@ -684,6 +684,11 @@ class InventoryRepository(MultiTenantRepository):
         # E-B3：过期批次必须排除。FIFO 按入库时间排，越老的批次**越可能过期**，
         # 不排除的话过期批会被排在最前面先出 —— 系统自动拣选变成"优先把过期货
         # 发出去"。到期**当天**仍可出（expiry_date < today 才算过期）。
+        # ★``b.created_at`` 只有秒级精度，同一秒收的两批货时间戳完全相同 →
+        # 只按它排序时先后由数据库返回顺序决定（实现细节，不是语义）。
+        # 拣选是"扣哪一批"的决策点，顺序必须确定：补 ``b.id`` 做同秒 tie-break
+        # （FIFO 取小 id 先入、LIFO 取大 id 后入），否则同一批数据两次拣选
+        # 可能扣不同批次 —— 实测 E2E 的 LIFO 用例就因此随机红。
         sql = f"""SELECT i.*, b.batch_no, b.manufacture_date, b.created_at as batch_created_at
                    FROM inventory i
                    JOIN batches b ON b.id = i.batch_id
@@ -693,7 +698,7 @@ class InventoryRepository(MultiTenantRepository):
                      AND b.is_locked IS NOT TRUE
                      AND b.status = 'active'
                      AND (b.expiry_date IS NULL OR b.expiry_date >= :today)
-                   ORDER BY b.created_at {order_dir}"""
+                   ORDER BY b.created_at {order_dir}, b.id {order_dir}"""
         # ★传 date 对象，不要 .isoformat()：b.expiry_date 是 DATE 列，asyncpg 只接受
         # datetime.date，收到 'YYYY-MM-DD' 字符串会报
         #   DataError: invalid input for query argument $4: '2026-11-01'
