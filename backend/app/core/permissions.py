@@ -126,6 +126,12 @@ EXECUTE_SUFFIXES: Set[str] = {
     #   GET  /inspection-orders/{id}/checklist → M03:inspection_order:read
     # （C-44 / C-45 / A-S1 / C-65 / C-79 同一形态，这是第五次）
     "checklist",
+    # 打印留痕：补打历史 PDF 走 GET /print/artifacts/{id}/pdf。
+    # 不登记的话资源名被推成 print_artifact_pdf，权限码
+    # PLAT:print_artifact_pdf:read 没有任何角色拥有 → 强制模式下全员 403，
+    # 且报错文案指向页面上不存在的权限项（C-44 / C-45 / A-S1 / C-65 / C-79 /
+    # checklist 同一形态，这是第六次）。登记后收敛回 PLAT:print_artifact:read。
+    "pdf",
 }
 
 

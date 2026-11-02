@@ -125,3 +125,7 @@ class AuditAction:
     # 也是事后对账最容易出问题的地方（"这 8 个到底发了没"）——必须留痕。
     WMS_SHORT_CLOSE = "wms.short_close"
     TEMPLATE_NODE_UPDATE = "approval_template.nodes_update"
+    # 打印留痕：每出一份纸记一条。审核时"这张纸是不是系统出的、谁出的、
+    # 第几版第几份"全靠它 —— 与 print_artifacts 互为双证（表可被清库，
+    # 审计不可）。副本号与版本号写进 after，改不了。
+    PRINT_RENDER = "print.render"

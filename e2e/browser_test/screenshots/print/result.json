@@ -1,0 +1,52 @@
+{
+  "base": "http://127.0.0.1:5174",
+  "wo": {
+    "id": 743,
+    "wo_no": "WO-UI-829866"
+  },
+  "results": [
+    {
+      "name": "登录成功",
+      "ok": true,
+      "detail": "/cockpit"
+    },
+    {
+      "name": "详情页出现「打印流转卡」按钮",
+      "ok": true
+    },
+    {
+      "name": "点击后进入打印预览页（路由未被遮蔽）",
+      "ok": true,
+      "detail": "/print/preview/work_order/743"
+    },
+    {
+      "name": "预览 iframe 拿到 blob 源",
+      "ok": true,
+      "detail": "blob:http://"
+    },
+    {
+      "name": "PDF 字节头为 %PDF-",
+      "ok": true,
+      "detail": "%PDF- / 55841B"
+    },
+    {
+      "name": "预览页显示留痕码",
+      "ok": true,
+      "detail": "留痕码 2KW9-FAMH · 第 2 版 · 副本 2"
+    },
+    {
+      "name": "回查页给出明确判读",
+      "ok": true,
+      "detail": "有效"
+    },
+    {
+      "name": "回查页显示单号与版本",
+      "ok": true
+    },
+    {
+      "name": "页面无 JS 报错",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

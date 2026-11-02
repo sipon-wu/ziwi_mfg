@@ -50,6 +50,7 @@ from app.models.copilot import (
 from app.models.api_key import ApiKey
 from app.models.idempotency import IdempotencyKey
 from app.models.audit import AuditLog
+from app.models.print import PrintArtifact
 
 __all__ = [
     "Tenant", "Organization", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
@@ -61,6 +62,7 @@ __all__ = [
     "Dictionary", "DictionaryItem", "Message",
     "ApprovalTemplate", "ApprovalTemplateNode", "ApprovalInstance", "ApprovalNode",
     "AuditLog",
+    "PrintArtifact",
     "Team", "Employee",
     "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask",
     "MaintenanceTaskItem", "SparePart", "SparePartInventory", "EquipmentDowntime",

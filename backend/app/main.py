@@ -12,6 +12,7 @@ from app.core.permissions import (
 )
 from app.core.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 from heartbeat_client import create_heartbeat_lifespan, HeartbeatClientConfig
+from app.api import print as print_api
 from app.api import auth, tenants, users, roles, excel_import, production, dictionary, messages, approvals, organization, tpm, quality, andon, energy, sync, data_collection, bom, spc, ppap, fmea, basic_data, wms, trial, lab, system, integration_gateway, ncr, trace, complaint, audit
 from app.copilot import router as copilot_router
 
@@ -124,6 +125,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 打印接口把留痕码/版本/副本号放在响应头上（省一次往返）。跨源部署时
+    # 浏览器默认**不暴露**非简单响应头，不列出来前端读到的全是 undefined ——
+    # 表现为"打印出来了但页面不显示留痕码"，很容易被误判成后端没写。
+    expose_headers=[
+        "X-Print-Artifact-Id", "X-Print-Verify-Code", "X-Print-Doc-No",
+        "X-Print-Revision", "X-Print-Copy-No", "X-Print-Page-Count",
+        "X-Print-Template", "X-Print-At", "Content-Disposition",
+    ],
 )
 
 # 注册路由
@@ -156,6 +165,7 @@ app.include_router(trace.router)
 app.include_router(complaint.router)
 app.include_router(system.router)
 app.include_router(audit.router)
+app.include_router(print_api.router)
 # Integration Gateway（IG MVP）— API Key 认证
 app.include_router(integration_gateway.router)
 # AI Copilot（E1 只读 MVP）

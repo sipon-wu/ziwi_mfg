@@ -68,6 +68,12 @@ PLATFORM_BASELINE = [
     "PLAT:dictionary_code_item:read",
     "PLAT:organization_tree:read",
     "PLAT:user:read",
+    # 打印：能在页面看到这张单，就能打这张单。打印不是权限控制点 ——
+    # 真正要控的是"能不能改这张单"，纸只是它的呈现。
+    # `print*` 前缀覆盖三个资源名：print（出新 PDF）/ print_artifact（留痕列表、
+    # 补打历史 PDF）/ print_verify（扫码回查）。
+    "PLAT:print*:create",
+    "PLAT:print*:read",
 ]
 
 # ── 角色 → 权限模式列表 ──

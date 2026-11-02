@@ -6,6 +6,7 @@ import { showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
 import { useStatusTag } from '@/composables/useStatusTag'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiPrintButton from '@/components/ziwi/ZiwiPrintButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -244,6 +245,9 @@ function goExecute() {
       >
         {{ ORDER_TYPE_MAP[order.order_type] || '检验' }}执行（逐项录数）
       </van-button>
+
+      <!-- 打印检验记录单：判定结果是终态，纸质件要交品质归档 -->
+      <ZiwiPrintButton doc-type="inspection_order" :doc-id="order.id" text="打印检验记录单" block />
 
       <!-- 已录明细：现场最常问"这项到底测了没、测的多少" -->
       <van-cell-group title="检验明细" style="margin-top:12px;">

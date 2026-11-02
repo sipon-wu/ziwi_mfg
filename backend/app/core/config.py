@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     def REDIS_URL(self) -> str:
         return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
+    # ── 打印留痕 ───────────────────────────────────────────────────────
+    # 二维码要指向**人能看到的前端页面**，不是 API。前端是 hash 路由，
+    # 因此形如 `<PUBLIC_WEB_URL>/#/print/verify/<code>`。
+    # 不能从 request.base_url 推导：反向代理后端的 host 与前端域名常常不同
+    # （nginx 把 /api 反代到容器，但二维码要扫到站点的前端地址）。
+    # ⚠️ 部署到 staging / 生产时必须设 `PUBLIC_WEB_URL=https://mfg1.ziwi.cn`，
+    # 否则二维码指向 localhost:5173，扫出来是打不开的地址（纸已印发，改不了）。
+    PUBLIC_WEB_URL: str = "http://localhost:5173"
+    # 纸面上的「打印时间」必须是**车间当地时间**：容器默认 UTC，直接用
+    # datetime.now() 会让每张纸的时间比车间墙上的钟少 8 小时——纸质记录
+    # 上的时间错了，整张纸的证据价值就没了。
+    PRINT_TZ_OFFSET_HOURS: int = 8
+
     # ── cloud.ziwi.cn 统一 JWT 认证配置（RS256 非对称验签） ──
 
     CLOUD_JWKS_URL: str = "https://cloud.ziwi.cn/api/v1/auth/public-key"

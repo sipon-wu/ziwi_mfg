@@ -26,6 +26,15 @@ const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'Login', component: () => import('@/pages/auth/Login.vue') },
   { path: '/403', name: 'Forbidden', component: () => import('@/pages/Forbidden.vue'), meta: { title: '无访问权限' } },
   { path: '/setup', name: 'SolutionConfig', component: () => import('@/pages/setup/SolutionConfig.vue'), meta: { title: '方案配置' } },
+  // 打印预览**不进 MainLayout**：打印时要看到整页 A4，侧边栏与顶栏必须让位。
+  // 路径带 `/preview/` 前缀是刻意的 —— 否则 `/print/verify/ABCD` 会被
+  // `/print/:docType/:docId` 吃掉（docType="verify"），二维码扫出来是白屏。
+  {
+    path: '/print/preview/:docType/:docId',
+    name: 'PrintPreview',
+    component: () => import('@/pages/print/PrintPreview.vue'),
+    meta: { title: '打印预览' },
+  },
   {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
@@ -113,6 +122,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'system/license', name: 'LicenseInfo', component: () => import('@/pages/system/LicenseInfo.vue'), meta: { title: '许可证', perm: 'PLAT:system_license:read' } },
       // 角色权限配置（S2 落地：权限码勾选 + 数据范围）
       { path: 'system/roles', name: 'RolePermissions', component: () => import('@/pages/system/RolePermissions.vue'), meta: { title: '角色权限', perm: 'PLAT:role_permission:read' } },
+      // 留痕码回查：纸面二维码扫出来就是这个地址（后端 PUBLIC_WEB_URL + /#/print/verify/<code>）。
+      // 放在 MainLayout 内，扫码者能看到顶栏与返回键；perm 用与打印入口一致的只读码。
+      { path: 'print/verify/:code', name: 'PrintVerify', component: () => import('@/pages/print/PrintVerify.vue'), meta: { title: '留痕核验', perm: 'PLAT:print_verify:read' } },
       // M20 - 仓储管理 (WMS)
       { path: 'wms/warehouse-tree', name: 'WarehouseTree', component: () => import('@/pages/wms/WarehouseTree.vue'), meta: { perm: 'M04:wms_warehouse:read', title: '仓库结构' } },
       { path: 'wms/materials', name: 'WmsMaterialList', component: () => import('@/pages/wms/MaterialList.vue'), meta: { perm: 'M04:wms_material:read', title: '物料主数据' } },

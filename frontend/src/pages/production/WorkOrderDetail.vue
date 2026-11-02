@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { errCode, errMessage } from '@/utils/error'
 import type { WorkOrder } from '@/types'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiPrintButton from '@/components/ziwi/ZiwiPrintButton.vue'
 
 const auth = useAuthStore()
 /** 工单全部动作（下达/开工/暂停/恢复/完工/关闭/作废）共用同一个执行权限 */
@@ -349,6 +350,8 @@ function fmtTime(v?: string | null) {
           @click="runPrecheck">
           齐套预检（看缺什么）
         </van-button>
+        <!-- 打印流转卡：纸质件要随工单流转、各工序签认，是现场刚需 -->
+        <ZiwiPrintButton doc-type="work_order" :doc-id="order.id" text="打印流转卡" />
         <div v-if="!canOperate && actions.length" style="color:#969799;font-size:13px">
           当前状态可执行的操作需要「工单操作」权限（M01:work_order:execute），你的角色没有开通
         </div>

@@ -15,6 +15,15 @@ apscheduler>=3.10.4
 openpyxl>=3.1.0
 PyJWT==2.8.0
 PyYAML>=6.0
+# 打印留痕（服务端出 PDF）
+# reportlab：platypus 排版能精确控制分页/页眉页脚重复/页码 N/M，而这些是纸质件
+#   的硬要求；不引 headless Chromium（小规格 CVM 上常驻浏览器运行时内存代价不值）。
+# qrcode + Pillow：二维码回查码画在页眉右上角，纯 Python，不引系统依赖。
+# ⚠️ 中文字体**不靠系统**：随仓库交付 app/assets/fonts/NotoSansSC-*-subset.ttf，
+#   容器基础镜像 python:slim 里一个 CJK 字体都没有。
+reportlab>=4.0
+qrcode[pil]>=7.4
+
 # AI Copilot（E1）：pgvector Python 客户端（DB 侧需 CREATE EXTENSION vector）
 pgvector>=0.3.0
 
