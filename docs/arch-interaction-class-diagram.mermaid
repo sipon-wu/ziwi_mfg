@@ -1,0 +1,530 @@
+%% 知微智造 · 交互改造与三条执行路径 — 类图
+%% 对应 docs/arch-interaction-refactor-2026-11-02.md
+%% 说明：只表达结构与依赖方向，不表达实现细节
+
+classDiagram
+    direction TB
+
+    %% ==================== 形态判定层 ====================
+    class FormFactorState {
+        +String formFactor
+        +Number width
+        +String orientation
+        +Boolean canHover
+        +Boolean isCoarse
+        +Number touchTarget
+    }
+
+    class FormFactorResolver {
+        <<config>>
+        +HANDHELD 600
+        +PORTRAIT_MAX 768
+        +MEDIUM 1024
+        +resolveFormFactor(width, orientation, canHover) FormFactorCode
+    }
+
+    class UseFormFactor {
+        <<composable>>
+        -Ref~FormFactorState~ state
+        +useFormFactor() Ref~FormFactorState~
+        +installFormFactor(app) void
+        -applyDataset(el, state) void
+    }
+
+    class UseGloveMode {
+        <<composable>>
+        -Ref~Boolean~ gloveOn
+        +useGloveMode() Object
+        +init() void
+        +toggle(v) void
+        -defaultOnForRole(roles) Boolean
+    }
+
+    FormFactorResolver --> FormFactorState : 计算
+    UseFormFactor --> FormFactorResolver : 调用
+    UseFormFactor --> FormFactorState : 持有
+    UseGloveMode --> FormFactorState : 影响 touchTarget
+
+    %% ==================== 容器上下文 ====================
+    class SheetContext {
+        <<interface>>
+        +Ref~FormFactorState~ formFactor
+        +Ref~Boolean~ submitting
+        +requestClose(reason) void
+        +registerOwnedConfirm(token) void
+        +unregisterOwnedConfirm(token) void
+        +markDirty(v) void
+    }
+
+    %% ==================== 设计系统组件 ====================
+    class ZiwiFormSheet {
+        <<component>>
+        +Boolean show
+        +String title
+        +String variant
+        +String widthPolicy
+        +Boolean dirty
+        +Boolean submitting
+        +String submitText
+        +String cancelText
+        +Boolean hideFooter
+        +String scrollPolicy
+        -String effectiveVariant
+        -Set ownedConfirmTokens
+        -Boolean attemptedClose
+        +focusFirstError(selector) void
+        +onOverlayClick() void
+        #provide() SheetContext
+        #slot default
+        #slot header
+        #slot footer
+        #slot footerExtra
+    }
+
+    class ZiwiSelect {
+        <<component>>
+        +String modelValue
+        +Array options
+        +Boolean searchable
+        +Function remote
+        +Boolean clearable
+        +String size
+        +Boolean middleEllipsis
+        +Boolean scanEntry
+        +Array rules
+        -Boolean show
+        -String keyword
+        -String listMode
+        -Number activeIndex
+        +open() void
+        +confirm(v) void
+        +clear() void
+        +filterOptions(kw) Array
+    }
+
+    class ZiwiSelectList {
+        <<component>>
+        +Array options
+        +String keyword
+        +Number activeIndex
+        +String emptyKind
+    }
+
+    class ZiwiReceipt {
+        <<component>>
+        +Boolean show
+        +String docNo
+        +String docNoLabel
+        +Array quantities
+        +String time
+        +Object nextState
+        +Object primaryAction
+        +Object secondaryAction
+        -Boolean copied
+        +copyDocNo() void
+        #slot extra
+    }
+
+    class ZiwiStateView {
+        <<component>>
+        +String state
+        +String skeleton
+        +Number skeletonCount
+        +String permCode
+        +Array conditions
+        +Number pendingCount
+        +Object error
+        +String primaryText
+        +String minHeight
+        #slot default
+        #slot action
+        #slot skeleton
+    }
+
+    class ZiwiConfirmSheet {
+        <<component>>
+        +Boolean show
+        +String objectLabel
+        +String consequence
+        +String riskLevel
+        +String confirmText
+        +String cancelText
+        -Number holdProgress
+        +holdStart() void
+        +holdCancel() void
+    }
+
+    class ZiwiActionBar {
+        <<component>>
+        +String primaryText
+        +Boolean loading
+        +Boolean disabled
+        +Number safeArea
+    }
+
+    class ZiwiErrorSummary {
+        <<component>>
+        +Array errors
+        +Number count
+    }
+
+    class ZiwiFieldError {
+        <<component>>
+        +String message
+        +Boolean visible
+    }
+
+    class ZiwiScanField {
+        <<component>>
+        +String placeholder
+        +Boolean hardKey
+        +String value
+        +scan(code) void
+    }
+
+    class ZiwiCodeText {
+        <<component>>
+        +String value
+        +Boolean copyable
+        +Boolean middleEllipsis
+        -Boolean expanded
+    }
+
+    class ZiwiQtyField {
+        <<component>>
+        +Number modelValue
+        +String unit
+        +Number precision
+        +Number min
+        +Number max
+    }
+
+    class ZiwiListCard {
+        <<component>>
+        +Object item
+        +Object statusEntry
+        +Array metrics
+        +String time
+    }
+
+    class ZiwiOfflineBar {
+        <<component>>
+        +Boolean offline
+        +Number pendingCount
+    }
+
+    ZiwiFormSheet ..> SheetContext : provides
+    ZiwiSelect ..> SheetContext : injects
+    ZiwiReceipt ..> SheetContext : injects
+    ZiwiFormSheet *-- ZiwiActionBar : 内嵌
+    ZiwiFormSheet *-- ZiwiErrorSummary : 内嵌
+    ZiwiSelect *-- ZiwiSelectList : searchable 时
+    ZiwiFormSheet --> FormFactorState : 读取
+
+    %% ==================== 状态与文案 ====================
+    class StateEntry {
+        +String label
+        +String semantic
+        +String icon
+        +Number order
+    }
+
+    class StatusDict {
+        <<config>>
+        +Map STATUS_DICT
+        +get(domain, code) StateEntry
+    }
+
+    class UseStatusTag {
+        <<composable>>
+        +useStatusTag(domain, code) StateEntry
+    }
+
+    class UiText {
+        <<config>>
+        +validation Object
+        +empty Object
+        +error Object
+        +receipt Object
+        +danger Object
+        +offline Object
+    }
+
+    class Term {
+        <<config>>
+        +Map TERM
+        +Map ALIASES
+    }
+
+    StatusDict --> StateEntry : 聚合
+    UseStatusTag --> StatusDict : 查询
+    ZiwiListCard --> UseStatusTag : 使用
+    ZiwiStateView --> UiText : 取文案
+
+    %% ==================== 防误触 / 离线 ====================
+    class UseSubmitLock {
+        <<composable>>
+        +useSubmitLock() Object
+        +run(key, fn) Promise
+        +isLocked(key) Boolean
+    }
+
+    class UseDirtyGuard {
+        <<composable>>
+        +useDirtyGuard() Object
+        +markDirty(v) void
+        +confirmLeave() Promise~Boolean~
+        +persistDraft(key, data) void
+        +restoreDraft(key) Object
+    }
+
+    class UseScanInput {
+        <<composable>>
+        +useScanInput(opts) Object
+        +onKey(e) void
+        +onPaste(text) void
+        +lastCode Ref~String~
+    }
+
+    class UseOfflineQueue {
+        <<composable>>
+        +useOfflineQueue() Object
+        +enqueue(task) void
+        +flush() Promise
+        +pending Ref~Array~
+    }
+
+    ZiwiScanField --> UseScanInput : 使用
+    ZiwiFormSheet --> UseDirtyGuard : 关闭拦截
+    ZiwiOfflineBar --> UseOfflineQueue : 读取
+
+    %% ==================== 三条执行路径 · 前端页面 ====================
+    class InspectionExecutePage {
+        <<page>>
+        -Object order
+        -Array checklist
+        -Array drafts
+        +loadChecklist(orderId) void
+        +submitResults() void
+        +judge(result) void
+    }
+
+    class IssueOrderExecutePage {
+        <<page>>
+        -Object order
+        -Array lines
+        -Number activeLine
+        +scanOrder(code) void
+        +scanMaterial(code) void
+        +issueLine(itemId, qty) void
+        +completeOrder(allowShortage) void
+    }
+
+    class MaintenanceExecutePage {
+        <<page>>
+        -Object task
+        -Array items
+        +loadChecklist(taskId) void
+        +setVerdict(itemId, verdict) void
+        +submit(conclude, abnormalAction) void
+    }
+
+    InspectionExecutePage --> ZiwiFormSheet
+    InspectionExecutePage --> ZiwiReceipt
+    InspectionExecutePage --> UseSubmitLock
+    IssueOrderExecutePage --> ZiwiScanField
+    IssueOrderExecutePage --> ZiwiReceipt
+    IssueOrderExecutePage --> ZiwiConfirmSheet
+    IssueOrderExecutePage --> ZiwiQtyField
+    MaintenanceExecutePage --> ZiwiScanField
+    MaintenanceExecutePage --> ZiwiActionBar
+    MaintenanceExecutePage --> ZiwiReceipt
+
+    %% ==================== 三条执行路径 · 后端 ====================
+    class InspectionChecklistService {
+        +checklist(orderId) Dict
+        -resolveItems(order) Array
+    }
+
+    class IssueOrderService {
+        +list(status, issueType, keyword, page, pageSize) Dict
+        +get(id) Dict
+        +scan(code) Dict
+        +issueItem(itemId, data, tenantId, createdBy) Dict
+        +complete(id, payload, tenantId) Dict
+        +cancelIssueOrder(id, reason, tenantId, createdBy) Dict
+        -_createIssueTx(tenantId, item, order, qty, fromLocationId, batchNo, createdBy) void
+        -_rejectExpiredBatch(item, batchNo, today) void
+    }
+
+    class ChecklistService {
+        +getChecklist(taskId) Dict
+        +submit(taskId, items, conclude, abnormalAction, actorId) Dict
+        -snapshotFromTemplate(plan, taskId) void
+        -triggerAndon(task, abnormalItems) Number
+    }
+
+    class MaintenanceService {
+        +startTask(taskId, actorId) Dict
+        +completeTask(taskId, payload, actorId) Dict
+        +generateDueTasks(actorId) Dict
+    }
+
+    class MultiTenantRepository {
+        <<abstract>>
+        +set_tenant_id(tid) void
+        +query_page(sql, params, page, pageSize) Dict
+        +query_one(sql, params) Dict
+    }
+
+    class InspectionOrderRepository
+    class InspectionItemRepository
+    class MaintenanceTaskRepository
+    class MaintenanceTaskItemRepository
+    class IssueOrderRepository
+    class IssueOrderItemRepository
+    class InventoryRepository
+    class InventoryTransactionRepository
+
+    MultiTenantRepository <|-- InspectionOrderRepository
+    MultiTenantRepository <|-- InspectionItemRepository
+    MultiTenantRepository <|-- MaintenanceTaskRepository
+    MultiTenantRepository <|-- MaintenanceTaskItemRepository
+    MultiTenantRepository <|-- IssueOrderRepository
+    MultiTenantRepository <|-- IssueOrderItemRepository
+    MultiTenantRepository <|-- InventoryRepository
+    MultiTenantRepository <|-- InventoryTransactionRepository
+
+    InspectionChecklistService --> InspectionOrderRepository
+    InspectionChecklistService --> InspectionItemRepository
+    IssueOrderService --> IssueOrderRepository
+    IssueOrderService --> IssueOrderItemRepository
+    IssueOrderService --> InventoryRepository
+    IssueOrderService --> InventoryTransactionRepository
+    ChecklistService --> MaintenanceTaskItemRepository
+    ChecklistService --> MaintenanceService
+    MaintenanceService --> MaintenanceTaskRepository
+
+    %% ==================== 数据模型 ====================
+    class InspectionOrder {
+        +int id
+        +String tenant_id
+        +String order_no
+        +String order_type
+        +BigInteger standard_id
+        +BigInteger qc_point_id
+        +BigInteger receipt_item_id
+        +String result
+        +int ac
+        +int re
+        +int sample_qty
+    }
+
+    class InspectionItem {
+        +int id
+        +BigInteger standard_id
+        +String item_name
+        +Decimal spec_upper_limit
+        +Decimal spec_lower_limit
+        +String unit
+    }
+
+    class InspectionResult {
+        +int id
+        +BigInteger order_id
+        +BigInteger item_id
+        +Decimal measured_value
+        +String result
+        +String source
+    }
+
+    class IssueOrder {
+        +int id
+        +String issue_no
+        +String status
+        +BigInteger work_order_id
+        +BigInteger warehouse_id
+        +Float total_qty
+        +Float issued_qty
+        +Boolean short_closed
+        +String shortage_reason
+        +DateTime completed_at
+    }
+
+    class IssueOrderItem {
+        +int id
+        +BigInteger issue_id
+        +int line_no
+        +BigInteger material_id
+        +Float required_qty
+        +Float issued_qty
+        +String batch_no
+        +BigInteger from_location_id
+        +String pick_status
+    }
+
+    class MaintenanceTask {
+        +int id
+        +BigInteger equipment_id
+        +BigInteger plan_id
+        +String task_type
+        +int priority
+        +String status
+        +String result
+        +DateTime actual_start_at
+        +DateTime actual_end_at
+    }
+
+    class MaintenanceTaskItem {
+        +int id
+        +String tenant_id
+        +BigInteger task_id
+        +int line_no
+        +String check_item
+        +String check_method
+        +String standard_desc
+        +String verdict
+        +Decimal measured_value
+        +String remark
+        +JSON photo_urls
+        +DateTime checked_at
+    }
+
+    class MaintenancePlan {
+        +int id
+        +BigInteger equipment_id
+        +String plan_name
+        +int cycle_value
+        +String cycle_unit
+        +JSON checklist_template
+        +DateTime next_execute_at
+    }
+
+    MaintenanceTask "1" *-- "0..*" MaintenanceTaskItem : 明细
+    MaintenancePlan "1" ..> "0..*" MaintenanceTask : 生成
+    InspectionOrder "1" *-- "0..*" InspectionResult : 明细
+    InspectionItem "0..*" ..> "0..*" InspectionResult : 被记录
+    IssueOrder "1" *-- "0..*" IssueOrderItem : 明细
+
+    InspectionOrderRepository ..> InspectionOrder
+    InspectionItemRepository ..> InspectionItem
+    MaintenanceTaskRepository ..> MaintenanceTask
+    MaintenanceTaskItemRepository ..> MaintenanceTaskItem
+    IssueOrderRepository ..> IssueOrder
+    IssueOrderItemRepository ..> IssueOrderItem
+
+    %% ==================== 静态闸 ====================
+    class UiContractGate {
+        <<script>>
+        +check_inline_style() int
+        +check_dead_tailwind() int
+        +check_inline_picker() int
+        +check_raw_transition() int
+        +check_media_breakpoint() int
+        +check_inline_status_dict() int
+        +check_terminology() int
+        +compare_baseline() int
+    }
+
+    UiContractGate ..> ZiwiFormSheet : 保护
+    UiContractGate ..> ZiwiSelect : 保护

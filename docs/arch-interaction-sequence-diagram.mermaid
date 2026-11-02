@@ -1,0 +1,172 @@
+%% 知微智造 · 交互改造 — 关键调用序列
+%% 对应 docs/arch-interaction-refactor-2026-11-02.md
+%% 场景一：出库执行（扫码 → 逐行发料 → 收口 → 回执）
+%% 场景二：点检执行（扫设备 → 项级三态 → 联动安灯 → 回执）
+%% 场景三：表单浮层三形态装配（R1-R4）
+
+sequenceDiagram
+    autonumber
+    actor WH as 仓管_手持412
+    participant P as IssueOrderExecutePage
+    participant SC as ZiwiScanField
+    participant LK as useSubmitLock
+    participant API as FastAPI /wms
+    participant SVC as IssueOrderService
+    participant INV as InventoryRepository
+    participant TX as InventoryTransactionRepository
+    participant RC as ZiwiReceipt
+    participant CS as ZiwiConfirmSheet
+
+    Note over WH,CS: ===== 场景一 · 出库执行 =====
+
+    WH->>SC: 扫出库单码（硬键触发 Enter）
+    SC->>SC: useScanInput 聚合字符并防抖
+    SC->>P: emit scan(code)
+    P->>API: GET /wms/issue-orders/scan?code=IO-20261102-0003
+    API->>SVC: scan(code)
+    SVC->>SVC: 解析 issue_no 未命中则反查 work_orders.wo_no
+    SVC-->>API: order matched_by can_execute lines summary
+    API-->>P: 200 code=0 data
+    P->>P: 渲染行列表 remain_qty 大于 0 置顶 首行高亮
+    P-->>WH: 扫码定位成功 首行高亮 实发数默认等于需求数
+
+    WH->>SC: 扫物料码（连续扫码）
+    SC->>P: emit scan(materialCode)
+    P->>P: 本地按 material_code 匹配行 定位 高亮 聚焦实发数
+    Note over P: 无需网络往返 扫码即定位 对应 UE 2.3 目标态
+
+    WH->>P: 点 确认发料 未改数量 实发等于需求
+    P->>LK: run 提交锁 key=issue-itemId
+    LK->>LK: 同键并发合并 按钮进锁定态 对应 UE-P0-05
+    LK->>API: POST /wms/issue-order-items/88/issue  body issued_qty=20
+    API->>SVC: issue_item(88, data, tenant_id, created_by)
+    SVC->>SVC: 校验 status 非 cancelled 且批次未过期
+    alt 未指定批次/库位
+        SVC->>INV: find_available_batches material, wh, pick_strategy, qty
+        SVC->>INV: stock_out batch_row_id, take  多批分摊
+        SVC->>TX: create 流水  type=issue  qty=-take  batch_no  from_location_id
+    else 显式指定批次/库位
+        SVC->>INV: find_one 或 find_batch_rows
+        SVC->>INV: stock_out row_id, take
+        SVC->>TX: create 流水  type=issue  qty=-take  batch_no  from_location_id
+    end
+    Note over SVC,TX: 数量恒为负值 流水记库存行实际 batch_no 而非请求参数 否则追溯断链
+    SVC->>SVC: new_issued = 已发 + qty 累计不覆盖<br/>pick_status = picked 或 partial
+    SVC->>SVC: total_issued >= total_required 则 issued 否则 partially_issued
+    SVC-->>API: item_id qty order_status
+    API-->>P: 200 code=0 data
+    P->>P: 行态就地更新；单据状态就地更新
+    LK-->>P: 解锁
+
+    alt 全部行已发满足需求
+        P-->>WH: 单据状态即时切已完成 差异摘要为 0 差异
+    else 存在欠发行
+        WH->>P: 点 差额结案
+        P->>CS: show objectLabel=出库单 IO-20261102-0003<br/>consequence=第 3 行欠 8 PCS 结案后不可补拣
+        CS-->>WH: 二次确认 重述后果 取消为默认焦点
+        WH->>CS: 确认结案
+        CS->>P: emit confirm
+        P->>API: POST /wms/issue-orders/12/complete<br/>body allow_shortage=true reason=供应商少送
+        API->>SVC: complete(12, payload, tenant_id)
+        SVC->>SVC: 校验欠发行 allow_shortage 则 short_closed=true
+        SVC->>SVC: status partially_issued 转 issued
+        SVC-->>API: status shortage_lines
+        API-->>P: 200
+        P->>RC: show docNo=IO-20261102-0003 实发92PCS time<br/>nextState=已完成/success extra=差异摘要
+        RC-->>WH: 回执卡 单号可复制 实发合计 时间 下一状态 差异摘要
+    end
+
+    Note over WH,CS: ===== 场景二 · 点检执行 =====
+
+    actor MT as 设备员_油污手套
+    participant EQ as EquipmentTasksPage
+    participant ME as MaintenanceExecutePage
+    participant TAPI as FastAPI /tpm
+    participant CSV as ChecklistService
+    participant MSV as MaintenanceService
+    participant ANDON as andon_service
+    participant DT as equipment_downtimes
+
+    MT->>EQ: 扫设备码 EQ-B1-11012316
+    EQ->>TAPI: GET /tpm/equipment/scan?code=EQ-B1-11012316
+    TAPI->>TAPI: equipment_code 精确匹配
+    TAPI-->>EQ: equipment + tasks 含 item_count checked_count abnormal_count
+    alt 无待执行任务
+        EQ-->>MT: ZiwiStateView state=empty-true 加 新建保养计划
+    else 有任务
+        EQ-->>MT: 任务清单 卡片流 四段信息层级
+        MT->>ME: 点「执行点检」
+        ME->>TAPI: GET /tpm/maintenance-tasks/45/checklist
+        TAPI->>CSV: getChecklist 45
+        CSV-->>TAPI: template_source=plan items=8
+        TAPI-->>ME: 200
+        ME-->>MT: 8 个点检项卡片 三态按钮 56x56 手套档
+
+        MT->>ME: 点「开工」
+        ME->>TAPI: PUT /tpm/maintenance-tasks/45/start
+        TAPI->>MSV: startTask(45, actor)
+        MSV->>DT: 开停机记录 type=maintenance
+        MSV->>MSV: equipment.status = maintenance 受影响工单暂停
+        TAPI-->>ME: 200
+
+        MT->>ME: 逐项三态 6正常 1异常含描述与拍照 1不适用
+        MT->>ME: 点 提交并完工
+        ME->>TAPI: POST /tpm/maintenance-tasks/45/checklist<br/>body items=8 conclude=true abnormal_action=andon
+        TAPI->>CSV: submit 45 items conclude abnormal_action actorId
+        CSV->>CSV: 逐项幂等 upsert 同 task 同 item 更新 不重复插行
+        CSV->>CSV: abnormal_count = 1
+        CSV->>ANDON: create call_type=equipment ref=task_no desc=皮带打滑
+        ANDON->>DT: 关联停机记录
+        ANDON-->>CSV: andon_call_id = 77
+        CSV->>MSV: completeTask 45 abnormal_count=1
+        MSV->>DT: 关闭停机 计算 duration_minutes
+        MSV->>MSV: equipment.status=running 工单恢复顺延 计划滚动
+        CSV-->>TAPI: checked_count=8 abnormal_count=1 status=completed andon_call_id=77
+        TAPI-->>ME: 200
+        ME->>RC: show docNo=MT-20261102-0045 项8 异常1<br/>nextState=已完成/success extra=已生成安灯 #77
+        RC-->>MT: 回执卡 任务完成态 异常已挂起 安灯单号
+    end
+
+    Note over MT,RC: ===== 场景三 · 表单浮层三形态（T02 验收口径） =====
+
+    participant U as 用户
+    participant FS as ZiwiFormSheet
+    participant SEL as ZiwiSelect
+    participant CTX as SheetContext
+
+    FS->>FS: onMounted 执行 provide ZIWI_SHEET_CTX
+    FS->>FS: useFormFactor 得到 H 或 T 或 W
+    alt W 宽屏
+        FS-->>U: van-popup position=center 宽 min 900px/62vw
+    else T 中屏
+        FS-->>U: van-popup position=right 宽 min 720px/92vw
+    else H 手持
+        FS-->>U: van-popup position=bottom 宽 100vw 全屏页
+    end
+    Note over FS: 三形态 DOM 完全相同 只有 3 个分支点<br/>position 与 round+safe-area 与 footer 是否 sticky
+
+    U->>SEL: 点击字段
+    SEL->>CTX: inject ZIWI_SHEET_CTX
+    CTX-->>SEL: scrollPolicy='sheet-only', formFactor
+    SEL->>SEL: van-popup teleport=body 绝不进表单流 对应 UE-P0-01
+    alt options.length > 8
+        SEL->>SEL: listMode=search-list 用 van-search 加 cell 列表 不用滚轮
+    else
+        SEL->>SEL: listMode=picker
+    end
+    SEL-->>U: 底部浮层选项列表 行高取手套档令牌 56
+    U->>SEL: 选中并确认
+    SEL->>CTX: markDirty true
+    SEL-->>FS: emit update:modelValue
+
+    Note over FS,SEL: R3 协商 内层自带确认时调用 registerOwnedConfirm<br/>外层 hideFooter=true 不再出第二组按钮
+
+    U->>FS: 提交空必填
+    FS->>FS: 阻断关闭 并收集 errors
+    FS-->>U: ZiwiErrorSummary 显示 N 项待修正 并 scrollTo firstError
+    FS-->>U: ZiwiFieldError 就近显示原因 + 焦点落入该字段
+    Note over FS: 不用 toast 报错（UE-10）
+
+    U->>FS: 提交合法数据
+    FS->>FS: submitting=true 全表锁定 对应 UE-P0-05
+    FS-->>U: 成功后由页面显式打开 ZiwiReceipt 回执卡 不用 toast
