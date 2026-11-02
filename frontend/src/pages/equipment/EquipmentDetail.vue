@@ -88,17 +88,41 @@ const taskState = computed<StateKind>(() => {
   return 'ready'
 })
 
+/**
+ * 单页上限。后端 `GET /maintenance-tasks` 的 `page_size` 被 `Query(le=100)` 卡死，
+ * 请求 200 只会 422，所以这里必须按 100 翻页，不能靠"调大 page_size"绕过。
+ */
+const TASK_PAGE_SIZE = 100
+/** 翻页上限（防御性）：最多扫 10 页 = 1000 条，避免异常数据把详情页拖死 */
+const TASK_MAX_PAGES = 10
+
 async function loadTasks(equipmentId: number): Promise<void> {
   tasksLoading.value = true
   tasksFailed.value = false
   try {
-    // 后端 /maintenance-tasks 当前不支持 equipment_id 过滤，这里取一页后在客户端过滤；
-    // 数据量小时无差别，等 T03 补上过滤参数再改服务端过滤。
-    const res = await get<PaginatedResponse<MaintenanceTaskLite>>('/maintenance-tasks', {
-      page: 1,
-      page_size: 100,
-    })
-    tasks.value = (res.items || []).filter((t) => Number(t.equipment_id) === equipmentId)
+    // 【为何在客户端过滤】后端 `/maintenance-tasks` 只支持 `page/page_size/status`，
+    // 没有 `equipment_id` 参数（`app/api/tpm.py::list_tasks`）。T03 也没加，
+    // 所以只能取回后按 equipment_id 过滤。
+    //
+    // 【为何必须翻页而不是只取一页】台账口径"取一页后在客户端过滤"在数据量小时
+    // 看不出问题，但单页上限 100：一旦任务总量 > 100，某台设备的任务完全可能
+    // 全落在第 2 页 —— 详情页会显示"暂无任务"，而列表页里这些任务明明存在。
+    // 这是**静默漏数据**，比报错更难发现，因此这里按 total 翻到够为止。
+    const collected: MaintenanceTaskLite[] = []
+    let page = 1
+    let total = Number.POSITIVE_INFINITY
+    while (page <= TASK_MAX_PAGES && collected.length < total) {
+      const res = await get<PaginatedResponse<MaintenanceTaskLite>>('/maintenance-tasks', {
+        page,
+        page_size: TASK_PAGE_SIZE,
+      })
+      const items = res.items || []
+      collected.push(...items)
+      total = Number(res.total) || collected.length
+      if (items.length < TASK_PAGE_SIZE) break
+      page += 1
+    }
+    tasks.value = collected.filter((t) => Number(t.equipment_id) === equipmentId)
   } catch {
     tasksFailed.value = true
     tasks.value = []

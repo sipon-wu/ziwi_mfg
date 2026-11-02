@@ -284,7 +284,21 @@ async function handleCreate(): Promise<void> {
     const created = await submitLock.run('equipment:maintenance-task:create', () =>
       post<MaintenanceTask>('/maintenance-tasks', payload),
     )
-    createdTask.value = created
+    // ★ 回执数据自建视图对象，不直接用 POST 返回体。
+    //   后端 `POST /maintenance-tasks` 只回 `{ id }`（`TpmService.create_task`
+    //   → `{"id": await repo.create_task(...)}`），不回整条任务。
+    //   早期实现 `createdTask.value = created` 会让 task_type / priority 为
+    //   undefined，回执卡的「任务类型 / 优先级」两行渲染成 `-`，
+    //   只剩一个 `#id` 兜底单号 —— 真后端联调（T02b）才暴露，mock 掩盖了它。
+    createdTask.value = {
+      id: created?.id ?? 0,
+      equipment_id: payload.equipment_id,
+      task_no: created?.task_no || '',
+      task_type: payload.task_type,
+      description: payload.description,
+      priority: payload.priority as number,
+      status: created?.status || 'pending',
+    }
     receiptTime.value = dayjs().format('MM-DD HH:mm')
     showCreate.value = false
     showReceipt.value = true

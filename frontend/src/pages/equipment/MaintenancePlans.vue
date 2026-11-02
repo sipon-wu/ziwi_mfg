@@ -367,7 +367,25 @@ async function handleCreate(): Promise<void> {
     const created = await submitLock.run('equipment:maintenance-plan:create', () =>
       post<MaintenancePlan>('/maintenance-plans', payload),
     )
-    createdPlan.value = created
+    // ★ 回执数据必须自建视图对象，不能直接用 POST 返回体。
+    //   后端 `POST /maintenance-plans` 只回 `{ id, next_execute_at }`
+    //   （`MaintenanceService.create_plan` → `{"id": ...}`，next_execute_at 由
+    //   仓储算出），**不回整条计划**。早期实现直接 `createdPlan.value = created`，
+    //   结果 `plan_name` 为 undefined → ZiwiReceipt 的 docNo 为空 →
+    //   按 UE-11 红线拒绝渲染 → 用户"提交成功但什么都没有"，浮层已关、回执不来。
+    //   真后端联调（T02b）才暴露；mock 当时返回整条计划，掩盖了这个假设。
+    //   现在：以**提交的表单值**为准拼装，服务端只覆盖它真正拥有的字段。
+    createdPlan.value = {
+      id: created?.id ?? 0,
+      equipment_id: payload.equipment_id,
+      equipment_name: equipmentNameMap.value[payload.equipment_id] || '',
+      plan_name: payload.plan_name,
+      plan_type: payload.plan_type,
+      cycle_value: payload.cycle_value,
+      cycle_unit: payload.cycle_unit,
+      next_execute_at: created?.next_execute_at,
+      status: created?.status || 'active',
+    }
     receiptTime.value = dayjs().format('MM-DD HH:mm')
     showCreate.value = false
     showReceipt.value = true
