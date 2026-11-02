@@ -654,9 +654,34 @@ function onFieldKeydown(event: KeyboardEvent): void {
   --ziwi-select-hit: 48px;
 }
 
-/* 让"输入区"本身达到热区高度（UE-08 / UE-P0-02） */
-.ziwi-select :deep(.van-field__body) {
+/* ── 热区落在**控件本身**，不是内容区 ──
+   ★ 这里是 72px → 48px 的修正。改造前的写法是：
+       .van-field__body { min-height: var(--ziwi-select-hit) }  // 48
+   而 `van-field` 自身还带 `--van-cell-vertical-padding`(12px) 上下内边距，
+   于是字段实测高度 = 48 + 12×2 = **72px**，比规则值高出 50%。
+
+   UE-08 / UE-P0-02 的原意是「**整个可点控件**不小于 48（裸手）/ 56（手套）」，
+   不是「内容区 48，内边距再另外叠加」。阈值上移到 `.van-field` 并把上下内边距
+   清零后：字段整体 48，整块（含标签）都是可点区（`@click` 挂在外层 field 上），
+   热区仍然达标，只是不再被内边距二次放大。
+
+   右侧的扫码/清空图标按钮仍走 `--ziwi-select-hit`（48/56），它把 `__body`
+   自然撑到同一高度，所以没图标时靠 `__value` 的 min-height 兜底。 */
+.ziwi-select :deep(.van-field) {
+  padding-top: 0;
+  padding-bottom: 0;
   min-height: var(--ziwi-select-hit);
+}
+
+.ziwi-select :deep(.van-field__value) {
+  display: flex;
+  align-items: center;
+  min-height: var(--ziwi-select-hit);
+}
+
+.ziwi-select :deep(.van-field__body) {
+  /* 不再叠加 min-height：高度由 __value 与图标按钮共同决定 */
+  min-height: 0;
   align-items: center;
 }
 

@@ -67,6 +67,7 @@ declare module 'vue' {
     ZiwiScanField: typeof import('./src/components/ziwi/ZiwiScanField.vue')['default']
     ZiwiSelect: typeof import('./src/components/ziwi/ZiwiSelect.vue')['default']
     ZiwiSelectList: typeof import('./src/components/ziwi/ZiwiSelectList.vue')['default']
+    ZiwiSelectPanel: typeof import('./src/components/ziwi/ZiwiSelectPanel.vue')['default']
     ZiwiStateView: typeof import('./src/components/ziwi/ZiwiStateView.vue')['default']
   }
 }
