@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface EscalationRule {
   id: number
@@ -171,11 +172,7 @@ onMounted(loadData)
     <van-empty v-if="!loading && list.length === 0" description="暂无升级规则" />
 
     <!-- 创建/编辑弹窗 -->
-    <van-dialog v-model:show="showDialog_" :title="editingItem ? '编辑规则' : '新增规则'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑规则' : '新增规则'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model="form.rule_name" label="规则名称" placeholder="必填" :rules="[{ required: true }]" />
         <van-field name="call_type" label="呼叫类型">
@@ -197,6 +194,6 @@ onMounted(loadData)
           </template>
         </van-field>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

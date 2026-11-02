@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface PpapElement {
   id: number
@@ -160,11 +161,7 @@ onMounted(loadData)
 
     <van-empty v-if="!loading && list.length === 0" description="暂无要素模板" />
 
-    <van-dialog v-model:show="showDialog_" :title="editingItem ? '编辑要素' : '新增要素'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑要素' : '新增要素'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model="form.element_code" label="要素编码" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model="form.element_name" label="要素名称" placeholder="必填" :rules="[{ required: true }]" />
@@ -184,6 +181,6 @@ onMounted(loadData)
         </van-field>
         <van-field v-if="form.has_template" v-model="form.template_file_url" label="模板URL" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

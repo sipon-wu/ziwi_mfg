@@ -6,6 +6,7 @@ import { showDialog, showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
 import { errCode, errMessage } from '@/utils/error'
 import type { WorkOrder } from '@/types'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const auth = useAuthStore()
 /** 工单全部动作（下达/开工/暂停/恢复/完工/关闭/作废）共用同一个执行权限 */
@@ -366,14 +367,14 @@ function fmtTime(v?: string | null) {
     </div>
 
     <!-- 齐套缺料对话框：下达被拦时=「取消/强制下发」，预检时=只读看一眼 -->
-    <van-dialog v-model:show="showCheckDialog"
+    <ZiwiFormSheet
+      v-model:show="showCheckDialog"
       :title="precheckOnly ? '齐套预检 - 缺料明细' : '齐套检查 - 缺料明细'"
-      show-cancel-button
-      :show-confirm-button="!precheckOnly"
-      :cancel-button-text="precheckOnly ? '关闭' : '取消下达'"
-      confirm-button-text="强制下发"
-      @confirm="handleForceRelease">
-      <div style="padding:12px">
+      :submit-text="precheckOnly ? '关闭' : '强制下发'"
+      :cancel-text="precheckOnly ? '' : '取消下达'"
+      @submit="precheckOnly ? (showCheckDialog = false) : handleForceRelease()"
+    >
+      <div>
         <div v-if="materialCheckResult" style="margin-bottom:12px">
           <div style="display:flex; justify-content:space-between; margin-bottom:8px">
             <van-tag type="warning">齐套率 {{ materialCheckResult.kitting_rate ?? '—' }}%</van-tag>
@@ -395,15 +396,12 @@ function fmtTime(v?: string | null) {
         <van-field v-if="!precheckOnly" v-model="forceReason" label="强制下发原因" type="textarea"
           placeholder="请填写强制下发的原因" rows="2" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- 通用原因输入（暂停 / 强制完工 / 作废） -->
-    <van-dialog v-model:show="showReasonDialog" :title="reasonTitle" show-cancel-button
-      @confirm="confirmReason">
-      <div style="padding:12px">
-        <van-field v-model="reasonValue" :label="reasonLabel" type="textarea"
-          :placeholder="reasonRequired ? '必填' : '选填'" rows="2" />
-      </div>
-    </van-dialog>
+    <ZiwiFormSheet v-model:show="showReasonDialog" :title="reasonTitle" submit-text="确定" @submit="confirmReason">
+      <van-field v-model="reasonValue" :label="reasonLabel" type="textarea"
+        :placeholder="reasonRequired ? '必填' : '选填'" rows="2" />
+    </ZiwiFormSheet>
   </div>
 </template>

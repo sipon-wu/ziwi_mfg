@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface FmeaAction {
   id: number
@@ -204,11 +205,7 @@ onMounted(fetchData)
     </div>
 
     <!-- 新建措施弹窗 -->
-    <van-dialog v-model:show="showCreateDialog" title="新建整改措施" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleCreate(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showCreateDialog" title="新建整改措施" submit-text="保存" @submit="handleCreate">
       <div style="padding:16px">
         <ZiwiSelect
           v-model="form.item_id"
@@ -225,20 +222,16 @@ onMounted(fetchData)
         <van-field v-model="form.target_date" label="目标完成日期" type="date" />
         <van-field v-model="form.remark" label="备注" type="textarea" rows="2" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- 完成措施弹窗 -->
-    <van-dialog v-model:show="showCompleteDialog" title="完成措施 - 复评" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleComplete(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showCompleteDialog" title="完成措施 - 复评" submit-text="保存" @submit="handleComplete">
       <div style="padding:16px">
         <van-field v-model.number="completeForm.re_severity" label="复评严重度(S)" type="digit" placeholder="1-10" />
         <van-field v-model.number="completeForm.re_occurrence" label="复评频度(O)" type="digit" placeholder="1-10" />
         <van-field v-model.number="completeForm.re_detection" label="复评探测度(D)" type="digit" placeholder="1-10" />
         <van-cell title="复评RPN" :value="completeForm.re_severity * completeForm.re_occurrence * completeForm.re_detection" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

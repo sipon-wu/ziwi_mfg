@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface TreeNode {
   id: number | null
@@ -378,11 +379,7 @@ onMounted(fetchData)
     </div>
 
     <!-- 添加节点弹窗 -->
-    <van-dialog v-model:show="showAddNodeDialog" title="添加节点" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleAddNode(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showAddNodeDialog" title="添加节点" submit-text="保存" @submit="handleAddNode">
       <div style="padding:16px">
         <van-field v-model="editNodeLabel" label="节点名称" placeholder="必填" :rules="[{ required: true }]" />
         <van-field name="level_type" label="层级类型">
@@ -393,14 +390,10 @@ onMounted(fetchData)
           </template>
         </van-field>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- FMEA项编辑弹窗 -->
-    <van-dialog v-model:show="showItemDialog" :title="editingItem ? '编辑FMEA项' : '新增FMEA项'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSaveItem(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showItemDialog" :title="editingItem ? '编辑FMEA项' : '新增FMEA项'" submit-text="保存" @submit="handleSaveItem">
       <div style="padding:16px; max-height:400px; overflow-y:auto;">
         <van-field v-model="itemForm.function_desc" label="功能描述" type="textarea" rows="2" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model="itemForm.failure_mode" label="失效模式" type="textarea" rows="1" placeholder="必填" />
@@ -419,6 +412,6 @@ onMounted(fetchData)
         </van-field>
         <van-field v-model="itemForm.recommended_action" label="建议措施" type="textarea" rows="2" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

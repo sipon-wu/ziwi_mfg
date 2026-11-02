@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { showToast, showDialog } from 'vant'
-import { get, post, put, del } from '@/api/client'
+import { get, post, put, del, errorText } from '@/api/client'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
@@ -81,7 +82,7 @@ async function fetchData() {
     const res = await get('/operations', { params })
     rawList.value = res.items || []
   } catch (e: any) {
-    showToast(e?.detail?.message || '获取工序列表失败')
+    showToast(errorText(e, '获取工序列表失败'))
   } finally {
     loading.value = false
   }
@@ -122,7 +123,12 @@ function openEdit(item: Operation) {
   showDialog_.value = true
 }
 
+const saving = ref(false)
+
 async function handleSave() {
+  // 提交中不重复受理（UE-P0-05）：按钮已 loading，这里再兜一道
+  if (saving.value) return
+  saving.value = true
   try {
     const data = { ...editing.value }
     if (isEdit.value) {
@@ -136,7 +142,9 @@ async function handleSave() {
     page.value = 1
     fetchData()
   } catch (e: any) {
-    showToast(e?.detail?.message || '操作失败')
+    showToast(errorText(e, '操作失败'))
+  } finally {
+    saving.value = false
   }
 }
 
@@ -153,7 +161,7 @@ async function handleDelete(item: Operation) {
         page.value = 1
         fetchData()
       } catch (e: any) {
-        showToast(e?.detail?.message || '删除失败')
+        showToast(errorText(e, '删除失败'))
       }
     }
   })
@@ -258,14 +266,14 @@ onMounted(() => {
     </div>
 
     <!-- 创建/编辑弹窗 -->
-    <van-dialog
+    <ZiwiFormSheet
       v-model:show="showDialog_"
       :title="isEdit ? '编辑工序' : '新增工序'"
-      show-cancel-button
-      @confirm="handleSave"
-      class="ziwi-dialog-w-md"
+      :submitting="saving"
+      submit-text="保存"
+      @submit="handleSave"
     >
-      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
+      <div class="ziwi-stack-3">
         <van-field v-model="editing.code" label="工序编码" required placeholder="请输入编码" :disabled="isEdit" />
         <van-field v-model="editing.name" label="工序名称" required placeholder="请输入名称" />
         <van-field label="工序类型" required>
@@ -277,7 +285,7 @@ onMounted(() => {
         <van-field v-model.number="editing.unit_time" label="单件时间(min/件)" type="number" placeholder="0" />
         <van-field v-model="editing.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <AdvancedSearchPanel
       v-model:show="showSearch"

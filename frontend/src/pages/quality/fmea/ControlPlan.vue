@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { get, post, put } from '@/api/client'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface ControlPlanItem {
   id: number
@@ -158,11 +159,7 @@ onMounted(fetchData)
     </div>
 
     <!-- 编辑控制计划弹窗 -->
-    <van-dialog v-model:show="showEditDialog" title="编辑控制项" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showEditDialog" title="编辑控制项" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model="editForm.control_item" label="控制项" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model="editForm.control_method" label="控制方法" placeholder="必填" :rules="[{ required: true }]" />
@@ -179,6 +176,6 @@ onMounted(fetchData)
           </template>
         </van-field>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

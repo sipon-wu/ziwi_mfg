@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { listStandards, createStandard, updateStandard, deleteStandard } from '@/api/lab'
 import type { TestStandard } from '@/api/lab'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const router = useRouter()
 const standards = ref<TestStandard[]>([])
@@ -129,14 +130,13 @@ async function handleDelete(item: TestStandard) {
     </van-list>
 
     <!-- 创建/编辑弹窗 -->
-    <van-dialog
+    <ZiwiFormSheet
       v-model:show="showForm"
       :title="editingId ? '编辑标准' : '新建标准'"
-      show-cancel-button
-      @confirm="handleSave"
-      style="max-height: 80vh; overflow: auto"
+      form-id="lab-standard-form"
+      submit-text="保存"
     >
-      <van-form @submit.prevent="handleSave">
+      <van-form id="lab-standard-form" @submit.prevent="handleSave">
         <van-cell-group inset>
           <van-field v-model="form.name" label="标准名称" placeholder="请输入" :rules="[{ required: true, message: '请输入名称' }]" />
           <van-field v-model="form.category" label="分类" placeholder="请选择" is-link readonly @click="showCategoryPicker = true" />
@@ -147,7 +147,7 @@ async function handleDelete(item: TestStandard) {
           <van-field v-model="form.description" label="描述" type="textarea" rows="2" placeholder="标准描述" />
         </van-cell-group>
       </van-form>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <van-action-sheet v-model:show="showCategoryPicker" :actions="categoryOptions" @select="(a: any) => { form.category = a.value; showCategoryPicker = false }" />
   </div>

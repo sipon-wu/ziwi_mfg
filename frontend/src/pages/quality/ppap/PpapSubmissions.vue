@@ -5,6 +5,7 @@ import { get, post, put, del } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface PpapSubmission {
   id: number
@@ -220,12 +221,8 @@ onMounted(() => {
     <van-empty v-if="!loading && list.length === 0" description="暂无提交记录" />
 
     <!-- 构建提交弹窗 -->
-    <van-dialog v-model:show="showCreateDialog" title="构建提交包" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleBuild(); return false }
-        return true
-      }">
-      <div style="padding:16px">
+    <ZiwiFormSheet v-model:show="showCreateDialog" title="构建提交包" submit-text="构建" @submit="handleBuild">
+      <div class="ziwi-stack-3">
         <van-field v-model.number="buildForm.product_id" label="产品ID" type="digit" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model.number="buildForm.customer_id" label="客户ID" type="digit" placeholder="必填" :rules="[{ required: true }]" />
         <ZiwiSelect
@@ -240,11 +237,11 @@ onMounted(() => {
         />
         <van-field v-model="buildForm.change_note" label="变更说明" type="textarea" rows="2" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- 提交详情弹窗 -->
-    <van-dialog v-model:show="showDetailDialog" title="提交详情" style="max-height:80vh;overflow-y:auto;">
-      <div style="padding:16px">
+    <ZiwiFormSheet v-model:show="showDetailDialog" title="提交详情" :show-footer="false">
+      <div>
         <div v-if="selectedSubmission">
           <van-cell-group title="基本信息">
             <van-cell title="提交编号" :value="selectedSubmission.submission_no" />
@@ -281,6 +278,6 @@ onMounted(() => {
           </div>
         </div>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

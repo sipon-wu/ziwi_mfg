@@ -7,6 +7,7 @@ import {
   submitResults, approveRequest, revertStatus, getReport, publishReport,
 } from '@/api/lab'
 import type { LabRequest } from '@/api/lab'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -265,12 +266,14 @@ function showResultPass(is_pass: boolean | null): string {
     </template>
 
     <!-- 分派弹窗 -->
-    <van-dialog v-model:show="showAssignForm" title="分派检测人员" show-cancel-button @confirm="doAssign">
+    <ZiwiFormSheet v-model:show="showAssignForm" title="分派检测人员" submit-text="保存"
+      @submit="doAssign">
       <van-field v-model.number="assigneeId" label="检测人员ID" type="number" placeholder="请输入人员ID" />
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- 提交结果弹窗 -->
-    <van-dialog v-model:show="showResultsForm" title="提交检测结果" show-cancel-button @confirm="doSubmitResults" style="max-height: 80vh; overflow: auto">
+    <ZiwiFormSheet v-model:show="showResultsForm" title="提交检测结果" submit-text="保存"
+      @submit="doSubmitResults">
       <van-field
         v-model="resultsInput"
         type="textarea"
@@ -278,7 +281,7 @@ function showResultPass(is_pass: boolean | null): string {
         placeholder='[{"item_name":"拉伸强度","spec_value":"≥800","actual_value":"815","unit":"MPa","lower_limit":600,"upper_limit":1000}]'
         autosize
       />
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>
 

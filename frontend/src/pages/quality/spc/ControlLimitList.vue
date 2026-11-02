@@ -5,6 +5,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface ControlLimit {
   id: number
@@ -183,11 +184,7 @@ onMounted(loadData)
     <van-empty v-if="!loading && list.length === 0" description="暂无控制限配置" />
 
     <!-- 创建/编辑弹窗 -->
-    <van-dialog v-model:show="showDialog_" :title="editingItem ? '编辑控制限' : '新建控制限'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑控制限' : '新建控制限'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model="form.dimension_key" label="维度标识" placeholder="如 product_1_process_1" :rules="[{ required: true }]" />
         <van-field name="chart_type" label="控制图类型">
@@ -210,6 +207,6 @@ onMounted(loadData)
           </template>
         </van-field>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

@@ -9,6 +9,7 @@ import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const router = useRouter()
 const rawRequests = ref<LabRequest[]>([])
@@ -215,8 +216,9 @@ async function handleCreate() {
     </van-list>
 
     <!-- 创建弹窗 -->
-    <van-dialog v-model:show="showCreate" title="新建实验委托" show-cancel-button @confirm="handleCreate">
-      <van-form @submit.prevent="handleCreate">
+    <ZiwiFormSheet v-model:show="showCreate" title="新建实验委托" form-id="lab-request-create-form"
+      submit-text="保存">
+      <van-form id="lab-request-create-form" @submit.prevent="handleCreate">
         <van-cell-group inset>
           <van-field v-model="form.title" label="委托标题" placeholder="请输入" :rules="[{ required: true, message: '请输入标题' }]" />
           <van-field v-model="form.request_type" label="实验类型" placeholder="请选择" is-link readonly @click="showTypePicker = true" />
@@ -227,7 +229,7 @@ async function handleCreate() {
           <van-field v-model="form.expected_date" label="期望完成" type="date" placeholder="选择日期" />
         </van-cell-group>
       </van-form>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- 类型选择器 -->
     <van-action-sheet v-model:show="showTypePicker" :actions="typeOptions" @select="(a: any) => { form.request_type = a.value; showTypePicker = false }" />

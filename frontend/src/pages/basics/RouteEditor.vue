@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast, showDialog } from 'vant'
 import { get, put } from '@/api/client'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -352,14 +353,13 @@ function wcTypeLabel(t: string): string {
     </template>
 
     <!-- ── 添加/编辑工序弹窗 ── -->
-    <van-dialog
+    <ZiwiFormSheet
       v-model:show="stepDialogShow"
       :title="isNewStep ? '添加工序' : '编辑工序'"
-      show-cancel-button
-      @confirm="confirmAddStep"
-      class="ziwi-dialog-w-lg"
+      submit-text="保存"
+      @submit="confirmAddStep"
     >
-      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
+      <div class="ziwi-stack-3">
         <van-field label="选择工序" required>
           <template #input>
             <SelectField
@@ -408,7 +408,7 @@ function wcTypeLabel(t: string): string {
 
         <van-field v-model="editingStep.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>
 

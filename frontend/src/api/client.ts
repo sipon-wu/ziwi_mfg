@@ -44,6 +44,27 @@ client.interceptors.response.use(
 
 export default client
 
+/**
+ * 从 axios 错误里取后端文案。
+ *
+ * 拦截器是 `Promise.reject(error)` 原样抛出，所以后端文案在
+ * `error.response.data.detail` —— 直接写 `e?.detail?.message` 永远取不到，
+ * 表现为所有业务报错都退化成同一句「操作失败」（车间现场无法据此处理）。
+ *
+ * @param error 捕获到的错误（axios error 或任意异常）
+ * @param fallback 取不到文案时的兜底
+ */
+export function errorText(error: any, fallback = '操作失败'): string {
+  const detail = error?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.message === 'string' && detail.message) return detail.message
+  }
+  const data = error?.response?.data
+  if (typeof data?.message === 'string' && data.message) return data.message
+  return fallback
+}
+
 export async function get<T>(url: string, params?: Record<string, any>): Promise<T> {
   const p = params && typeof params === 'object' && 'params' in params ? (params as any).params : params
   const { data } = await client.get(url, { params: p })

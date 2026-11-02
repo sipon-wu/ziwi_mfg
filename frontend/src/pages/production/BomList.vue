@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface BomItem {
   id: number
@@ -191,11 +192,7 @@ onMounted(loadData)
     <van-empty v-if="!loading && list.length === 0" description="暂无BOM记录" />
 
     <!-- 创建/编辑弹窗 -->
-    <van-dialog v-model:show="showDialog_" :title="editingItem ? '编辑物料' : '新增物料'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑物料' : '新增物料'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model.number="form.product_id" label="产品ID" type="digit" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model="form.material_code" label="物料编码" placeholder="必填" :rules="[{ required: true }]" />
@@ -218,7 +215,7 @@ onMounted(loadData)
         </van-field>
         <van-field v-model="form.remark" label="备注" type="textarea" rows="2" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>
 

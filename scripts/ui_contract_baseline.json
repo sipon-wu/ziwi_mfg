@@ -1,8 +1,8 @@
 {
   "generatedAt": "T01",
-  "note": "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint 必须为 0；inline_style / raw_transition / inline_statuslabel / legacy_term 只许降不许升。raw_transition 已于 T05 压到 0（10 处裸 transition 全换 var(--ziwi-motion-*) 令牌，其中 4 处是 T02/T04 新引入的），此后新增任何裸时长/贝塞尔即判不通过。inline_statuslabel 12 与 legacy_term 9 待后续 chunk 继续压。",
+  "note": "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint 必须为 0；inline_style / raw_transition / inline_statuslabel / legacy_term 只许降不许升。raw_transition 已于 T05 压到 0（10 处裸 transition 全换 var(--ziwi-motion-*) 令牌）。inline_style 331 → 323：T05 把 22 个 van-dialog 收敛到 ZiwiFormSheet，内层的 max-height/overflow 内联滚动容器与 padding 全部删除（R1 单一滚动容器）。inline_statuslabel 12 与 legacy_term 9 待后续 chunk 继续压。",
   "counts": {
-    "inline_style": 331,
+    "inline_style": 323,
     "dead_tailwind": 0,
     "min_width_480": 0,
     "touch_target": 0,

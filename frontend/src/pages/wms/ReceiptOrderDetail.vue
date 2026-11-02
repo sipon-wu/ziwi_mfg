@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { get, post } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -233,8 +234,8 @@ function canSubmitInspection(item: any) {
       入库单不存在
     </div>
 
-    <van-dialog v-model:show="showDialog" :title="dialogTitle" show-cancel-button @confirm="confirmDialog">
-      <div style="padding:12px">
+    <ZiwiFormSheet v-model:show="showDialog" :title="dialogTitle" submit-text="确定" @submit="confirmDialog">
+      <div class="ziwi-stack-3">
         <van-field v-model.number="qty" type="number" label="数量" placeholder="请输入数量" />
         <van-field v-if="withBatch" v-model="batchNo" label="批号" placeholder="选填" />
         <!-- R1：选择器不进表单流，改浮层（原 van-picker 内联进 #input） -->
@@ -250,6 +251,6 @@ function canSubmitInspection(item: any) {
           placeholder="选择目标库位"
         />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

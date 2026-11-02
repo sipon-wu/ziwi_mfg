@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { showToast, showDialog } from 'vant'
 import { get, post } from '@/api/client'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface CalendarDay {
   id: number
@@ -241,8 +242,9 @@ onMounted(loadYear)
     </div>
 
     <!-- ── 日期详情弹窗 ── -->
-    <van-dialog v-model:show="showDayDialog" title="日期设置" show-cancel-button @confirm="saveDay" class="ziwi-dialog-w-sm">
-      <div class="ziwi-p-4 ziwi-stack-3">
+    <ZiwiFormSheet v-model:show="showDayDialog" title="日期设置" submit-text="保存"
+      @submit="saveDay">
+      <div class="ziwi-stack-3">
         <div class="ziwi-text-sm ziwi-font-medium">{{ editingDay.cal_date }}</div>
         <van-field label="日期类型">
           <template #input>
@@ -251,11 +253,12 @@ onMounted(loadYear)
         </van-field>
         <van-field v-model="editingDay.name" label="名称" placeholder="如: 国庆节" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
 
     <!-- ── 初始化弹窗 ── -->
-    <van-dialog v-model:show="showInitDialog" title="初始化日历" show-cancel-button @confirm="confirmInit" :confirm-loading="initing" class="ziwi-dialog-w-md">
-      <div class="ziwi-p-4 ziwi-stack-3">
+    <ZiwiFormSheet v-model:show="showInitDialog" title="初始化日历" submit-text="保存"
+      @submit="confirmInit">
+      <div class="ziwi-stack-3">
         <div class="ziwi-text-sm ziwi-text-secondary">将初始化 {{ currentYear }} 年全部日历数据（先清空再生成）</div>
 
         <van-field label="周末上班">
@@ -272,7 +275,7 @@ onMounted(loadYear)
           placeholder="每行一个假期，格式: 日期 名称&#10;例如:&#10;2026-01-01 元旦&#10;2026-01-28 春节"
         />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>
 

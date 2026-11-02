@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface Material { id: number; code: string; name: string; spec: string; unit: string; material_type: string; material_category: string; is_batch_managed: boolean; is_active: boolean }
 
@@ -83,8 +84,7 @@ onMounted(loadData)
     </van-list>
     <van-empty v-if="!loading && list.length === 0" description="暂无物料" />
 
-    <van-dialog v-model:show="showForm" :title="editing ? '编辑物料' : '新增物料'" show-cancel-button
-      :before-close="async (a: string) => { if (a === 'confirm') { await handleSave(); return false } return true }">
+    <ZiwiFormSheet v-model:show="showForm" :title="editing ? '编辑物料' : '新增物料'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model="form.code" label="物料编码" placeholder="必填" />
         <van-field v-model="form.name" label="物料名称" placeholder="必填" />
@@ -99,6 +99,6 @@ onMounted(loadData)
         <van-field name="is_batch_managed" label="批次管理"><template #input><van-switch v-model="form.is_batch_managed" /></template></van-field>
         <van-field name="is_active" label="启用"><template #input><van-switch v-model="form.is_active" /></template></van-field>
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

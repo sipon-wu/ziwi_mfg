@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface PpapLevel {
   id: number
@@ -117,11 +118,7 @@ onMounted(loadData)
 
     <van-empty v-if="!loading && list.length === 0" description="暂无等级配置" />
 
-    <van-dialog v-model:show="showDialog_" :title="editingItem ? '编辑等级' : '新增等级'" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleSave(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑等级' : '新增等级'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">
         <van-field v-model.number="form.level_no" label="等级编号" type="digit" placeholder="1-5" :rules="[{ required: true }]" />
         <van-field v-model="form.level_name" label="等级名称" placeholder="如：Level 1" :rules="[{ required: true }]" />
@@ -137,6 +134,6 @@ onMounted(loadData)
         </van-field>
         <van-field v-model="form.remark" label="备注" type="textarea" rows="2" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>

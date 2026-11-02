@@ -5,6 +5,7 @@ import { showToast, showConfirmDialog, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 
 interface FmeaDocument {
   id: number
@@ -213,11 +214,7 @@ onMounted(loadData)
     <van-empty v-if="!loading && list.length === 0" description="暂无FMEA文档" />
 
     <!-- 新建弹窗 -->
-    <van-dialog v-model:show="showCreateDialog" title="新建FMEA文档" show-cancel-button
-      :before-close="async (action: string) => {
-        if (action === 'confirm') { await handleCreate(); return false }
-        return true
-      }">
+    <ZiwiFormSheet v-model:show="showCreateDialog" title="新建FMEA文档" submit-text="保存" @submit="handleCreate">
       <div style="padding:16px">
         <van-field v-model="form.title" label="文档标题" placeholder="必填" :rules="[{ required: true }]" />
         <van-field name="fmea_type" label="FMEA类型">
@@ -240,6 +237,6 @@ onMounted(loadData)
         <van-field v-model.number="form.rpn_threshold" label="RPN阈值" type="digit" placeholder="100" />
         <van-field v-model="form.remark" label="备注" type="textarea" rows="2" placeholder="选填" />
       </div>
-    </van-dialog>
+    </ZiwiFormSheet>
   </div>
 </template>
