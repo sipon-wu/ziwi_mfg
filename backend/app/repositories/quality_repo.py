@@ -201,14 +201,14 @@ class InspectionOrderRepository(MultiTenantRepository):
         return await self.execute(
             "INSERT INTO inspection_order (tenant_id, order_no, order_type, work_order_id, "
             "process_id, material_id, receipt_item_id, trial_order_id, qc_point_id, "
-            "inspector_id, remark, "
+            "standard_id, inspector_id, remark, "
             "lot_qty, aql, inspection_level, sample_qty, ac, re) "
             "VALUES (:tenant_id, :order_no, :order_type, :work_order_id, "
             ":process_id, :material_id, :receipt_item_id, :trial_order_id, :qc_point_id, "
-            ":inspector_id, :remark, "
+            ":standard_id, :inspector_id, :remark, "
             ":lot_qty, :aql, :inspection_level, :sample_qty, :ac, :re)",
             {"receipt_item_id": None, "trial_order_id": None, "lot_qty": None,
-             "aql": None,
+             "aql": None, "standard_id": None,
              "inspection_level": None, "sample_qty": None, "ac": None, "re": None,
              **data},
         )

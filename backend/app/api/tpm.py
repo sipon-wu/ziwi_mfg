@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
-from app.repositories.tpm_repo import TpmRepository, EquipmentDowntimeRepository
+from app.repositories.tpm_repo import (
+    EquipmentDowntimeRepository, MaintenanceTaskItemRepository, TpmRepository,
+)
 from app.services.maintenance_service import MaintenanceService
-from app.services.tpm_service import TpmService
+from app.services.tpm_service import (
+    ChecklistService, EquipmentNotFound, TpmService,
+)
 from app.schemas.tpm import (
     CreateEquipmentRequest,
     UpdateEquipmentRequest,
@@ -11,6 +15,7 @@ from app.schemas.tpm import (
     CreateSparePartRequest,
     ConsumeSparePartRequest,
     UpdateDowntimeRequest,
+    SubmitChecklistRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["M02-TPM"])
@@ -42,6 +47,31 @@ async def create_equipment(
     svc = TpmService(repo)
     result = await svc.create_equipment({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
     return {"code": 0, "message": "创建成功", "data": result}
+
+
+# ── ★静态段端点必须注册在 /equipment/{eq_id} 之前 ──────────────
+# FastAPI 按**注册顺序**匹配：`scan` 若写在 `/{eq_id}` 之后，会被当成
+# eq_id 解析成整数 → 100% 422。这是本项目路由遮蔽的同型问题（C-53/C-60/C-73/
+# C-79），已有静态闸 `test_route_shadowing.py` 兜着，挪下去会被闸拦下。
+@router.get("/equipment/scan")
+async def scan_equipment(
+    code: str = Query(..., description="扫到的设备码（设备编码 / 设备名称）"),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+):
+    """扫设备码 → 设备 + 该设备任务清单（点检执行的入口）。
+
+    返回 ``tasks[].item_count / checked_count / abnormal_count``，
+    0 条任务时 ``empty_kind='no_task'``（前端给空态 + 「新建计划」，不是报错）。
+    权限码：GET 恒 read → ``M06:equipment:read``（自动推导，无需登记后缀）。
+    """
+    svc = TpmService(repo)
+    try:
+        data = await svc.scan_equipment(code)
+    except EquipmentNotFound as exc:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
+    return {"code": 0, "message": "success", "data": data}
 
 
 @router.get("/equipment/{eq_id}")
@@ -236,6 +266,74 @@ async def delete_task(
     svc = TpmService(repo)
     await svc.delete_task(task_id)
     return {"code": 0, "message": "删除成功"}
+
+
+# ============================================================
+# 点检/保养项级执行（maintenance_task_items）
+# ============================================================
+# ★路径末段 `checklist` 必须登记进 core/permissions.py 的 EXECUTE_SUFFIXES：
+#   不登记时资源名会被推成 `maintenance_task_checklist`，权限码变成
+#   `M06:maintenance_task_checklist:read|create` —— 一个没有任何角色拥有的码，
+#   除通配 `*` 外全员 403，且报错文案指向页面上不存在的权限项
+#   （C-44 / C-45 / A-S1 / C-65 同型，已是第五次）。
+@router.get("/maintenance-tasks/{task_id}/checklist")
+async def get_task_checklist(
+    task_id: int,
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+    item_repo: MaintenanceTaskItemRepository = Depends(
+        get_tenant_repo(MaintenanceTaskItemRepository, require_auth=True)),
+):
+    """任务点检清单（项 + 已录判定 + 项级统计）。
+
+    权限码：``M06:maintenance_task:read``
+    """
+    svc = ChecklistService(repo, item_repo)
+    try:
+        data = await svc.get_checklist(task_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(exc)})
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/maintenance-tasks/{task_id}/checklist")
+async def submit_task_checklist(
+    task_id: int,
+    req: SubmitChecklistRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
+    item_repo: MaintenanceTaskItemRepository = Depends(
+        get_tenant_repo(MaintenanceTaskItemRepository, require_auth=True)),
+):
+    """逐项提交点检结果（幂等：同一 item_id 重复提交只更新、不新增）。
+
+    - ``conclude=true`` → 内部调 ``MaintenanceService.complete_task``
+      （设备状态/停机时长/工单顺延/计划滚动一行不改）
+    - 有异常项 且 ``abnormal_action='andon'`` → 复用安灯创建 ``call_type='equipment'``
+      （``equipment_downtimes`` 由安灯自动开，不在这里重写停机逻辑）
+
+    权限码：``M06:maintenance_task:execute``
+    """
+    svc = ChecklistService(repo, item_repo)
+    try:
+        data = await svc.submit(
+            task_id, req.model_dump(),
+            actor_id=current_user.get("id"),
+            actor_name=(current_user.get("real_name") or current_user.get("username")),
+        )
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "400-0000", "message": str(exc)})
+
+    msg = f"已记录 {data.get('written', 0)} 项"
+    if data.get("abnormal_count"):
+        msg += f"，异常 {data['abnormal_count']} 项"
+    if data.get("andon_call_id"):
+        msg += "，已发起设备安灯"
+    if data.get("status") == "completed":
+        msg += "，任务已完工"
+    return {"code": 0, "message": msg, "data": data}
+
 
 
 @router.get("/maintenance-plans")

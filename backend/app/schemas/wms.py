@@ -232,6 +232,22 @@ class IssueOrderItemUpdate(BaseModel):
     pick_status: Optional[str] = None
 
 
+class IssueOrderCompleteRequest(BaseModel):
+    """结案出库单（``partially_issued`` 的唯一出口）。
+
+    ``allow_shortage`` 是**显式的责任选择**，不是默认放行：
+    - ``False``（默认）→ 有欠发就 400，message 带行号与欠发数；
+    - ``True`` → 结案，并在单据上打 ``short_closed=true`` + 记 ``shortage_reason``，
+      同时写一条 ``wms.short_close`` 审计 —— "就发这么多"必须留痕，
+      否则事后分不清"发齐了"和"欠发结了案"。
+    """
+
+    allow_shortage: bool = False
+    reason: Optional[str] = Field(
+        default=None, description="差额结案原因（缺料/客户改单/…），落 issue_orders.shortage_reason")
+    remark: Optional[str] = None
+
+
 # ============================================
 # 盘点单
 # ============================================

@@ -37,6 +37,7 @@ from app.schemas.wms import (
     StockMoveRequest, LocationBatchGenerateRequest,
     ReceiptOrderCreate, ReceiptOrderUpdate, ReceiptOrderItemUpdate,
     IssueOrderCreate, IssueOrderUpdate, IssueOrderItemUpdate,
+    IssueOrderCompleteRequest,
     InventoryCountCreate, InventoryCountUpdate, InventoryCountItemUpdate,
     InventoryCountAdjustRequest,
     InventoryAlertCreate, InventoryAlertUpdate,
@@ -712,6 +713,34 @@ async def create_issue_order(req: IssueOrderCreate, current_user: dict = Depends
     result = await guard_duplicate(svc.create(data), "出库单号", data.get("issue_no"))
     return {"code": 0, "message": "出库单创建成功", "data": result}
 
+# ── ★静态段端点必须注册在 /issue-orders/{io_id} 之前 ──────────────
+# FastAPI 按**注册顺序**匹配：`scan` 若写在 `/{io_id}` 之后，会被当成
+# io_id 解析成整数 → 100% 422。路由遮蔽同型问题已复发四次
+# （C-53 / C-60 / C-73 / C-79），有静态闸 `test_route_shadowing.py` 兜着。
+@router.get("/issue-orders/scan")
+async def scan_issue_order(
+    code: str = Query(..., description="扫到的码：出库单号 / 工单号"),
+    repo: IssueOrderRepository = Depends(get_tenant_repo(IssueOrderRepository, require_auth=True)),
+    item_repo: IssueOrderItemRepository = Depends(get_tenant_repo(IssueOrderItemRepository, require_auth=True)),
+    inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+    tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+):
+    """扫码定位出库单（出库执行的"进门"）。
+
+    解析顺序固定：``issue_no`` → ``work_orders.wo_no`` 反查；都不中 → 404 且
+    message 带**原始码**。响应含 ``can_execute`` / ``blocked_reason`` /
+    逐行 ``remain_qty`` 与 FIFO 拣货建议，前端据此直接过账。
+
+    权限码：GET 恒 read → ``M04:issue_order:read``
+    """
+    svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
+    try:
+        data = await svc.scan(code)
+    except PostingError as e:
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+    return {"code": 0, "message": "success", "data": data}
+
+
 @router.get("/issue-orders/{io_id}")
 async def get_issue_order(io_id: int,
     repo: IssueOrderRepository = Depends(get_tenant_repo(IssueOrderRepository, require_auth=True)),
@@ -724,6 +753,7 @@ async def get_issue_order(io_id: int,
     if not order:
         raise HTTPException(404, detail={"code": "404-0000", "message": "出库单不存在"})
     return {"code": 0, "message": "success", "data": order}
+
 
 @router.put("/issue-orders/{io_id}")
 async def update_issue_order(io_id: int, req: IssueOrderUpdate,
@@ -763,6 +793,66 @@ async def issue_item_action(item_id: int, req: IssueOrderItemUpdate, current_use
         raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
     except ValueError as e:
         raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+@router.post("/issue-orders/{io_id}/complete")
+async def complete_issue_order(io_id: int, req: IssueOrderCompleteRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: IssueOrderRepository = Depends(get_tenant_repo(IssueOrderRepository, require_auth=True)),
+    item_repo: IssueOrderItemRepository = Depends(get_tenant_repo(IssueOrderItemRepository, require_auth=True)),
+    inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
+    tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+    db: AsyncSession = Depends(get_db),
+):
+    """结案出库单（``partially_issued`` 的**唯一出口**）。
+
+    - 全部行发齐 → ``issued``
+    - 有欠发行 且 ``allow_shortage=false`` → 400 ``WMS_400_SHORTAGE``
+      （message 含**行号 + 欠发数**）
+    - 有欠发行 且 ``allow_shortage=true`` → ``issued`` + ``short_closed=true``
+      + 审计 ``wms.short_close``
+
+    ★不碰库存：过账已在 ``issue_item`` 里逐行完成，这里只走状态。
+    权限码：``M04:issue_order:execute``（'complete' 已在 EXECUTE_SUFFIXES）
+    """
+    svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
+    audit = AuditService(db)
+    _audit_base = dict(
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("username"),
+        object_type="issue_order",
+        object_id=io_id,
+    )
+    try:
+        result = await svc.complete(
+            io_id, req.model_dump(),
+            current_user.get("tenant_id", "default"),
+            actor_id=current_user.get("id"),
+        )
+    except PostingError as e:
+        # 欠发未确认不写失败审计（用户还在拣货，不是一次"尝试结案"），
+        # 但取消/不存在要留痕 —— 同 cancel 的口径。
+        if e.code != "WMS_400_SHORTAGE":
+            await audit.log_fail(AuditAction.WMS_SHORT_CLOSE, message=e.message,
+                                 after={"reason": req.reason}, **_audit_base)
+        raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+
+    if result.get("short_closed"):
+        await audit.log(
+            AuditAction.WMS_SHORT_CLOSE,
+            after={k: result.get(k) for k in
+                   ("status", "issued_qty", "required_qty") if k in result}
+                  | {"shortage_lines": len(result.get("shortage_lines") or []),
+                     "reason": req.reason},
+            message=f"出库单差额结案：{req.reason or '（未填原因）'}",
+            **_audit_base)
+
+    msg = "出库单已结案"
+    if result.get("short_closed"):
+        msg = (f"出库单已差额结案，欠发 "
+               f"{len(result.get('shortage_lines') or [])} 行")
+    return {"code": 0, "message": msg, "data": result}
+
 
 @router.post("/issue-orders/{io_id}/cancel")
 async def cancel_issue_order(io_id: int, req: CancelOrderRequest,

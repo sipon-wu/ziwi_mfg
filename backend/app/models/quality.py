@@ -76,6 +76,13 @@ class InspectionOrder(Base):
     # 不良率里干净地摘出去。
     trial_order_id = Column(BigInteger, comment="试产检验来源：trial_orders.id")
     qc_point_id = Column(BigInteger, comment="FK to qc_point_config.id")
+    # ★ 本单依据的检验标准（inspection_standard.id）。
+    #   加这一列之前，``inspection_item`` 只挂 standard_id、``qc_point_config``
+    #   只挂 material_id/process_id —— 三者之间**没有任何 JOIN 路径**能从一张
+    #   检验单走到"本单应检项"。前端只能拉"全站前 100 个检验项"，
+    #   超过 100 个检验项的租户会**静默截断**（该测的项看不到）。
+    #   NULL 合法（历史单 / 口头检验），此时 checklist 端点显式返回 degraded=true。
+    standard_id = Column(BigInteger, comment="本单依据的检验标准ID（NULL=未挂标准）")
     org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用）")
     inspector_id = Column(BigInteger)
     result = Column(String(10), comment="ACC/REJ/UAI")

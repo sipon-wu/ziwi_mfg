@@ -133,9 +133,19 @@ class MaintenanceService:
                 "scheduled_end_at": add_cycle(due_at, plan.get("cycle_value"),
                                               plan.get("cycle_unit")),
             })
+            # 项级模板快照：计划上配了 checklist_template 就把项抄进本任务。
+            # 快照失败不阻断任务生成 —— 任务本身（到期该做保养）比"点检项没抄过来"
+            # 重要得多，且后者可以在执行页手工补项。
+            snapshot = 0
+            try:
+                from app.services.tpm_service import snapshot_checklist_template
+                snapshot = await snapshot_checklist_template(self.repo, task_id, plan)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("点检模板快照失败 task=%s err=%s", task_id, exc)
             created.append({"task_id": task_id, "task_no": task_no,
                             "plan_id": plan["id"],
-                            "equipment_id": plan["equipment_id"]})
+                            "equipment_id": plan["equipment_id"],
+                            "checklist_items": snapshot})
         return {"scanned": len(plans), "created": len(created),
                 "skipped": len(skipped), "tasks": created,
                 "skipped_detail": skipped}

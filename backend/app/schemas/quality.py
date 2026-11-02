@@ -146,6 +146,10 @@ class CreateInspectionOrderRequest(BaseModel):
     process_id: Optional[int] = None
     material_id: Optional[int] = None
     qc_point_id: Optional[int] = None
+    # ★本单依据的检验标准：不传就是"没挂标准"，checklist 端点返回 degraded=true
+    #   并给出全部启用项（历史单 / 口头检验就是这么干的，不能强制）。
+    #   传了之后检验员在手机上看到的才是"本单该测的这几项"。
+    standard_id: Optional[int] = None
     inspector_id: Optional[int] = None
     remark: Optional[str] = None
     # ── D-S7 抽样方案输入 ──
@@ -163,6 +167,8 @@ class UpdateInspectionOrderRequest(BaseModel):
     process_id: Optional[int] = None
     material_id: Optional[int] = None
     qc_point_id: Optional[int] = None
+    # 允许事后补挂标准（历史单在回填脚本里没能自动补上时，人工指定即可）
+    standard_id: Optional[int] = None
     inspector_id: Optional[int] = None
     remark: Optional[str] = None
     lot_qty: Optional[int] = None

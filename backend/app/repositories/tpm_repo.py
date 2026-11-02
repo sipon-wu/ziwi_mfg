@@ -33,6 +33,60 @@ class TpmRepository(MultiTenantRepository):
             {"id": id},
         )
 
+    async def find_equipment_by_code(self, code: str) -> Optional[Dict]:
+        """按设备码**精确**定位设备（扫码入口用）。
+
+        先 ``equipment_code`` 精确匹配，再退到 ``equipment_name`` 精确匹配。
+        刻意不用 ``LIKE``：扫出来的码拿去模糊匹配会命中一大片
+        （"EQ1" 命中 "EQ10"/"EQ11"/"EQ100"），现场表现为"扫了跳出一堆设备"，
+        跟没扫一样。多命中时宁可返回第一条精确命中，也不要模糊。
+        """
+        code = (code or "").strip()
+        if not code:
+            return None
+        row = await self.query_one(
+            "SELECT e.*, ec.name as category_name FROM equipment e "
+            "LEFT JOIN equipment_categories ec ON ec.id = e.category_id "
+            "WHERE e.equipment_code = :code",
+            {"code": code},
+        )
+        if row:
+            return row
+        return await self.query_one(
+            "SELECT e.*, ec.name as category_name FROM equipment e "
+            "LEFT JOIN equipment_categories ec ON ec.id = e.category_id "
+            "WHERE e.equipment_name = :code",
+            {"code": code},
+        )
+
+    async def list_tasks_with_item_counts(self, equipment_id: int, limit: int = 50) -> List[Dict]:
+        """某设备的任务 + 项级统计（item_count / checked_count / abnormal_count）。
+
+        ★ ``LEFT JOIN + COUNT(DISTINCT ...)``，**禁止相关子查询**：
+        ``query_page`` 会把 SQL 包成 ``SELECT COUNT(*) FROM (<sql>)``，
+        注入层的正则又会去匹配子查询里的 ``FROM``，一旦写成
+        ``(SELECT COUNT(*) FROM maintenance_task_items WHERE task_id = t.id)``
+        就同时踩两个坑。这里用一次 JOIN + 分组把三个数一起算出来。
+        """
+        return await self.query(
+            "SELECT mt.id AS task_id, mt.task_no, mt.task_type, mt.status, "
+            "       mt.scheduled_start_at, mt.priority, "
+            "       COUNT(DISTINCT mti.id) AS item_count, "
+            "       COUNT(DISTINCT CASE WHEN mti.verdict IS NOT NULL "
+            "                          THEN mti.id END) AS checked_count, "
+            "       COUNT(DISTINCT CASE WHEN mti.verdict = 'abnormal' "
+            "                          THEN mti.id END) AS abnormal_count "
+            "FROM maintenance_tasks mt "
+            "LEFT JOIN maintenance_task_items mti "
+            "       ON mti.task_id = mt.id AND mti.tenant_id = mt.tenant_id "
+            "WHERE mt.equipment_id = :eid "
+            "GROUP BY mt.id, mt.task_no, mt.task_type, mt.status, "
+            "         mt.scheduled_start_at, mt.priority "
+            "ORDER BY mt.scheduled_start_at, mt.id "
+            "LIMIT :lim",
+            {"eid": equipment_id, "lim": limit},
+        )
+
     async def create_equipment(self, data: dict) -> int:
         # status 必须显式写入：`equipment.status` 列在 DB 层没有默认值，
         # 模型上的 `default="idle"` 只在走 ORM 时生效，这里是原生 SQL。
@@ -148,13 +202,28 @@ class TpmRepository(MultiTenantRepository):
         # 与 create_task 同一个病根：硬编码列清单的 INSERT 会把新字段静默丢掉。
         # 这里漏的是 next_execute_at —— 计划建出来永远不到期（台账 C-39，同类第三次复发）。
         payload = {**data, "status": data.get("status") or "active"}
+        # ★ checklist_template 是 JSON 列：走原生 SQL（text()）时 SQLAlchemy **不会**
+        #   替我们做 JSON 序列化，直接把 list/dict 当绑定参数会报
+        #   `type 'list' is not supported`（SQLite）/ asyncpg 侧同样不收。
+        #   这里统一 json.dumps；读回来是字符串（SQLite）或对象（PG），
+        #   快照时两种都要吃得下（见 tpm_service.snapshot_checklist_template）。
+        if "checklist_template" in payload and payload["checklist_template"] is not None \
+                and not isinstance(payload["checklist_template"], str):
+            import json
+
+            payload["checklist_template"] = json.dumps(
+                payload["checklist_template"], ensure_ascii=False)
         cols = [c for c in ("tenant_id", "equipment_id", "plan_name", "plan_type",
                             "cycle_value", "cycle_unit", "last_execute_at",
-                            "next_execute_at", "status")
+                            "next_execute_at", "status", "checklist_template")
                 if c in payload]
         sql = ("INSERT INTO maintenance_plans ({}) VALUES ({})"
                .format(", ".join(cols), ", ".join(f":{c}" for c in cols)))
         return await self.execute(sql, {c: payload[c] for c in cols})
+
+    async def get_plan(self, id: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM maintenance_plans WHERE id = :id", {"id": id})
 
     # === 备件 ===
     async def list_spare_parts(self, page: int = 1, page_size: int = 20) -> dict:
@@ -288,3 +357,130 @@ class EquipmentDowntimeRepository(MultiTenantRepository):
             params["e"] = equipment_id
         sql += " ORDER BY d.started_at DESC"
         return await self.query_page(sql, params, page, page_size)
+
+
+class MaintenanceTaskItemRepository(MultiTenantRepository):
+    """保养/点检任务项（``maintenance_task_items``）的数据访问。
+
+    两条必须遵守的约束（都是本项目踩过的同型坑）：
+
+    1. **INSERT 时 tenant_id 应用层显式写**。基类 ``execute()`` 只为
+       UPDATE/DELETE 注入 ``tenant_id``，INSERT 一律不管；本表
+       ``tenant_id`` 是 NOT NULL，漏写直接 500。
+    2. **统计一律 ``LEFT JOIN + COUNT(DISTINCT)``**，禁相关子查询
+       （``query_page`` 会包一层 ``COUNT(*) FROM (<sql>)``）。
+    """
+
+    async def list_by_task(self, task_id: int) -> List[Dict]:
+        return await self.query(
+            "SELECT * FROM maintenance_task_items WHERE task_id = :tid "
+            "ORDER BY sort_order, line_no",
+            {"tid": task_id},
+        )
+
+    async def get(self, item_id: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM maintenance_task_items WHERE id = :id", {"id": item_id})
+
+    async def find_by_line(self, task_id: int, line_no: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM maintenance_task_items WHERE task_id = :tid "
+            "AND line_no = :ln",
+            {"tid": task_id, "ln": line_no},
+        )
+
+    async def next_line_no(self, task_id: int) -> int:
+        row = await self.query_one(
+            "SELECT MAX(line_no) AS mx FROM maintenance_task_items WHERE task_id = :tid",
+            {"tid": task_id},
+        )
+        return int((row or {}).get("mx") or 0) + 1
+
+    @staticmethod
+    def _encode_json(payload: dict) -> dict:
+        """把 JSON 列的值序列化成字符串。
+
+        原生 SQL（``text()``）不触发 SQLAlchemy 的 JSON 序列化，直接绑 list
+        会报 ``type 'list' is not supported``。PG 的 JSON 列同样只收字符串
+        （asyncpg 不会替我们 dump）。读回来时 SQLite 给字符串、PG 给对象，
+        调用方两种都要吃得下。
+        """
+        import json
+
+        if payload.get("photo_urls") is not None and \
+                not isinstance(payload["photo_urls"], str):
+            payload["photo_urls"] = json.dumps(payload["photo_urls"],
+                                               ensure_ascii=False)
+        return payload
+
+    async def create(self, data: dict) -> int:
+        """新增一项。``tenant_id`` 由调用方给出（这里再兜一层）。"""
+        payload = self._encode_json({"tenant_id": self._tenant_id, **data})
+        cols = [c for c in ("tenant_id", "task_id", "line_no", "check_item",
+                            "check_method", "standard_desc", "sort_order",
+                            "verdict", "measured_value", "remark", "photo_urls",
+                            "checked_by", "checked_at")
+                if c in payload]
+        sql = ("INSERT INTO maintenance_task_items ({}) VALUES ({})"
+               .format(", ".join(cols), ", ".join(f":{c}" for c in cols)))
+        return await self.execute(sql, {c: payload[c] for c in cols})
+
+    async def update(self, item_id: int, data: dict) -> int:
+        """按 item_id 更新（复点检：只更新、不新增）。"""
+        allowed = {k: v for k, v in (data or {}).items()
+                   if k in ("verdict", "measured_value", "remark", "photo_urls",
+                            "checked_by", "checked_at", "check_item",
+                            "check_method", "standard_desc", "sort_order",
+                            "line_no")}
+        if not allowed:
+            return 0
+        allowed = self._encode_json(allowed)
+        sets = self._build_set_clause(allowed)
+        return await self.execute(
+            f"UPDATE maintenance_task_items SET {sets} WHERE id = :id",
+            {**allowed, "id": item_id})
+
+    async def stats_for_task(self, task_id: int) -> dict:
+        """单任务的项级统计：总项数 / 已点检数 / 异常数。
+
+        ``LEFT JOIN`` 从**任务**侧出发，这样"一条项都没生成"的任务也能拿到
+        ``item_count = 0``（若从项表侧出发、无项时整行消失，前端会把
+        "没有点检项"错显示成"加载失败"）。
+        """
+        row = await self.query_one(
+            "SELECT COUNT(DISTINCT mti.id) AS item_count, "
+            "       COUNT(DISTINCT CASE WHEN mti.verdict IS NOT NULL "
+            "                          THEN mti.id END) AS checked_count, "
+            "       COUNT(DISTINCT CASE WHEN mti.verdict = 'abnormal' "
+            "                          THEN mti.id END) AS abnormal_count "
+            "FROM maintenance_tasks mt "
+            "LEFT JOIN maintenance_task_items mti "
+            "       ON mti.task_id = mt.id AND mti.tenant_id = mt.tenant_id "
+            "WHERE mt.id = :tid",
+            {"tid": task_id},
+        )
+        row = row or {}
+        return {"item_count": int(row.get("item_count") or 0),
+                "checked_count": int(row.get("checked_count") or 0),
+                "abnormal_count": int(row.get("abnormal_count") or 0)}
+
+    async def get_checklist_with_verdicts(self, task_id: int) -> List[Dict]:
+        """任务的点检清单（项 + 已录判定，一次 JOIN 取回，不做 N+1）。"""
+        return await self.query(
+            "SELECT mti.* "
+            "FROM maintenance_tasks mt "
+            "LEFT JOIN maintenance_task_items mti "
+            "       ON mti.task_id = mt.id AND mti.tenant_id = mt.tenant_id "
+            "WHERE mt.id = :tid AND mti.id IS NOT NULL "
+            "ORDER BY mti.sort_order, mti.line_no",
+            {"tid": task_id},
+        )
+
+    async def abnormal_items(self, task_id: int) -> List[Dict]:
+        return await self.query(
+            "SELECT * FROM maintenance_task_items "
+            "WHERE task_id = :tid AND verdict = 'abnormal' "
+            "ORDER BY sort_order, line_no",
+            {"tid": task_id},
+        )
+

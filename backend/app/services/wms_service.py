@@ -926,6 +926,210 @@ class IssueOrderService:
             order["items"] = await self.item_repo.list_by_issue(id)
         return order
 
+    # ==================== 扫码执行（出库路径的"进门"） ====================
+
+    @staticmethod
+    def _fmt_qty(value) -> str:
+        """数量转人话：整数不带小数点，非整数最多 3 位（避免 8.0 / 8.000000001）。"""
+        try:
+            f = float(value or 0)
+        except (TypeError, ValueError):
+            return str(value)
+        if abs(f - round(f)) < 1e-9:
+            return str(int(round(f)))
+        return f"{round(f, 3):g}"
+
+    async def scan(self, code: str) -> Dict:
+        """扫码定位出库单（现场入口）。
+
+        为什么必须单独一个端点，而不是让前端拼 ``?keyword=``：
+        现场扫的是三种码（出库单号 / 工单号 / 物料码），匹配规则各不相同；
+        让前端自己拼的结果是"扫了没反应"或"命中一堆"——这正是
+        ``quality.py`` 里 C-79 那段注释已经踩过的坑。
+
+        解析顺序（固定，不并行猜）：
+        1. ``issue_orders.issue_no`` 精确匹配 → ``matched_by='issue_no'``
+        2. ``work_orders.wo_no`` 精确匹配 → 反查该工单最近一张未取消的出库单
+           → ``matched_by='work_order_no'``
+        3. 都没命中 → 404，message 里带上**原始码**（不然用户不知道是自己扫错了
+           还是系统没这张单）
+        """
+        code = (code or "").strip()
+        if not code:
+            raise PostingError("WMS_400_EMPTY_CODE", "扫码内容为空")
+
+        matched_by = "issue_no"
+        order = await self.repo.get_by_no(code)
+        if not order:
+            wo = await self.repo.query_one(
+                "SELECT id, wo_no FROM work_orders WHERE wo_no = :no", {"no": code})
+            if wo:
+                order = await self.repo.get_by_work_order(wo["id"])
+                matched_by = "work_order_no"
+        if not order:
+            raise PostingError("WMS_404_ISSUE_ORDER", f"未找到出库单：{code}")
+
+        items = await self.item_repo.list_by_issue(order["id"])
+        today = date.today()
+        # 拣货建议一次查回（不做 N+1）
+        try:
+            picks = await self.inv_repo.suggest_picks(
+                order["warehouse_id"],
+                [it.get("material_id") for it in items], today)
+        except Exception:  # noqa: BLE001 —— 建议失败不该让扫码整个失败
+            picks = {}
+
+        lines, done_lines, diff_lines = [], 0, 0
+        for it in items:
+            required = float(it.get("required_qty") or 0)
+            issued = float(it.get("issued_qty") or 0)
+            remain = round(required - issued, 6)
+            if remain < 0:
+                remain = 0.0
+            if remain <= 0:
+                done_lines += 1
+            elif issued > 0:
+                diff_lines += 1
+            pick = picks.get(it.get("material_id")) or {}
+            lines.append({
+                "item_id": it.get("id"),
+                "line_no": it.get("line_no"),
+                "material_id": it.get("material_id"),
+                "material_code": it.get("material_code"),
+                "material_name": it.get("material_name"),
+                "required_qty": required,
+                "issued_qty": issued,
+                "remain_qty": remain,
+                "unit": it.get("unit") or it.get("material_unit"),
+                "batch_no": it.get("batch_no"),
+                "from_location_id": it.get("from_location_id"),
+                "pick_status": it.get("pick_status"),
+                "suggest_batch_no": pick.get("suggest_batch_no"),
+                "suggest_location_id": pick.get("suggest_location_id"),
+                "suggest_location_name": pick.get("suggest_location_name"),
+            })
+
+        status = order.get("status")
+        can_execute = status not in (ISSUE_ISSUED, ISSUE_CANCELLED)
+        blocked_reason = None
+        if status == ISSUE_CANCELLED:
+            blocked_reason = "出库单已取消"
+        elif status == ISSUE_ISSUED:
+            blocked_reason = "出库单已完成（只读）"
+
+        return {
+            "order": {
+                "id": order.get("id"),
+                "issue_no": order.get("issue_no"),
+                "status": status,
+                "warehouse_id": order.get("warehouse_id"),
+                "warehouse_name": order.get("warehouse_name"),
+                "department_id": order.get("department_id"),
+                "recipient": order.get("recipient"),
+                "source_doc_no": order.get("source_doc_no"),
+                "total_qty": float(order.get("total_qty") or 0),
+                "issued_qty": float(order.get("issued_qty") or 0),
+                "short_closed": bool(order.get("short_closed")),
+            },
+            "matched_by": matched_by,
+            "can_execute": can_execute,
+            "blocked_reason": blocked_reason,
+            "lines": lines,
+            "summary": {"line_count": len(lines),
+                        "done_lines": done_lines,
+                        "diff_lines": diff_lines},
+        }
+
+    async def complete(self, io_id: int, payload: dict, tenant_id: str,
+                       actor_id: int = None) -> Dict:
+        """结案出库单（``partially_issued`` 的**唯一出口**）。
+
+        改造前 ``total_issued >= total_required`` 是唯一出口：行欠发 8 个之后
+        单据永远停在 ``partially_issued``，列表上永久堆在最前面（僵尸单）。
+
+        三条语义（缺一不可）：
+        1. 全部行发齐 → ``issued``，``completed_at`` / ``issued_by`` 落库；
+        2. 存在欠发行 且 ``allow_shortage=false`` → **400 WMS_400_SHORTAGE**，
+           message 里带**行号 + 欠发数**（"第 3 行尚欠 8 PCS"）。只回一句
+           "存在欠发"等于把找行的工作推回给现场；
+        3. 存在欠发行 且 ``allow_shortage=true`` → ``issued`` + ``short_closed=true``，
+           并记 ``shortage_reason``。"就发这么多""和"发齐了"在数据上必须可区分，
+           否则事后算不出"这个月多少张单是欠发结案的"。
+
+        ★本方法**不碰库存**：过账已经在 ``issue_item`` 里逐行完成，这里只走状态。
+        库存过账语义一行不改（出库数量记负值、多批分摊、行级 partial/picked、
+        过期批拦截都在 ``issue_item`` 里）。
+        """
+        data = payload or {}
+        allow_shortage = bool(data.get("allow_shortage"))
+        reason = data.get("reason") or data.get("remark")
+
+        order = await self.repo.get(io_id)
+        if not order:
+            raise PostingError("WMS_404_ISSUE_ORDER", f"出库单不存在：{io_id}")
+        status = order.get("status")
+        if status == ISSUE_CANCELLED:
+            raise PostingError("WMS_409_ALREADY_CANCELLED", "出库单已取消，无法完成")
+
+        items = await self.item_repo.list_by_issue(io_id)
+        shortage_lines = []
+        total_issued = 0.0
+        total_required = 0.0
+        for it in items:
+            required = float(it.get("required_qty") or 0)
+            issued = float(it.get("issued_qty") or 0)
+            total_required += required
+            total_issued += issued
+            short = round(required - issued, 6)
+            if short > 0:
+                shortage_lines.append({
+                    "line_no": it.get("line_no"),
+                    "material_code": it.get("material_code"),
+                    "material_name": it.get("material_name"),
+                    "required_qty": required,
+                    "issued_qty": issued,
+                    "short_qty": short,
+                    "unit": it.get("unit") or it.get("material_unit"),
+                })
+
+        if status == ISSUE_ISSUED and not shortage_lines:
+            # 幂等：已完成的单再点一次不该报错，也不该覆盖 completed_at
+            return {"order_id": io_id, "status": status,
+                    "issued_qty": round(total_issued, 6),
+                    "required_qty": round(total_required, 6),
+                    "shortage_lines": [], "already": True,
+                    "short_closed": bool(order.get("short_closed"))}
+
+        if shortage_lines and not allow_shortage:
+            detail = "；".join(
+                f"第 {s['line_no']} 行尚欠 {self._fmt_qty(s['short_qty'])} "
+                f"{s['unit'] or ''}".strip()
+                for s in shortage_lines)
+            raise PostingError(
+                "WMS_400_SHORTAGE",
+                f"{detail}，请继续拣货或勾选差额结案")
+
+        now = datetime.now(timezone.utc)
+        patch: Dict = {
+            "status": ISSUE_ISSUED,
+            "issued_qty": round(total_issued, 6),
+            "completed_at": now,
+            "issued_by": actor_id,
+        }
+        if shortage_lines:
+            # 只有"带欠发"的结案才打 short_closed，否则发齐与欠发结案无法区分
+            patch["short_closed"] = True
+            patch["shortage_reason"] = reason
+        await self.repo.update(io_id, patch)
+
+        return {"order_id": io_id, "status": ISSUE_ISSUED,
+                "issued_qty": round(total_issued, 6),
+                "required_qty": round(total_required, 6),
+                "shortage_lines": shortage_lines,
+                "short_closed": bool(shortage_lines),
+                "already": False}
+
+
     async def create(self, data: dict):
         items = data.pop("items", [])
         order_data = {k: v for k, v in data.items() if v is not None}

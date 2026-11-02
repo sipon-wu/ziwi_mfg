@@ -113,6 +113,19 @@ EXECUTE_SUFFIXES: Set[str] = {
     "pending-entry",
     "batch",
     "device-push",
+    # 点检/检验执行清单（三条执行路径的"应检项 + 已录值"）。
+    # **必须登记**，否则资源名被推成 maintenance_task_checklist /
+    # inspection_order_checklist，权限码
+    # M06:maintenance_task_checklist:read|create 与
+    # M03:inspection_order_checklist:read 无人拥有 → 除通配 * 全员 403，
+    # 且启动期 assert_all_routes_declared 不报错（它能推导出码，只是没人有），
+    # 报错文案还指向页面上不存在的权限项。
+    # 登记后收敛回两个**本来就该有**的码：
+    #   GET  /maintenance-tasks/{id}/checklist → M06:maintenance_task:read
+    #   POST /maintenance-tasks/{id}/checklist → M06:maintenance_task:execute
+    #   GET  /inspection-orders/{id}/checklist → M03:inspection_order:read
+    # （C-44 / C-45 / A-S1 / C-65 / C-79 同一形态，这是第五次）
+    "checklist",
 }
 
 

@@ -1,7 +1,7 @@
 """M20 仓储管理（WMS）模块 — ORM 模型（15 张表）"""
 from sqlalchemy import (
     Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean,
-    UniqueConstraint,
+    UniqueConstraint, text,
 )
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
@@ -294,6 +294,20 @@ class IssueOrder(Base):
     issued_qty    = Column(Float, default=0, comment="已发数量")
     created_by    = Column(BigInteger, comment="创建人ID")
     issued_by     = Column(BigInteger, comment="出库确认人")
+    # ★ 差额结案（状态机的出口）：``partially_issued`` 此前是一个**无出口状态** ——
+    #   行欠发 8 个之后，唯一的出口是"把 8 个补齐"，而现场缺料就是缺料，
+    #   于是单据永远停在 partially_issued，列表上永久堆在最前面。
+    #   ``short_closed=true`` 表示"就发这么多、差额结案"，与"发齐了"在数据上可区分，
+    #   事后能算出"这个月有多少张单是欠发结案的"。
+    #   ★PG 严格类型：代码里写 ``False`` 不写 0；默认值走 **DB 侧**
+    #   ``server_default=text("false")`` 而不是 Python 侧 ``default=False`` ——
+    #   后者对裸 SQL INSERT 不生效（不写列就落 NULL，而本列 NOT NULL），
+    #   而且会被 ``scripts/check_insert_defaults.py`` 判成"固定列清单漏写"。
+    #   写 0 会让新库 create_all 在 PG 上直接失败。
+    short_closed  = Column(Boolean, nullable=False,
+                           server_default=text("false"),
+                           comment="是否差额结案（true=欠发结案，非发齐）")
+    shortage_reason = Column(Text, comment="差额结案原因（缺料/客户改单/…）")
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     completed_at  = Column(DateTime(timezone=True), comment="完成时间")
 

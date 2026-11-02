@@ -41,6 +41,7 @@ from app.services.inspection_entry_service import (
     EntryInvalid,
     EntryNotFound,
 )
+from app.services.quality_service import InspectionChecklistService
 
 router = APIRouter(prefix="/api/v1", tags=["M03-Quality"])
 
@@ -408,6 +409,31 @@ async def sampling_verdict(
         "defect_count": defect_count,
         "suggested_result": aql_verdict(defect_count, order["ac"], order["re"]),
     }
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.get("/inspection-orders/{order_id}/checklist")
+async def get_inspection_checklist(
+    order_id: int,
+    repo: InspectionOrderRepository = Depends(get_tenant_repo(InspectionOrderRepository)),
+    results: InspectionResultRepository = Depends(get_tenant_repo(InspectionResultRepository)),
+    standards: InspectionStandardRepository = Depends(get_tenant_repo(InspectionStandardRepository)),
+):
+    """检验执行清单：本单**应检项 + 已录值**（一条 LEFT JOIN 取回，不做 N+1）。
+
+    改造前前端只能拉"全站前 100 个检验项"：超过 100 个检验项的租户会
+    **静默截断**（该测的项看不到），检验员还在无关项里挨个找。
+
+    ``standard_id IS NULL``（历史单 / 口头检验）时 ``degraded=true`` 且返回
+    **全部启用项** —— 前端必须显式提示"本单未挂标准"，而不是假装清单是准的。
+
+    权限码：``M03:inspection_order:read``（'checklist' 已登记 EXECUTE_SUFFIXES）
+    """
+    svc = InspectionChecklistService(repo, results, standards)
+    try:
+        data = await svc.checklist(order_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "404-0000", "message": str(exc)})
     return {"code": 0, "message": "success", "data": data}
 
 

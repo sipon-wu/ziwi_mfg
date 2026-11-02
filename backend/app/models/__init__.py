@@ -12,7 +12,10 @@ from app.models.message import Message
 from app.models.approval import (ApprovalTemplate, ApprovalTemplateNode,
                                 ApprovalInstance, ApprovalNode)
 from app.models.team import Team, Employee
-from app.models.tpm import EquipmentCategory, Equipment, MaintenancePlan, MaintenanceTask, SparePart, SparePartInventory
+from app.models.tpm import (
+    EquipmentCategory, Equipment, MaintenancePlan, MaintenanceTask,
+    MaintenanceTaskItem, SparePart, SparePartInventory, EquipmentDowntime,
+)
 from app.models.quality import QcPointConfig, InspectionStandard, InspectionItem, InspectionOrder, InspectionResult, QualityReport, NcrRecord
 from app.models.status_log import EntityStatusLog
 from app.models.andon import AndonCall, AndonResponse, AndonEscalationRule, AndonEscalationLog
@@ -58,7 +61,8 @@ __all__ = [
     "ApprovalTemplate", "ApprovalTemplateNode", "ApprovalInstance", "ApprovalNode",
     "AuditLog",
     "Team", "Employee",
-    "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask", "SparePart", "SparePartInventory",
+    "EquipmentCategory", "Equipment", "MaintenancePlan", "MaintenanceTask",
+    "MaintenanceTaskItem", "SparePart", "SparePartInventory", "EquipmentDowntime",
     "QcPointConfig", "InspectionStandard", "InspectionItem", "InspectionOrder", "InspectionResult",
     "QualityReport", "NcrRecord",
     # 通用状态流水（平台层 M02，append-only）

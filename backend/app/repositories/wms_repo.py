@@ -519,6 +519,56 @@ class InventoryRepository(MultiTenantRepository):
             {"mid": material_id, "wid": warehouse_id, "bid": batch_id},
         )
 
+    async def suggest_picks(self, warehouse_id: int, material_ids: List[int],
+                            today) -> Dict[int, Dict]:
+        """给出一批物料在该仓的**拣货建议**（默认批次 + 库位名 + 可用量）。
+
+        只做一次查询把全部物料捞回来（不做 N+1）：出库执行页一屏就是整张单的行，
+        逐行查库会把一次扫码变成 N 次往返。
+
+        口径与 ``find_available_batches`` 保持一致：
+        - 可用量 = ``quantity - COALESCE(locked_qty, 0)``，只取 > 0 的行；
+        - **排除过期批次**（``expiry_date < today``）—— 否则 FIFO 建议会把
+          最老、最可能过期的批排到第一位，等于主动引导拣过期货（E-B3）；
+        - 同物料多行时取 ``id`` 最小的可用行（近似 FIFO 的稳定顺序）。
+        """
+        if not material_ids:
+            return {}
+        uniq = sorted({int(m) for m in material_ids if m is not None})
+        if not uniq:
+            return {}
+        placeholders = ", ".join(f":m{i}" for i in range(len(uniq)))
+        params = {f"m{i}": mid for i, mid in enumerate(uniq)}
+        params["wid"] = warehouse_id
+        params["today"] = today
+        rows = await self.query(
+            "SELECT i.material_id, i.batch_no, i.location_id, i.quantity, "
+            "       i.locked_qty, wl.location_code "
+            "FROM inventory i "
+            "LEFT JOIN batches b ON b.id = i.batch_id AND b.tenant_id = i.tenant_id "
+            "LEFT JOIN warehouse_locations wl ON wl.id = i.location_id "
+            "WHERE i.warehouse_id = :wid "
+            "  AND (i.quantity - COALESCE(i.locked_qty, 0)) > 0 "
+            "  AND (b.expiry_date IS NULL OR b.expiry_date >= :today) "
+            f"  AND i.material_id IN ({placeholders}) "
+            "ORDER BY i.material_id, i.id",
+            params,
+        )
+        out: Dict[int, Dict] = {}
+        for r in rows:
+            mid = r.get("material_id")
+            if mid in out:
+                continue
+            out[mid] = {
+                "suggest_batch_no": r.get("batch_no"),
+                "suggest_location_id": r.get("location_id"),
+                # 库位只有编码（warehouse_locations 没有 name 列）
+                "suggest_location_name": r.get("location_code"),
+                "available_qty": float(
+                    (r.get("quantity") or 0) - (r.get("locked_qty") or 0)),
+            }
+        return out
+
     async def upsert(self, data: dict) -> int:
         """原子化 upsert：先尝试更新现有记录，不存在则插入"""
         existing = await self.find_one(
@@ -903,17 +953,41 @@ class IssueOrderRepository(MultiTenantRepository):
         )
 
     async def get_by_no(self, issue_no: str) -> Optional[Dict]:
-        return await self.query_one("SELECT * FROM issue_orders WHERE issue_no = :no", {"no": issue_no})
+        # 带 warehouse_name：扫码响应要显示"从哪个仓出"，少这个字段前端还得再查一次
+        return await self.query_one(
+            "SELECT i.*, w.name as warehouse_name FROM issue_orders i "
+            "LEFT JOIN warehouses w ON w.id = i.warehouse_id "
+            "WHERE i.issue_no = :no",
+            {"no": issue_no})
+
+    async def get_by_work_order(self, work_order_id: int) -> Optional[Dict]:
+        """按来源工单找**最近一张未取消**的出库单（扫码第二跳）。
+
+        现场扫的码经常是流转卡上的工单号 —— 拿工单号直接查 ``issue_no``
+        永远 404。已取消的单不参与匹配：扫到一张作废单，界面会显示
+        "出库单已取消"，用户以为扫错了，其实是这个工单还有另一张有效单。
+        """
+        return await self.query_one(
+            "SELECT i.*, w.name as warehouse_name FROM issue_orders i "
+            "LEFT JOIN warehouses w ON w.id = i.warehouse_id "
+            "WHERE i.work_order_id = :wid AND i.status <> 'cancelled' "
+            "ORDER BY i.id DESC LIMIT 1",
+            {"wid": work_order_id},
+        )
 
     async def create(self, data: dict) -> int:
         # ★C-64：同上。实测 70 行出库单里 issued_qty 26 行 NULL。
         data.setdefault("status", "pending")
         data.setdefault("total_qty", 0)
         data.setdefault("issued_qty", 0)
+        # short_closed 是 Python 侧 default（模型里 `default=False`），裸 SQL 不会
+        # 触发它 —— 列清单漏写即落 NULL，而这一列是 NOT NULL：直接 500。
+        data.setdefault("short_closed", False)
         cols = [c for c in ("tenant_id", "issue_no", "issue_type", "status", "source_type",
                             "source_doc_no", "work_order_id", "warehouse_id",
                             "department_id", "recipient",
-                            "total_qty", "issued_qty", "created_by") if c in data]
+                            "total_qty", "issued_qty", "created_by",
+                            "short_closed") if c in data]
         sql = "INSERT INTO issue_orders ({}) VALUES ({})".format(
             ", ".join(cols), ", ".join(f":{c}" for c in cols))
         return await self.execute(sql, data)

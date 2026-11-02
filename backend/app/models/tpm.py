@@ -1,4 +1,7 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Float, Boolean, DateTime, Text, JSON, Date
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Float, Boolean, DateTime, Text, JSON, Date,
+    Numeric, UniqueConstraint, text,
+)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -47,6 +50,13 @@ class MaintenancePlan(Base):
     last_execute_at = Column(DateTime(timezone=True))
     next_execute_at = Column(DateTime(timezone=True))
     status = Column(String(20), default="active")
+    # ★ 点检项模板（配置态）：一行 JSON，不建独立模板表。
+    #   取舍：模板不需要被统计查询，只被 ``generate_due_tasks`` 快照进
+    #   ``maintenance_task_items``。建独立模板表要再加 CRUD + 权限码 + 页面，
+    #   收益仅"可 SQL 查模板"，一期不值。
+    #   结构：[{"check_item": "皮带张力", "check_method": "目视",
+    #           "standard_desc": "无明显松弛", "sort_order": 1}, ...]
+    checklist_template = Column(JSON, comment="点检项模板（JSON 数组），生成任务时快照")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -78,6 +88,51 @@ class MaintenanceTask(Base):
     cost = Column(Float)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MaintenanceTaskItem(Base):
+    """保养/点检任务项 —— 项级执行载体。
+
+    为什么必须单独一张表
+    --------------------
+    ``maintenance_tasks`` 只有一个 ``result = Column(Text)`` 自由文本。由此连带缺失：
+
+    - 没有"项级三态"（正常 / 异常 / 不适用）→ 点检退化成"整单打个勾"；
+    - 数不出"几项异常"→ 异常项无法自动挂安灯/报修；
+    - 没有逐项实测值与拍照 → 报修/停机上报缺载体。
+
+    状态口径：``verdict`` **NULL = 未点检**，非 NULL 即"已点检"。
+    刻意用 ``VARCHAR`` 而不是 BOOLEAN：三态（normal/abnormal/na）不是真假二值，
+    而且 PG 的 boolean 只认 true/false，历史写法里的 0/1 会直接 DataError（铁律 1）。
+    """
+
+    __tablename__ = "maintenance_task_items"
+
+    id             = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    # ★ tenant_id NOT NULL 且**由应用层显式写**：基类 execute() 只为
+    #   UPDATE/DELETE 注入 tenant_id，INSERT 一律不管（漏写即 500）。
+    tenant_id      = Column(String(50), nullable=False, comment="租户ID")
+    task_id        = Column(BigInteger, nullable=False, comment="FK to maintenance_tasks.id")
+    line_no        = Column(Integer, nullable=False, comment="行号（同任务内唯一）")
+    check_item     = Column(String(200), nullable=False, comment="点检项目名")
+    check_method   = Column(String(200), comment="点检方法（目视/手感/卡尺）")
+    standard_desc  = Column(String(200), comment="判定基准描述")
+    sort_order     = Column(Integer, nullable=False, server_default=text("0"),
+                            comment="排序（沿模板顺序）")
+    verdict        = Column(String(16), comment="normal/abnormal/na；NULL=未点检")
+    measured_value = Column(Numeric(18, 6), comment="实测值（计量项）")
+    remark         = Column(String(500), comment="备注")
+    photo_urls     = Column(JSON, comment="异常拍照，最多 3 张")
+    checked_by     = Column(BigInteger, comment="点检人")
+    checked_at     = Column(DateTime(timezone=True), comment="点检时刻")
+    created_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # 同任务同行号唯一 —— 逐项提交的**幂等性**兜底：即使应用层判断失手，
+        # DB 也不会出现两行同号项（"复点检"只更新、不新增）。
+        UniqueConstraint("tenant_id", "task_id", "line_no",
+                         name="uq_mti_tenant_task_line"),
+    )
 
 
 class SparePart(Base):

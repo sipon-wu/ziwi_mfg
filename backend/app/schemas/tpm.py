@@ -98,6 +98,9 @@ class CreateMaintenancePlanRequest(BaseModel):
     # 首次到期时间：不传时由服务层按周期从今天推算（改造前根本不写这一列，
     # 新计划永远不到期）
     next_execute_at: Optional[datetime] = None
+    # 点检项模板：生成任务时快照进 maintenance_task_items（改模板不影响历史任务）。
+    # 允许直接给数组或 {"items": [...]} 两种写法，落库原样存 JSON。
+    checklist_template: Optional[Any] = None
 
 
 class SparePartResponse(BaseModel):
@@ -165,3 +168,48 @@ class ConsumeSparePartRequest(BaseModel):
     qty: int = Field(..., gt=0, description="领用数量（必须为正）")
     maintenance_task_id: Optional[int] = None
     remark: Optional[str] = None
+
+
+# ============================================================
+# 点检/保养项级执行（maintenance_task_items）
+# ============================================================
+
+# 项级三态。**不用布尔**：正常/异常/不适用不是真假二值；
+# 且 PG 的 boolean 只认 true/false，历史写法里的 0/1 直接 DataError（铁律 1）。
+CHECK_VERDICT = Literal["normal", "abnormal", "na"]
+
+# 异常联动方式：andon=叫设备安灯 / repair=只挂维修单 / none=仅记录
+ABNORMAL_ACTION = Literal["andon", "repair", "none"]
+
+
+class ChecklistItemSubmit(BaseModel):
+    """单项提交。
+
+    ``item_id`` 给了就**按 id 幂等更新**（复点检只更新不新增）；
+    没给时按 ``line_no`` 找同一行，都没有才新增一行（``line_no`` 自动取 max+1）。
+    """
+
+    item_id: Optional[int] = None
+    line_no: Optional[int] = None
+    check_item: Optional[str] = None
+    check_method: Optional[str] = None
+    standard_desc: Optional[str] = None
+    verdict: Optional[CHECK_VERDICT] = None
+    measured_value: Optional[float] = None
+    remark: Optional[str] = None
+    photo_urls: Optional[List[str]] = Field(
+        default=None, description="异常拍照 URL，最多 3 张（由前端裁剪后上传）")
+    sort_order: Optional[int] = None
+
+
+class SubmitChecklistRequest(BaseModel):
+    """逐项提交点检结果。
+
+    ``conclude=true`` = 提交并同时完工；``abnormal_action`` 只在**存在异常项**时生效。
+    """
+
+    items: List[ChecklistItemSubmit] = Field(default_factory=list)
+    conclude: bool = False
+    abnormal_action: ABNORMAL_ACTION = "none"
+    result: Optional[str] = Field(default=None, description="完工结果描述（写 task.result）")
+    cost: Optional[float] = None

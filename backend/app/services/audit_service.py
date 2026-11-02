@@ -121,4 +121,7 @@ class AuditAction:
     PASSWORD_CHANGE = "password.change"
     APPROVAL_ACTION = "approval.action"
     WMS_REVERSE = "wms.reverse"
+    # 出库差额结案：唯一能把 partially_issued"合法地"停在欠发状态的动作，
+    # 也是事后对账最容易出问题的地方（"这 8 个到底发了没"）——必须留痕。
+    WMS_SHORT_CLOSE = "wms.short_close"
     TEMPLATE_NODE_UPDATE = "approval_template.nodes_update"
