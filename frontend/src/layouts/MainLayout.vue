@@ -1,10 +1,37 @@
 <template>
   <div class="app-wrapper">
+    <!-- H 形态：侧边栏改抽屉，默认收起（执行页需要全宽；200px 侧栏在 412 视口
+         会吃掉近一半宽度，列表只剩两列、按钮被挤到换行）。
+         遮罩只在 H 形态且抽屉打开时存在，W/T 形态不渲染任何多余节点。 -->
+    <div
+      v-if="isHandheld && drawerOpen"
+      class="sidebar-overlay"
+      role="presentation"
+      @click="drawerOpen = false"
+    />
+
     <!-- 左侧侧边栏 #212529 -->
-    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <aside
+      class="sidebar"
+      :class="{
+        collapsed: sidebarCollapsed,
+        'sidebar--drawer': isHandheld,
+        'sidebar--open': isHandheld && drawerOpen,
+      }"
+    >
       <div class="sidebar-logo">
         <img src="/ziwilogo.png" alt="ziwi" class="logo-img" />
-        <span v-show="!sidebarCollapsed" class="logo-title">知微智造</span>
+        <span v-show="!sidebarCollapsed || isHandheld" class="logo-title">知微智造</span>
+        <!-- 抽屉态的关闭入口：现场用手指，必须有独立的 48 热区 -->
+        <button
+          v-if="isHandheld"
+          type="button"
+          class="drawer-close"
+          aria-label="收起菜单"
+          @click="drawerOpen = false"
+        >
+          ×
+        </button>
       </div>
 
       <nav class="sidebar-nav">
@@ -18,8 +45,8 @@
                 @click="toggleMenu(menu.id)"
               >
                 <svg class="nav-svg" width="18" height="18" viewBox="0 0 24 24" v-html="menu.icon"></svg>
-                <span class="nav-label" v-show="!sidebarCollapsed">{{ menu.label }}</span>
-                <svg class="nav-arrow" v-show="!sidebarCollapsed" viewBox="0 0 12 12">
+                <span class="nav-label" v-show="labelsVisible">{{ menu.label }}</span>
+                <svg class="nav-arrow" v-show="labelsVisible" viewBox="0 0 12 12">
                   <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" />
                 </svg>
               </div>
@@ -32,7 +59,7 @@
                 :class="{ active: isActive(child.path) }"
                 @click="addTab(child)"
               >
-                <span class="nav-label" v-show="!sidebarCollapsed">{{ child.label }}</span>
+                <span class="nav-label" v-show="labelsVisible">{{ child.label }}</span>
               </router-link>
             </template>
             <!-- 无子菜单的直接链接 -->
@@ -44,14 +71,14 @@
                 @click="addTab({ label: menu.label, path: menu.path })"
               >
                 <svg class="nav-svg" width="18" height="18" viewBox="0 0 24 24" v-html="menu.icon"></svg>
-                <span class="nav-label" v-show="!sidebarCollapsed">{{ menu.label }}</span>
+                <span class="nav-label" v-show="labelsVisible">{{ menu.label }}</span>
               </router-link>
             </template>
           </div>
         </template>
       </nav>
 
-      <div class="sidebar-footer" v-show="!sidebarCollapsed">
+      <div class="sidebar-footer" v-show="labelsVisible">
         <span>&copy; 2026 知微  版权所有</span>
       </div>
     </aside>
@@ -62,7 +89,12 @@
       <header class="top-bar">
         <div class="top-row-1">
           <div class="top-left">
-            <span class="collapse-btn" @click="sidebarCollapsed = !sidebarCollapsed">
+            <span
+              class="collapse-btn"
+              role="button"
+              :aria-label="isHandheld ? '打开菜单' : '收起菜单'"
+              @click="onMenuToggle"
+            >
               <svg viewBox="0 0 20 16" width="18" height="14">
                 <path d="M0 1h20M0 8h20M0 15h20" fill="none" stroke="currentColor" stroke-width="2" />
               </svg>
@@ -105,8 +137,9 @@
               <span class="tab-close" v-if="openedTabs.length > 1" @click.stop="closeTab(tab)">×</span>
             </span>
           </div>
-          <!-- 面包屑 -->
-          <div class="breadcrumb">
+          <!-- 面包屑：H 形态隐藏（412 视口下它只会把标签行挤成两行，
+               且"首页 / 模块 / 详情"对现场没有导航价值 —— 他们靠扫码和返回） -->
+          <div v-if="!isHandheld" class="breadcrumb">
             <span v-for="(b, i) in breadcrumbs" :key="i">
               <router-link v-if="b.path && i < breadcrumbs.length - 1" :to="b.path">{{ b.label }}</router-link>
               <span v-else>{{ b.label }}</span>
@@ -131,6 +164,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore, matchPermission } from '@/stores/auth'
 import { useCopilotStore } from '@/stores/copilot'
+import { useFormFactor } from '@/composables/useFormFactor'
 import CopilotDrawer from '@/components/copilot/CopilotDrawer.vue'
 
 const route = useRoute()
@@ -242,8 +276,43 @@ function doLogout() {
   router.push('/login')
 }
 
-/* ── 侧边栏折叠 ── */
+/* ── 侧边栏折叠 / H 形态抽屉 ──
+ *
+ * H 形态（<600 或竖屏 <768）下侧边栏改抽屉：
+ * 1. 常驻 200px 侧栏在 412 视口要吃掉一半宽度 —— 执行页需要全宽来放
+ *    「合格/不合格」两个大按钮与逐行实发输入；
+ * 2. 抽屉默认关闭，汉堡键打开，点遮罩 / 点菜单项 / 切路由都自动关
+ *    （现场扫完码就往前走，不会记得回来关菜单）；
+ * 3. W/T 形态行为**不变**（仍是折叠式侧栏），避免影响已过验收的 86 个页面。
+ */
+const { formFactor } = useFormFactor()
+const isHandheld = computed(() => formFactor.value === 'H')
 const sidebarCollapsed = ref(false)
+const drawerOpen = ref(false)
+
+/** 抽屉态下文案/箭头是否可见：抽屉开着就该看得见，与 collapsed 无关 */
+const labelsVisible = computed(() => (isHandheld.value ? drawerOpen.value : !sidebarCollapsed.value))
+
+function onMenuToggle(): void {
+  if (isHandheld.value) {
+    drawerOpen.value = !drawerOpen.value
+    return
+  }
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+// 切路由自动收起抽屉（含从抽屉里点菜单跳转）
+watch(
+  () => route.path,
+  () => {
+    if (isHandheld.value) drawerOpen.value = false
+  },
+)
+
+// 从 H 切回 W/T 时抽屉状态归零，避免"回到宽屏还留着一层遮罩"
+watch(isHandheld, (now) => {
+  if (!now) drawerOpen.value = false
+})
 
 /* ── 手风琴展开状态 ── */
 const openMenus = reactive<Record<string, boolean>>({})
@@ -636,4 +705,67 @@ const breadcrumbs = computed(() => {
 .breadcrumb .sep { color: #ddd; margin: 0 3px; }
 
 .content { flex: 1; overflow-y: auto; padding: 16px 20px; }
+
+/* ========== H 形态：侧边栏 → 抽屉 ==========
+ * 目标：主内容区拿到全宽（412 视口下 = 412 可用），执行页的两个大按钮不被挤行。
+ * 抽屉宽度用 min(320px, 84vw)：既放得下最长菜单文案，又始终留出可见的背景
+ * （"这是一层浮起来的菜单"必须一眼看得出来，全屏抽屉会被误认为跳页 ——
+ *  与 T02 在 1024 上踩的坑同一个道理）。
+ */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--ziwi-z-appbar, 100) - 1);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.sidebar--drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: var(--ziwi-z-appbar, 100);
+  width: min(320px, 84vw);
+  min-width: min(320px, 84vw);
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.28);
+  /* 抽屉内部自己滚，长菜单不会把 logo 与版权推走 */
+  overflow-y: auto;
+}
+.sidebar--drawer.sidebar--open { transform: translateX(0); }
+/* 抽屉态下不做 50px 折叠（折叠后只剩图标列，现场分辨不出） */
+.sidebar--drawer.collapsed { width: min(320px, 84vw); min-width: min(320px, 84vw); }
+
+.drawer-close {
+  margin-left: auto;
+  width: var(--ziwi-close-hit, 48px);
+  height: var(--ziwi-close-hit, 48px);
+  border: none;
+  background: transparent;
+  color: #adb5bd;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.drawer-close:active { background: rgba(255, 255, 255, 0.08); }
+
+/* H 形态下抽屉内的菜单项：热区按触屏人因抬到 48，子项不再靠 44px 缩进识别 */
+:global(html[data-form-factor='H']) .sidebar--drawer .nav-item {
+  min-height: var(--ziwi-touch-min, 48px);
+  padding: 10px 14px 10px 18px;
+  font-size: 15px;
+}
+:global(html[data-form-factor='H']) .sidebar--drawer .nav-item.sub {
+  padding-left: 40px;
+  font-size: 14px;
+}
+
+/* H 形态：内容区左右留白收窄，把宽度还给内容（执行页要全宽） */
+:global(html[data-form-factor='H']) .content { padding: 10px 12px; }
+/* H 形态顶栏：只有一行（标签行保留，面包屑已隐藏），高度收紧 */
+:global(html[data-form-factor='H']) .top-row-1 { height: 48px; padding: 0 12px; }
+:global(html[data-form-factor='H']) .top-row-2 { height: 32px; padding: 0 12px; }
+:global(html[data-form-factor='H']) .top-title { font-size: 14px; }
 </style>
