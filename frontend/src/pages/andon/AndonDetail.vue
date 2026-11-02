@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { get, post } from '@/api/client'
+import { get, post, errorText } from '@/api/client'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import type { AndonCall } from '@/types'
 
@@ -35,10 +36,29 @@ const PRIORITY_MAP: Record<string, string> = {
 }
 
 const call = ref<AndonCall | null>(null)
+const loading = ref(false)
+
+/**
+ * 详情三分：加载中 / 不存在 / 已就绪。
+ *
+ * 原写法是 `<van-empty v-else description="加载中..." />`——`v-else` 同时兜住
+ * "还在加载"和"查无此单"两种情况，且渲染的是**空态插画**，用户看到的是
+ * 一张"什么都没有"的图配「加载中...」，会误判成单子不存在。
+ */
+const detailState = computed<StateKind>(() => {
+  if (call.value) return 'ready'
+  return loading.value ? 'loading' : 'empty-true'
+})
 
 async function fetch() {
-  const res = await get<AndonCall>(`/andon/calls/${route.params.id}`)
-  call.value = res
+  loading.value = true
+  try {
+    call.value = await get<AndonCall>(`/andon/calls/${route.params.id}`)
+  } catch (e) {
+    showToast(errorText(e, '安灯呼叫加载失败'))
+  } finally {
+    loading.value = false
+  }
 }
 
 async function updateStatus(action: string) {
@@ -79,5 +99,5 @@ onMounted(fetch)
       </div>
     </div>
   </div>
-  <van-empty v-else description="加载中..." />
+  <ZiwiStateView v-else :state="detailState" skeleton="detail" object-name="安灯呼叫" />
 </template>

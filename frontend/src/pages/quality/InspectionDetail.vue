@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { get, post, put } from '@/api/client'
+import { get, post, put, errorText } from '@/api/client'
 import { showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
 import { useStatusTag } from '@/composables/useStatusTag'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,6 +43,13 @@ const SOURCE_MAP: Record<string, string> = {
 }
 
 const order = ref<any>(null)
+const loading = ref(false)
+
+/** 详情三分：加载中 / 不存在 / 已就绪。原先「加载中」被写成 van-empty 的描述 */
+const detailState = computed<StateKind>(() => {
+  if (order.value) return 'ready'
+  return loading.value ? 'loading' : 'empty-true'
+})
 const results = ref<any[]>([])
 const items = ref<any[]>([])
 const judging = ref(false)
@@ -91,8 +99,15 @@ function draftSpec(d: Draft) {
 }
 
 async function fetch() {
-  order.value = await get(`/inspection-orders/${route.params.id}`)
-  results.value = (await get(`/inspection-orders/${route.params.id}/results`)) as any
+  loading.value = true
+  try {
+    order.value = await get(`/inspection-orders/${route.params.id}`)
+    results.value = (await get(`/inspection-orders/${route.params.id}/results`)) as any
+  } catch (e) {
+    showToast(errorText(e, '检验单加载失败'))
+  } finally {
+    loading.value = false
+  }
 }
 
 async function fetchItems() {
@@ -327,5 +342,5 @@ function goExecute() {
       />
     </van-popup>
   </div>
-  <van-empty v-else description="加载中..." />
+  <ZiwiStateView v-else :state="detailState" skeleton="detail" object-name="检验单" />
 </template>
