@@ -1,0 +1,48 @@
+{
+  "base": "https://mfg1.ziwi.cn",
+  "at": "2026-11-02T01:14:16.946Z",
+  "results": [
+    {
+      "id": "B1",
+      "label": "<title>",
+      "pass": true,
+      "expect": "知微智造 · ziwi",
+      "actual": "知微智造 · ziwi"
+    },
+    {
+      "id": "B2",
+      "label": "登录页品牌名",
+      "pass": true,
+      "expect": "知微智造",
+      "actual": "知微智造"
+    },
+    {
+      "id": "B2b",
+      "label": "登录页无旧名残留",
+      "pass": true,
+      "expect": "无",
+      "actual": "无"
+    },
+    {
+      "id": "B3",
+      "label": "侧边栏 logo 标题",
+      "pass": true,
+      "expect": "知微智造",
+      "actual": "知微智造"
+    },
+    {
+      "id": "B4",
+      "label": "顶栏标题",
+      "pass": true,
+      "expect": "知微智造管理系统",
+      "actual": "知微智造管理系统"
+    },
+    {
+      "id": "B5",
+      "label": "车间大屏 H1",
+      "pass": true,
+      "expect": "知微智造 · 车间大屏",
+      "actual": "知微智造 · 车间大屏"
+    }
+  ]
+}
