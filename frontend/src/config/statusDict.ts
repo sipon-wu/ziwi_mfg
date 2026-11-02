@@ -116,6 +116,14 @@ export const STATUS_DICT: Record<string, Record<string, StateEntry>> = {
     cancelled: { label: '已取消', semantic: 'danger', icon: ICON.close, order: 90 },
   },
 
+  // ── 设备（TPM）· 保养计划（T02 新增：页面不再自建 statusLabels）──
+  maintenance_plan: {
+    draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 5 },
+    active: { label: '已启用', semantic: 'success', icon: ICON.check, order: 10 },
+    paused: { label: '已暂停', semantic: 'warning', icon: ICON.pause, order: 20, actionable: true },
+    archived: { label: '已归档', semantic: 'neutral', icon: ICON.lock, order: 90 },
+  },
+
   // ── 设备（TPM）· 保养项判定（逐项三态）──
   maintenance_item: {
     normal: { label: '正常', semantic: 'success', icon: ICON.check, order: 10 },

@@ -16,6 +16,22 @@ import '@/styles/vant-overrides.css'
 import App from './App.vue'
 import router from './router'
 import SelectField from '@/components/SelectField.vue'
+// ── T02 容器组件（架构 §5.2）──
+// 全局注册的意义：`ziwi-*` 组件是"基础设施"，不是业务组件。86 个页面里凡是需要
+// 浮层/选择器/状态视图的地方都应该能直接写标签，而不是每页 import 一遍；
+// 更重要的是**不允许多份实现**（否则 R1–R4 就又散回页面了）。
+import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
+import ZiwiSelectList from '@/components/ziwi/ZiwiSelectList.vue'
+import ZiwiReceipt from '@/components/ziwi/ZiwiReceipt.vue'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiConfirmSheet from '@/components/ziwi/ZiwiConfirmSheet.vue'
+import ZiwiErrorSummary from '@/components/ziwi/ZiwiErrorSummary.vue'
+import ZiwiFieldError from '@/components/ziwi/ZiwiFieldError.vue'
+import ZiwiScanField from '@/components/ziwi/ZiwiScanField.vue'
+import ZiwiCodeText from '@/components/ziwi/ZiwiCodeText.vue'
+import ZiwiQtyField from '@/components/ziwi/ZiwiQtyField.vue'
+import ZiwiActionBar from '@/components/ziwi/ZiwiActionBar.vue'
 import perm from '@/directives/perm'
 import { useAuthStore } from '@/stores/auth'
 import { installFormFactor } from '@/composables/useFormFactor'
@@ -33,7 +49,28 @@ initGloveMode()
 
 app.use(router)
 app.use(Vant)
+// 旧名薄壳（8 个 basics 页用全局名 `SelectField`，改动即白屏）
 app.component('SelectField', SelectField)
+
+// T02 容器组件全局注册：一份实现，全站复用（R1–R4 的唯一承载者）
+const ziwiComponents = {
+  ZiwiFormSheet,
+  ZiwiSelect,
+  ZiwiSelectList,
+  ZiwiReceipt,
+  ZiwiStateView,
+  ZiwiConfirmSheet,
+  ZiwiErrorSummary,
+  ZiwiFieldError,
+  ZiwiScanField,
+  ZiwiCodeText,
+  ZiwiQtyField,
+  ZiwiActionBar,
+} as const
+for (const [name, component] of Object.entries(ziwiComponents)) {
+  app.component(name, component)
+}
+
 // 按钮级权限门：v-perm="'M01:work_order:execute'" / v-perm:disable="[...]"
 app.directive('perm', perm)
 

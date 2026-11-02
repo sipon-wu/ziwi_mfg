@@ -314,7 +314,7 @@ const allMenuTree: MenuItem[] = [
     children: [
       { id: 'equipment_list', path: '/equipment', label: '设备管理' },
       { id: 'maintenance_tasks', path: '/equipment/maintenance-tasks', label: '保养任务' },
-      { id: 'maintenance_plans', path: '/equipment/maintenance-plans', label: '维护计划' },
+      { id: 'maintenance_plans', path: '/equipment/maintenance-plans', label: '保养计划' },
     ],
   },
   {

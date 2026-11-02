@@ -1,91 +1,64 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+/**
+ * SelectField — 兼容薄壳（架构 §2.2「旧名兼容」）
+ *
+ * 存在的唯一理由：`main.ts` 把 `SelectField` 全局注册了，8 个 basics 页 + 6 个
+ * 其他页面用的是全局名。直接改名会让这些页面全部白屏（"Failed to resolve component"）。
+ *
+ * 因此本文件**只做转发**：
+ * - props 集合是旧 SelectField 的超集（`modelValue` / `options` / `placeholder` /
+ *   `clearable` / `disabled`），一个字段都不缺；
+ * - 行为、DOM、选择交互全部来自 `ZiwiSelect`，本文件不写任何逻辑；
+ * - `change` 事件保留旧的**单参数**签名（旧调用方写的是 `@change="v => ..."`）。
+ *
+ * ★ 闸门：本文件改造后，`pages/basics/` 8 页必须 git diff 为空。
+ *   一旦这里"顺手"多做了点事（比如默认值改了、加了校验），闸门就会失败。
+ *   因此 `clearable` 的默认值**保持旧行为 `false`**，而 `ZiwiSelect` 自身默认 `true`。
+ */
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
+import type { ZiwiOption } from '@/components/ziwi/ZiwiSelectList.vue'
 
-const props = defineProps({
-  modelValue: { type: [String, Number], default: null },
-  options: { type: Array, default: () => [] },
-  placeholder: { type: String, default: '' },
-  clearable: { type: Boolean, default: false },
-  disabled: { type: Boolean, default: false },
-})
-
-const emit = defineEmits(['update:modelValue', 'change'])
-
-const showPopup = ref(false)
-
-const columns = computed(() =>
-  (props.options || []).map((o: any) => ({ text: o.label, value: o.value })),
-)
-
-const currentLabel = computed(() => {
-  const found = (props.options || []).find((o: any) => o.value === props.modelValue)
-  return found ? found.label : ''
-})
-
-const defaultIndex = computed(() => {
-  const idx = (props.options || []).findIndex((o: any) => o.value === props.modelValue)
-  return idx >= 0 ? idx : 0
-})
-
-const hasValue = computed(
-  () => props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== '',
-)
-
-function open() {
-  if (props.disabled) return
-  showPopup.value = true
+interface Props {
+  modelValue?: string | number | null
+  /** 选项：`{ label, value }` 或纯字符串数组（旧页两种都出现过） */
+  options?: Array<ZiwiOption | string>
+  placeholder?: string
+  /** 旧默认值为 false —— 薄壳必须保持，否则 8 个 basics 页的筛选框会突然多出清空按钮 */
+  clearable?: boolean
+  disabled?: boolean
 }
 
-function onConfirm(params: any) {
-  // Vant 4 的 van-picker confirm 回传对象 { selectedValues, selectedOptions, selectedIndexes }
-  // selectedValues 为各列选中值的数组，单列选择器取 selectedValues[0] 才是真正的选项 value
-  let v: any = null
-  if (params && Array.isArray(params.selectedValues) && params.selectedValues.length) {
-    v = params.selectedValues[0]
-  } else if (params && typeof params === 'object' && 'value' in params) {
-    v = (params as any).value
-  } else {
-    v = params
-  }
-  emit('update:modelValue', v)
-  emit('change', v)
-  showPopup.value = false
+const props = withDefaults(defineProps<Props>(), {
+  modelValue: null,
+  options: () => [],
+  placeholder: '',
+  clearable: false,
+  disabled: false,
+})
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string | number | null]
+  /** 旧签名：只带值（第二参数在旧组件里不存在，这里不透传，避免调用方类型错） */
+  change: [value: string | number | null]
+}>()
+
+function onUpdate(value: string | number | null): void {
+  emit('update:modelValue', value)
 }
 
-function onCancel() {
-  showPopup.value = false
-}
-
-function onClear() {
-  emit('update:modelValue', null)
-  emit('change', null)
+function onChange(value: string | number | null): void {
+  emit('change', value)
 }
 </script>
 
 <template>
-  <div class="select-field">
-    <van-field
-      :model-value="currentLabel"
-      :placeholder="placeholder || '请选择'"
-      readonly
-      :disabled="disabled"
-      clickable
-      @click="open"
-    >
-      <template v-if="clearable && hasValue" #button>
-        <van-button size="mini" plain type="primary" @click.stop="onClear">清空</van-button>
-      </template>
-    </van-field>
-
-    <van-popup v-model:show="showPopup" position="bottom" round>
-      <van-picker
-        :columns="columns"
-        :default-index="defaultIndex"
-        show-toolbar
-        title="请选择"
-        @confirm="onConfirm"
-        @cancel="onCancel"
-      />
-    </van-popup>
-  </div>
+  <ZiwiSelect
+    :model-value="props.modelValue"
+    :options="props.options"
+    :placeholder="props.placeholder"
+    :clearable="props.clearable"
+    :disabled="props.disabled"
+    @update:model-value="onUpdate"
+    @change="onChange"
+  />
 </template>

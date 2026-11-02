@@ -58,9 +58,13 @@ const routes: RouteRecordRaw[] = [
       // TPM 设备管理
       { path: 'equipment', name: 'Equipment', component: () => import('@/pages/equipment/EquipmentList.vue'), meta: { title: '设备管理', perm: 'M06:equipment:read' } },
       { path: 'equipment/create', name: 'CreateEquipment', component: () => import('@/pages/equipment/EquipmentCreate.vue'), meta: { title: '新增设备', perm: 'M06:equipment:read' } },
-      { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', perm: 'M06:equipment:read' } },
+      // ★ 静态段必须注册在 'equipment/:id' 之前（路由遮蔽铁律）：
+      //   否则 /equipment/maintenance-tasks 会被 :id 吃掉，EquipmentDetail 拿到
+      //   id='maintenance-tasks' → Number() 为 NaN → 空白页。
       { path: 'equipment/maintenance-tasks', name: 'MaintenanceTasks', component: () => import('@/pages/equipment/MaintenanceTasks.vue'), meta: { title: '保养任务', perm: 'M06:equipment:read' } },
-      { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '维护计划', perm: 'M06:equipment:read' } },
+      // Q5 术语：维护计划 → 保养计划
+      { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '保养计划', perm: 'M06:equipment:read' } },
+      { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', perm: 'M06:equipment:read' } },
       // M05 - 安灯管理
       { path: 'andon', name: 'Andon', component: () => import('@/pages/andon/AndonList.vue'), meta: { perm: 'M05:andon_call:read', title: '安灯管理' } },
       { path: 'andon/:id', name: 'AndonDetail', component: () => import('@/pages/andon/AndonDetail.vue'), meta: { perm: 'M05:andon_call:read', title: '安灯详情' } },

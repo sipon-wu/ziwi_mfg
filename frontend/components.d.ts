@@ -58,5 +58,16 @@ declare module 'vue' {
     VanTabs: typeof import('vant/es')['Tabs']
     VanTag: typeof import('vant/es')['Tag']
     ZiwiActionBar: typeof import('./src/components/ziwi/ZiwiActionBar.vue')['default']
+    ZiwiCodeText: typeof import('./src/components/ziwi/ZiwiCodeText.vue')['default']
+    ZiwiConfirmSheet: typeof import('./src/components/ziwi/ZiwiConfirmSheet.vue')['default']
+    ZiwiErrorSummary: typeof import('./src/components/ziwi/ZiwiErrorSummary.vue')['default']
+    ZiwiFieldError: typeof import('./src/components/ziwi/ZiwiFieldError.vue')['default']
+    ZiwiFormSheet: typeof import('./src/components/ziwi/ZiwiFormSheet.vue')['default']
+    ZiwiQtyField: typeof import('./src/components/ziwi/ZiwiQtyField.vue')['default']
+    ZiwiReceipt: typeof import('./src/components/ziwi/ZiwiReceipt.vue')['default']
+    ZiwiScanField: typeof import('./src/components/ziwi/ZiwiScanField.vue')['default']
+    ZiwiSelect: typeof import('./src/components/ziwi/ZiwiSelect.vue')['default']
+    ZiwiSelectList: typeof import('./src/components/ziwi/ZiwiSelectList.vue')['default']
+    ZiwiStateView: typeof import('./src/components/ziwi/ZiwiStateView.vue')['default']
   }
 }
