@@ -18,7 +18,7 @@
  * 软扫通道（`handleInput`）没有 Enter 事件，只能靠防抖收口：最后一次输入后
  * 静置 `debounceMs` 即视为一次完整扫描。
  */
-import { onBeforeUnmount, ref, type Ref } from 'vue'
+import { onBeforeUnmount, readonly, ref, type Ref } from 'vue'
 
 /** 相邻字符最大间隔（ms）。超过即认为是人在打字，重置缓冲 */
 export const DEFAULT_MAX_INTERVAL = 120
@@ -52,6 +52,8 @@ export interface UseScanInputReturn {
   buffer: Ref<string>
   /** 是否已识别为"正在扫"（连续字符超过阈值） */
   isScanning: Ref<boolean>
+  /** 上一次成功成码的来源（硬键 / 粘贴 / 软扫），可用于埋点或差异化提示 */
+  lastSource: Readonly<Ref<ScanSource>>
   /** 键盘事件处理器，绑到输入框或 document */
   handleKeydown: (event: KeyboardEvent) => void
   /** 粘贴处理器 */
@@ -59,21 +61,15 @@ export interface UseScanInputReturn {
   /** 软扫 / 手输兜底：把当前输入框的值交给它 */
   handleInput: (value: string) => void
   /** 立即把缓冲当作一次扫码吐出去（不满足长度则丢弃） */
-  flush: (reason?: string) => Promise<boolean>
+  flush: (reason?: ScanSource) => Promise<boolean>
   /** 清空缓冲 */
   reset: () => void
   /** 手动解除全局监听（global 模式下提前收尾用） */
   dispose: () => void
 }
 
-interface ScanSource {
-  keyboard: 'keyboard'
-  paste: 'paste'
-  input: 'input'
-}
-
 /** 扫码来源标记，便于业务侧区分（硬键扫/粘贴/软扫） */
-export type { ScanSource }
+export type ScanSource = 'keyboard' | 'paste' | 'input'
 
 /**
  * 扫码输入 Composable。
@@ -88,6 +84,8 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
 
   const buffer = ref('')
   const isScanning = ref(false)
+  /** 上一次成功成码的来源 */
+  const lastSource = ref<ScanSource>('keyboard')
 
   /** 上一次按键时间戳 */
   let lastKeyAt = 0
@@ -113,10 +111,10 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
   /**
    * 把缓冲提交出去。
    *
-   * @param source 来源标记
+   * @param source 来源标记（硬键 / 粘贴 / 软扫），仅用于日志与埋点
    * @returns 是否成功吐出一码
    */
-  async function flush(source: keyof ScanSource = 'keyboard'): Promise<boolean> {
+  async function flush(source: ScanSource = 'keyboard'): Promise<boolean> {
     clearDebounce()
     const code = buffer.value.trim()
     if (code.length < minLength) {
@@ -140,8 +138,7 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
       // 业务校验失败时保留原码，方便用户核对
       buffer.value = code
     }
-    // 来源信息保存在 ref 外的闭包对调用方无用，这里通过 buffer 的语义表达即可
-    void source
+    lastSource.value = source
     return accepted !== false
   }
 
@@ -229,6 +226,7 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
   return {
     buffer,
     isScanning,
+    lastSource: readonly(lastSource),
     handleKeydown,
     handlePaste,
     handleInput,

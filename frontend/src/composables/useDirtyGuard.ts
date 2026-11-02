@@ -17,7 +17,6 @@
 import {
   computed,
   getCurrentInstance,
-  onBeforeUnmount,
   ref,
   type ComputedRef,
   type Ref,
@@ -238,9 +237,6 @@ export function useDirtyGuard<T = Record<string, unknown>>(
   const instance = getCurrentInstance()
   if (options.autoRouteGuard !== false && instance) {
     onBeforeRouteLeave(() => routeGuard())
-    onBeforeUnmount(() => {
-      // 组件卸载不算"保存"，草稿已经在本地，不做任何清理
-    })
   }
 
   return {
