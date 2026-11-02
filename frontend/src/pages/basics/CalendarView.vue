@@ -175,19 +175,19 @@ onMounted(loadYear)
   <div class="ziwi-page">
     <!-- 工具栏 -->
     <div class="ziwi-flex ziwi-items-center ziwi-justify-between ziwi-mb-4">
-      <div class="ziwi-flex ziwi-items-center ziwi-gap-2">
+      <div class="ziwi-filter-bar ziwi-gap-2">
         <van-button icon="arrow-left" size="small" plain @click="prevMonth" />
         <span class="ziwi-text-lg ziwi-font-bold">{{ currentYear }} 年 {{ currentMonth }} 月</span>
         <van-button icon="arrow-right" size="small" plain @click="nextMonth" />
         <van-button size="small" plain @click="goToday">今天</van-button>
       </div>
-      <div class="ziwi-flex ziwi-gap-2">
+      <div class="ziwi-filter-bar ziwi-gap-2">
         <van-button type="primary" size="small" @click="openInitDialog">初始化</van-button>
       </div>
     </div>
 
     <!-- 年月切换 -->
-    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-1 ziwi-mb-2">
+    <div class="ziwi-filter-bar ziwi-gap-1 ziwi-mb-2">
       <van-button
         v-for="m in 12" :key="m"
         :type="m === currentMonth ? 'primary' : 'default'"

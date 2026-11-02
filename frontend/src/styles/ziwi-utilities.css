@@ -49,6 +49,7 @@
 .ziwi-p-4 { padding: var(--ziwi-gap-lg); }
 .ziwi-px-1 { padding-left: var(--ziwi-gap-xs); padding-right: var(--ziwi-gap-xs); }
 .ziwi-px-2 { padding-left: var(--ziwi-gap-sm); padding-right: var(--ziwi-gap-sm); }
+.ziwi-px-4 { padding-left: var(--ziwi-gap-lg); padding-right: var(--ziwi-gap-lg); }
 .ziwi-py-1 { padding-top: var(--ziwi-gap-xs); padding-bottom: var(--ziwi-gap-xs); }
 .ziwi-py-2 { padding-top: var(--ziwi-gap-sm); padding-bottom: var(--ziwi-gap-sm); }
 .ziwi-py-3 { padding-top: var(--ziwi-gap-md); padding-bottom: var(--ziwi-gap-md); }
@@ -177,6 +178,67 @@
 .ziwi-hit-danger {
   min-width: var(--ziwi-touch-danger);
   min-height: var(--ziwi-touch-danger);
+}
+
+/* ── 筛选栏 / 工具条（B4「筛选栏统一 48」的落点）──
+   只做两件事：一行放不下就换行；**栏内控件统一 48**。
+   刻意不设 gap / padding —— 各页原有的间距工具类继续生效，本类只补热区，
+   这样加类不会连带改版面。
+
+   ★ 为什么只能按容器收口，不能直接抬 --van-button-small-height：
+     那是全局令牌。表格行内的行内操作按钮也吃 small 档（实测 22×24），
+     一抬行高就从 48 涨到 72 —— 而 UE R1 要求行高不因控件尺寸变化。
+     所以只有"在筛选栏这个语境里，按钮和旁边的表单字段一样高"才是对的。
+
+   ★ 特异性：`.ziwi-filter-bar .van-button` 是 (0,2,0)，
+     高于 Vant 的 `.van-button--small`(0,1,0)，与 index.css 被加载两次
+     的源序无关，不需要抬成 `:root:root` 那种技巧。
+
+   ★ min-width 也是为了图标按钮：prev/next 这类只有图标、没有文字的按钮
+     左右各 12px 内边距后只有 40px，靠 min-width 补到 48，不会变成一条宽键。 */
+.ziwi-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.ziwi-filter-bar .van-button {
+  height: var(--ziwi-touch-min);
+  min-width: var(--ziwi-touch-min);
+  padding-left: var(--ziwi-gap-md);
+  padding-right: var(--ziwi-gap-md);
+  font-size: var(--ziwi-font-size-md);
+}
+/* 栏内裸 van-field 默认只有 44px（--van-cell-line-height 24 + padding 10×2），
+   会与 48 的按钮差 4px。这里只补 min-height，**不动内边距** ——
+   筛选栏里可能出现 label 在上的字段，清零上下内边距会把 label 挤扁。 */
+.ziwi-filter-bar .van-field {
+  min-height: var(--ziwi-touch-min);
+}
+
+/* ── 行级操作（列表页行内按钮的落点）──
+   背景：列表页原来把「展开 / 编辑 / 删除 / 发布 / 归档…」全塞进操作列，
+   每个都是 size="mini" 图标键，实测 **22×24** —— 远低于 --ziwi-touch-min(48)，
+   且一行并排 3~6 个小键，戴油污手套几乎必然误触（UE §6.1）。
+   抬高单个按钮行不通：行高会从 48 涨到 72，一张表少看 1/3 行。
+
+   所以**结构上消掉**：行尾只留一个不可点的展开指示，
+   真正的操作放到该行展开后的详情区 —— 那里没有行高约束，能给足 48。 */
+.ziwi-row-chevron {
+  color: var(--ziwi-text-muted);
+  font-size: var(--ziwi-font-size-md);
+}
+
+.ziwi-row-actions {
+  display: flex;
+  flex-wrap: wrap;          /* RouteList 展开后最多 6 个操作，H 形态必须能换行 */
+  gap: var(--ziwi-touch-gap-adj);
+  justify-content: flex-end;
+  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg);
+  border-top: 1px solid var(--ziwi-border);
+}
+
+.ziwi-row-actions .van-button {
+  height: var(--ziwi-touch-min);
 }
 
 /* ── 页面外壳 ──

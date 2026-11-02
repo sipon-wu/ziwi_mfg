@@ -99,7 +99,7 @@ onMounted(loadData)
       </van-tabs>
     </van-cell-group>
 
-    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       <van-tag
         v-for="c in conditions"

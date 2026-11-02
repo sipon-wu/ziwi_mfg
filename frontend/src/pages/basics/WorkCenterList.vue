@@ -172,7 +172,7 @@ onMounted(() => {
 <template>
   <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+    <div class="ziwi-filter-bar ziwi-gap-3 ziwi-mb-4">
       <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
@@ -243,21 +243,26 @@ onMounted(() => {
                 <van-tag v-else type="default" size="small">禁用</van-tag>
               </td>
               <td class="op">
-                <div class="op-btns">
-                  <van-button
-                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
-                    size="mini"
-                    plain
-                    @click.stop="toggleExpand(item.id)"
-                  />
-                  <van-button icon="edit" size="mini" plain type="primary" @click.stop="openEdit(item)" />
-                  <van-button icon="delete" size="mini" plain type="danger" @click.stop="handleDelete(item)" />
-                </div>
+                <!-- 行内操作已结构性消掉：这里只留一个**不可点**的展开指示箭头。
+                     原来这里是三个 size="mini" 图标键（展开/编辑/删除），实测 22×24，
+                     远低于 --ziwi-touch-min(48)，而且在油污手套下三个相邻小键极易误触。
+                     其中"展开"键本身就是重复的 —— 整行已经绑了 toggleExpand。
+                     编辑/删除移入展开区的 .row-actions，那里有地方给到 48。
+                     箭头保持不可点，是为了不丢掉"这行能展开"的可见提示。 -->
+                <van-icon
+                  :name="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                  class="ziwi-row-chevron"
+                  aria-hidden="true"
+                />
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
               <td :colspan="9">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+                <div class="ziwi-row-actions">
+                  <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
+                  <van-button type="danger" plain icon="delete" @click.stop="handleDelete(item)">删除</van-button>
+                </div>
               </td>
             </tr>
           </template>
@@ -349,11 +354,14 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.op-btns {
-  display: inline-flex;
-  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
-  gap: var(--ziwi-touch-gap-adj);
-  justify-content: flex-end;
+/* 展开指示箭头与展开区操作条走共享类 .ziwi-row-chevron / .ziwi-row-actions
+   （定义在 styles/ziwi-utilities.css —— 4 个基础资料页都要用，写 scoped 就是复制 4 遍）。 */
+
+/* 数据行本身是"点行展开"的点击目标，必须 ≥ --ziwi-touch-min。
+   ★ 别小看这一条：把行内三个图标键拿走后，行高从 46 掉到 40（H 档 34）——
+     原来是那几个 24px 的 mini 按钮在"撑"行高。点击目标变小等于换了个方式不达标。 */
+.wc-table tbody tr:not(.row-detail-row) {
+  height: var(--ziwi-touch-min);
 }
 
 /* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */

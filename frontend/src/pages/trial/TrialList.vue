@@ -170,7 +170,7 @@ function formatStageActions(status: string): string[] {
         </van-dropdown-menu>
       </van-col>
     </van-row>
-    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       <van-tag
         v-for="c in conditions"

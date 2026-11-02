@@ -168,7 +168,7 @@ onMounted(fetchData)
 <template>
   <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+    <div class="ziwi-filter-bar ziwi-gap-3 ziwi-mb-4">
       <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
@@ -234,27 +234,22 @@ onMounted(fetchData)
                 </van-tag>
               </td>
               <td class="op">
-                <div class="op-btns">
-                  <van-button
-                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
-                    size="mini"
-                    plain
-                    @click.stop="toggleExpand(item.id)"
-                  />
-                  <van-button
-                    icon="edit" size="mini" plain type="primary"
-                    @click.stop="openEdit(item)"
-                  />
-                  <van-button
-                    icon="delete" size="mini" plain type="danger"
-                    @click.stop="handleDelete(item)"
-                  />
-                </div>
+                <!-- 行内操作结构性消掉，同 WorkCenterList：只留不可点的展开指示，
+                     编辑/删除移入展开区（那里能给到 48 的热区）。 -->
+                <van-icon
+                  :name="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                  class="ziwi-row-chevron"
+                  aria-hidden="true"
+                />
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
               <td :colspan="8">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+                <div class="ziwi-row-actions">
+                  <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
+                  <van-button type="danger" plain icon="delete" @click.stop="handleDelete(item)">删除</van-button>
+                </div>
               </td>
             </tr>
           </template>
@@ -341,16 +336,16 @@ onMounted(fetchData)
   white-space: normal;
 }
 
-.op-btns {
-  display: inline-flex;
-  flex-wrap: wrap;
-  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
-  gap: var(--ziwi-touch-gap-adj);
-  justify-content: flex-end;
-  max-width: 220px;
-}
+/* .op-btns 已随行内操作移入展开区删除（改用共享类 .ziwi-row-actions）。
+   顺带去掉 max-width: 220px —— 那是为了在窄列里硬挤 3 个图标键的补丁。 */
 
 /* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
+/* 数据行本身是"点行展开"的点击目标，必须 ≥ --ziwi-touch-min（同 WorkCenterList：
+   拿走行内图标键后行高会从 46 掉到 40，原来是 mini 按钮在撑行高）。 */
+.prod-table tbody tr:not(.row-detail-row) {
+  height: var(--ziwi-touch-min);
+}
+
 .prod-table tbody tr.row-detail-row td {
   background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
   padding: 0;

@@ -71,7 +71,7 @@ function goCreate() { router.push('/work-orders/create') }
   <div>
     <van-nav-bar title="工单管理" right-text="新建" @click-right="goCreate" />
     <van-search v-model="keyword" placeholder="搜索工单号/产品" @search="fetch" />
-    <div style="padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
       <van-tag
         v-for="c in conditions"

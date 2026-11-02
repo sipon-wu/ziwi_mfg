@@ -151,7 +151,7 @@ onMounted(loadData)
   <div style="font-family:var(--font-sans);">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px;">
       <p style="font-weight:500; font-size:15px; margin:0;">生产排产</p>
-      <div style="display:flex; gap:8px; align-items:center;">
+      <div class="ziwi-filter-bar ziwi-gap-2">
         <van-button size="small" plain @click="prevWeek">&lt; 上周</van-button>
         <van-button size="small" plain type="primary" @click="thisWeek">本周</van-button>
         <span style="font-size:13px; min-width:100px; text-align:center;">{{ weekLabel }}</span>

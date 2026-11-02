@@ -232,7 +232,7 @@ onMounted(fetchData)
 <template>
   <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+    <div class="ziwi-filter-bar ziwi-gap-3 ziwi-mb-4">
       <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
@@ -293,50 +293,53 @@ onMounted(fetchData)
               <td>{{ routeTypeLabel(item.route_type) }}</td>
               <td class="num">{{ item.step_count }}</td>
               <td class="op">
-                <div class="op-btns">
-                  <van-button
-                    :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
-                    size="mini"
-                    plain
-                    @click.stop="toggleExpand(item.id)"
-                  />
-                  <van-button size="mini" plain icon="bars" @click.stop="goEditor(item)" title="工序编排" />
-                  <van-button
-                    v-if="item.status === 'draft'"
-                    v-perm="'M00:route:update'"
-                    icon="edit" size="mini" plain type="primary"
-                    @click.stop="openEdit(item)"
-                  />
-                  <van-button
-                    v-if="item.status === 'draft'"
-                    v-perm="'M00:route:execute'"
-                    icon="success" size="mini" plain type="success"
-                    @click.stop="handlePublish(item)"
-                  />
-                  <van-button
-                    v-if="item.status === 'published'"
-                    v-perm="'M00:route_new_version:create'"
-                    icon="records" size="mini" plain type="warning"
-                    @click.stop="handleNewVersion(item)"
-                  />
-                  <van-button
-                    v-if="item.status !== 'archived'"
-                    v-perm="'M00:route_archive:create'"
-                    icon="folder" size="mini" plain
-                    @click.stop="handleArchive(item)"
-                  />
-                  <van-button
-                    v-if="item.status === 'draft'"
-                    v-perm="'M00:route:delete'"
-                    icon="delete" size="mini" plain type="danger"
-                    @click.stop="handleDelete(item)"
-                  />
-                </div>
+                <!-- 行内操作结构性消掉，同 WorkCenterList。这一页原来最挤：
+                     最多 6 个 size="mini" 图标键（展开/编排/编辑/发布/新版本/归档/删除）
+                     并排 22×24，油污手套下误触率极高，且"展开"键与整行点击重复。
+                     现在行尾只留不可点的展开指示，操作全部移入展开区。 -->
+                <van-icon
+                  :name="expandedId === item.id ? 'arrow-up' : 'arrow-down'"
+                  class="ziwi-row-chevron"
+                  aria-hidden="true"
+                />
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
               <td :colspan="7">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
+                <div class="ziwi-row-actions">
+                  <van-button plain icon="bars" @click.stop="goEditor(item)">工序编排</van-button>
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    v-perm="'M00:route:update'"
+                    icon="edit" plain type="primary"
+                    @click.stop="openEdit(item)"
+                  >编辑</van-button>
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    v-perm="'M00:route:execute'"
+                    icon="success" plain type="success"
+                    @click.stop="handlePublish(item)"
+                  >发布</van-button>
+                  <van-button
+                    v-if="item.status === 'published'"
+                    v-perm="'M00:route_new_version:create'"
+                    icon="records" plain type="warning"
+                    @click.stop="handleNewVersion(item)"
+                  >新版本</van-button>
+                  <van-button
+                    v-if="item.status !== 'archived'"
+                    v-perm="'M00:route_archive:create'"
+                    icon="folder" plain
+                    @click.stop="handleArchive(item)"
+                  >归档</van-button>
+                  <van-button
+                    v-if="item.status === 'draft'"
+                    v-perm="'M00:route:delete'"
+                    icon="delete" plain type="danger"
+                    @click.stop="handleDelete(item)"
+                  >删除</van-button>
+                </div>
               </td>
             </tr>
           </template>
@@ -421,16 +424,16 @@ onMounted(fetchData)
   white-space: normal;
 }
 
-.op-btns {
-  display: inline-flex;
-  flex-wrap: wrap;
-  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
-  gap: var(--ziwi-touch-gap-adj);
-  justify-content: flex-end;
-  max-width: 340px;
-}
+/* .op-btns 已随行内操作移入展开区删除（改用共享类 .ziwi-row-actions）。
+   顺带去掉 max-width: 340px —— 那是为了在窄列里硬挤最多 6 个图标键的补丁。 */
 
 /* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
+/* 数据行本身是"点行展开"的点击目标，必须 ≥ --ziwi-touch-min（同 WorkCenterList：
+   拿走行内图标键后行高会从 46 掉到 40，原来是 mini 按钮在撑行高）。 */
+.route-table tbody tr:not(.row-detail-row) {
+  height: var(--ziwi-touch-min);
+}
+
 .route-table tbody tr.row-detail-row td {
   background: var(--ziwi-row-hover, rgba(0, 0, 0, 0.02));
   padding: 0;
