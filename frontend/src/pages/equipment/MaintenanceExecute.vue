@@ -32,7 +32,7 @@
  * 所以「提交并完工」在 pending 状态下不出现，先给「开工」；这不是麻烦，
  * 是把"这台设备停了多久"这条数据的来源摆到台面上。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { get, post, put } from '@/api/client'
@@ -442,6 +442,28 @@ function goAndon(): void {
 }
 
 onMounted(load)
+
+/**
+ * 任务之间切换时重新加载（路由器会复用组件实例）。
+ *
+ * 不监听的话，从任务 A 的执行页跳到任务 B 的执行页，页面仍显示 A 的点检项，
+ * 而地址栏已是 B —— 现场会照着 A 的项给 B 打分，数据全错但不报错。
+ * 同时必须清空本地项：模板/手工新增的临时项属于上一张任务，留着会被提交到新任务。
+ */
+watch(
+  () => route.params.id,
+  (raw, old) => {
+    if (String(raw) === String(old)) return
+    const next = Number(raw)
+    if (!Number.isFinite(next) || next <= 0) return
+    items.value = []
+    errorItems.value = []
+    actionError.value = ''
+    equipmentStatus.value = ''
+    receipt.show = false
+    void load()
+  },
+)
 </script>
 
 <template>

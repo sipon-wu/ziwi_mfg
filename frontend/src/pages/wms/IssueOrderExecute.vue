@@ -22,7 +22,7 @@
  * ## 幂等
  * 同一行 50ms 内连点两次只发一次请求（`useSubmitLock`，UE-P0-05）。
  */
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { get, post } from '@/api/client'
@@ -396,6 +396,27 @@ function closeReceipt(): void {
 }
 
 onMounted(load)
+
+/**
+ * 同一组件实例在两张单之间切换时（列表 → 另一张单）必须重新加载。
+ *
+ * 路由器复用组件实例，只有 hash 后缀变化时不重新挂载；不监听的话页面会继续
+ * 显示**上一张单**的行与数量，而地址栏已经换了单号 —— 现场表现是"点了第二张单，
+ * 显示的还是第一张"，接着发料就会发错单。
+ */
+watch(
+  () => route.params.id,
+  (raw, old) => {
+    if (String(raw) === String(old)) return
+    const next = Number(raw)
+    if (!Number.isFinite(next) || next <= 0) return
+    activeItemId.value = null
+    scanError.value = ''
+    scanHint.value = ''
+    completeError.value = ''
+    void load()
+  },
+)
 </script>
 
 <template>

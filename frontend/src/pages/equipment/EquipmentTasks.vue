@@ -20,7 +20,7 @@
  * 不做模糊匹配 —— 模糊匹配会让 "EQ1" 同时命中 EQ10/EQ11/EQ100，
  * 现场表现是"扫一下跳出一堆设备"。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import { txt } from '@/config/uiText'
@@ -145,6 +145,16 @@ onMounted(() => {
   const preset = String(route.query.code || '').trim()
   if (preset) void onScan(preset)
 })
+
+// 复用组件时 query 变化（换一台设备扫码进来）也要重新查，否则显示上一台设备的任务
+watch(
+  () => route.query.code,
+  (raw) => {
+    const next = String(raw || '').trim()
+    if (!next || next === code.value) return
+    void onScan(next)
+  },
+)
 </script>
 
 <template>
