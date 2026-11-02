@@ -81,10 +81,10 @@ export const menuPermissions: MenuPermission[] = [
       { childId: 'fmea_list', perm: 'M10:fmea_document:read' },
     ],
   },
-  {
-    menuId: 'energy',
-    perm: 'M11:energy_device:read',
-  },
+  // 能碳（energy）刻意不在这里登记权限：
+  // 它是跳到 ECMS 的外链，能不能用由 ECMS 按 license 判定。
+  // 若还挂 M11:energy_device:read，没开 M11 权限的角色就看不到入口 ——
+  // 而他在 ECMS 里可能本来就有权，等于被 mfg 的权限表误伤。
   {
     menuId: 'data_collection',
     perm: 'M12:collect_task:read',

@@ -37,8 +37,28 @@
       <nav class="sidebar-nav">
         <template v-for="menu in menuTree" :key="menu.id">
           <div class="nav-submenu">
+            <!-- 外部系统跳转（如能碳 ECMS）：整条是外链，新标签打开 -->
+            <template v-if="menu.href">
+              <a
+                :href="menu.href"
+                class="nav-item parent"
+                target="_blank"
+                rel="noopener noreferrer"
+                :title="`${menu.label}（外部系统，新窗口打开）`"
+                :aria-label="`${menu.label}，外部系统，在新窗口打开`"
+                @click="drawerOpen = false"
+              >
+                <svg class="nav-svg" width="18" height="18" viewBox="0 0 24 24" v-html="menu.icon"></svg>
+                <span class="nav-label" v-show="labelsVisible">{{ menu.label }}</span>
+                <!-- 出站标识：否则用户以为还在本系统里，跳走后找不到回来的路 -->
+                <svg class="nav-ext" v-show="labelsVisible" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M4.5 2.5h5v5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M9.5 2.5L3 9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+              </a>
+            </template>
             <!-- 有子菜单的父级 -->
-            <template v-if="menu.children && menu.children.length">
+            <template v-else-if="menu.children && menu.children.length">
               <div
                 class="nav-item parent"
                 :class="{ open: openMenus[menu.id] }"
@@ -171,6 +191,7 @@ const route = useRoute()
 const router = useRouter()
 import { menuPermissions } from '@/config/menu-permissions'
 import type { MenuPermission } from '@/config/menu-permissions'
+import { ECMS_URL } from '@/config/external'
 
 const auth = useAuthStore()
 const copilot = useCopilotStore()
@@ -339,6 +360,13 @@ interface MenuItem {
   label: string
   icon: string
   path?: string
+  /**
+   * 外部系统地址。有值时这一条渲染成普通外链（新标签打开），
+   * **不参与**站内路由、标签页、面包屑、active 高亮。
+   *
+   * 用途：能碳 ECMS 这类独立产品线只做跳转，不在本系统里复制功能。
+   */
+  href?: string
   children?: { id: string; path: string; label: string }[]
 }
 
@@ -410,15 +438,13 @@ const allMenuTree: MenuItem[] = [
     ],
   },
   {
+    // 能碳 ECMS 是独立产品线（代码在 ziwi_project_dna），mfg 不复制它的功能。
+    // 这里只留一个跳转：曾经挂了「能碳管理 / 用能概况 / 能耗分析 / 碳管理」4 个
+    // 子页，全是占位骨架，等于同一件事有 mfg 与 ECMS 两个源头。
     id: 'energy',
     label: '能碳管理',
     icon: '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-    children: [
-      { id: 'energy_list', path: '/energy', label: '能碳管理' },
-      { id: 'energy_overview', path: '/energy/overview', label: '用能概况' },
-      { id: 'energy_analysis', path: '/energy/analysis', label: '能耗分析' },
-      { id: 'energy_carbon', path: '/energy/carbon', label: '碳管理' },
-    ],
+    href: ECMS_URL,
   },
   {
     id: 'data_collection',
@@ -602,6 +628,17 @@ const breadcrumbs = computed(() => {
 
 /* 父级项 */
 .nav-item.parent { padding-right: 12px; }
+
+/* 外链项的出站标识靠右，和可展开项的箭头位置一致 */
+.nav-ext {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  opacity: 0.45;
+}
+
+.nav-item:hover .nav-ext { opacity: 0.8; }
 
 /* 子项 — 44px 左内边距对齐一级文字左边缘 */
 .nav-item.sub {
