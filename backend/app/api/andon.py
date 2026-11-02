@@ -131,6 +131,26 @@ async def create_response(
     data["andon_call_id"] = call_id
     data["responder_id"] = current_user["id"]
     data["responder_name"] = current_user.get("real_name", "")
+    # ★ `andon_response.response_time_seconds` 在仓储层是**必填绑定参数**，
+    #   但请求体里没有这个字段。此前没人补，导致每次"添加响应记录"都
+    #   500（`A value is required for bind parameter 'response_time_seconds'`）——
+    #   安灯从"呼叫"到"响应"的时限统计因此整条链路是空的。
+    #   口径：从呼叫创建到本次响应的时间差（秒），由服务端算，不接受前端传。
+    ct = call.get("created_at")
+    if isinstance(ct, str):
+        try:
+            ct = datetime.fromisoformat(ct)
+        except ValueError:
+            ct = None
+    if isinstance(ct, datetime):
+        # SQLite 的 `func.now()` 落的是 **naive UTC**，直接跟本地 `datetime.now()`
+        # 相减会整整差一个时区（实测 +28800s = +8h）—— 响应时限统计全成"8 小时"。
+        # naive 一律按 UTC 解释；PG 的 TIMESTAMPTZ 回来是 tz-aware，按自身时区取 now。
+        now = (datetime.now(timezone.utc).replace(tzinfo=None)
+               if ct.tzinfo is None else datetime.now(ct.tzinfo))
+        data["response_time_seconds"] = max(0, int((now - ct).total_seconds()))
+    else:
+        data["response_time_seconds"] = 0
     response_id = await repo.create_response(data)
     return {"code": 0, "message": "响应记录已添加", "data": {"id": response_id}}
 

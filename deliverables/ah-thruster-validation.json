@@ -1,0 +1,170 @@
+{
+  "api": "https://mfg1.ziwi.cn/api/v1",
+  "tenant_id": "t_5436c733aa1e",
+  "date": "2026-11-03",
+  "summary": {
+    "PASS": 11,
+    "FAIL": 2,
+    "BOUNDARY": 3,
+    "GAP": 1
+  },
+  "assertions": [
+    {
+      "code": "V1",
+      "name": "组织树 3 层且父子正确",
+      "status": "PASS",
+      "detail": "节点 12 个，最大层级 3，AH-MFG-ST.parent=AH-MFG ✓",
+      "evidence": "{\"AH\": 1, \"AH-MFG\": 2, \"AH-MFG-AS\": 3, \"AH-MFG-PK\": 3, \"AH-MFG-ST\": 3, \"AH-MFG-RT\": 3, \"AH-QA\": 2, \"AH-QA-IQC\": 3, \"AH-QA-IPQC\": 3, \"AH-EQP\": 2, \"AH-EQP-MT\": 3, \"AH-WH\": 2}"
+    },
+    {
+      "code": "V2",
+      "name": "路线 RTE-AH-STATOR 步骤与工艺表一致",
+      "status": "PASS",
+      "detail": "13/13 步，seq 连续✓，状态 published",
+      "evidence": ""
+    },
+    {
+      "code": "V2",
+      "name": "路线 RTE-AH-ROTOR 步骤与工艺表一致",
+      "status": "PASS",
+      "detail": "8/8 步，seq 连续✓，状态 published",
+      "evidence": ""
+    },
+    {
+      "code": "V2",
+      "name": "路线 RTE-AH-UNIT 步骤与工艺表一致",
+      "status": "PASS",
+      "detail": "19/19 步，seq 连续✓，状态 published",
+      "evidence": ""
+    },
+    {
+      "code": "V3",
+      "name": "新建工单能绑定工艺路线且与产品匹配",
+      "status": "PASS",
+      "detail": "10 张工单：带路线 1 张，路线错配 0 张，路线为空 9 张",
+      "evidence": ""
+    },
+    {
+      "code": "B-4",
+      "name": "改单接口能否补挂工艺路线",
+      "status": "FAIL",
+      "detail": "PUT work-orders/{id} route_id=168 → HTTP 500，回读 route_id=None",
+      "evidence": "UpdateWorkOrderRequest 缺 route_id → 字段被 Pydantic 丢弃 → data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500。已本地修复（补字段 + 空 payload 400），未部署；因此存量工单的路线空缺无法在线修补"
+    },
+    {
+      "code": "V3-note",
+      "name": "存量工单路线空缺的来源",
+      "status": "BOUNDARY",
+      "detail": "9 张工单 route_id 为空：['WO-AH-1103-UN3', 'WO-AH-1103-UN2', 'WO-AH-1103-UN1', 'WO-AH-1103-RT3']",
+      "evidence": "断点续跑（--from p4，id 表为空）时建单，route_id 传了 None；不是创建能力缺失，而是造数流程 + 改单接口不可补挂共同造成"
+    },
+    {
+      "code": "V4",
+      "name": "收货按「收货→上架」两条腿过账且库存不翻倍",
+      "status": "PASS",
+      "detail": "7 行 → receipt 7 / transfer 7；库存 4453.25 == 收货 4570 - 发料 116.75 = 4453.25（✓ 未翻倍）；方向 NULL→待检 ✓ / 待检→库位 ✓",
+      "evidence": ""
+    },
+    {
+      "code": "V5",
+      "name": "发料出库为负向净变动",
+      "status": "PASS",
+      "detail": "4 张发料单 / 39 条 issue 流水，负数 39 条，正数 0 条",
+      "evidence": ""
+    },
+    {
+      "code": "V6",
+      "name": "Σ 报工产出 == 工单完成量",
+      "status": "PASS",
+      "detail": "396 条报工覆盖 7 张工单，不一致 0 张",
+      "evidence": ""
+    },
+    {
+      "code": "B-1",
+      "name": "工单完成量按「所有工序产出」累加",
+      "status": "BOUNDARY",
+      "detail": "7 张在制工单 completed_qty > 计划量：['WO-AH-1103-UN2 915/15', 'WO-AH-1103-UN1 30/15', 'WO-AH-1103-RT2 1080/30']",
+      "evidence": "completed_qty += output_qty 是累计口径，平台没有「工序级产出」与「工单级产出」的区分；30 工序场景下工单完成量会变成 n×计划量，完工判定与超产告警失真"
+    },
+    {
+      "code": "V7",
+      "name": "检验判 NG 能触发 NCR 且挂回来源",
+      "status": "PASS",
+      "detail": "2 张 NCR，有来源 2 张，挂工单 1 张",
+      "evidence": "[{\"ncr_no\": \"NCR-AH-2-1103\", \"source_type\": \"ipqc\", \"source_no\": \"WO-AH-1103-UN1\", \"work_order_id\": 1060, \"defect_qty\": 2.0}, {\"ncr_no\": \"NCR-AH-1-1103\", \"source_type\": \"iqc\", \"source_no\": \"RO-AH-3-1103\", \"work_order_id\": null, \"defect_qty\": 16.0}]"
+    },
+    {
+      "code": "B-2",
+      "name": "检验判 REJ 是否自动开 NCR",
+      "status": "BOUNDARY",
+      "detail": "本次 NCR 由造数显式创建并与检验单/工单对齐；平台未见「judge=REJ → 自动建 NCR」的联动端点",
+      "evidence": "需要现场确认：不合格单是由检验员手工开，还是系统自动开"
+    },
+    {
+      "code": "V8",
+      "name": "安灯 pending → resolved 且留响应记录",
+      "status": "FAIL",
+      "detail": "状态流转 OK（resolved 4/4），但响应记录 0 条：['personnel', 'material', 'quality', 'equipment']",
+      "evidence": "POST /api/v1/andon/calls/{id}/responses 必 500 —— andon_repo.create_response 的 INSERT 要求 :response_time_seconds，API 层未提供；已本地修复，未部署"
+    },
+    {
+      "code": "V9",
+      "name": "批次追溯正反向都能查到",
+      "status": "PASS",
+      "detail": "批次 21 个；反向 TC-1103-UN2 → 工单 10 / 原料批 9；正向 B-SIL-11031 → 影响工单 1 / 产出批 0",
+      "evidence": "{\"back_summary\": {\"source_batch_count\": 9, \"affected_work_order_count\": 0, \"output_batch_count\": 0, \"issue_order_count\": 0}, \"fwd_summary\": {\"source_batch_count\": 0, \"affected_work_order_count\": 1, \"output_batch_count\": 0, \"issue_order_count\": 1}}"
+    },
+    {
+      "code": "G-4",
+      "name": "正向链条最后一段：工单 → 成品批",
+      "status": "GAP",
+      "detail": "原料批 B-SIL-11031 能追到受影响工单 1 张，但没有产出批",
+      "evidence": "探到的工单是 UN3（已发料、未开工、未入库），本场景没有它的成品批；成品入库单靠 source_doc_no 弱关联工单（receipt_orders.work_order_id 为空），这一段不是外键硬链"
+    },
+    {
+      "code": "V10",
+      "name": "保养计划能生成到期任务且幂等",
+      "status": "PASS",
+      "detail": "3 个计划 / 4 张任务 / 已完成 3 张；重跑 generate-due → created=0（0 即幂等）",
+      "evidence": "HTTP 200"
+    }
+  ],
+  "coverage": [
+    {
+      "system": "数据追溯（批次）",
+      "count": 0,
+      "note": "仅批次级，无序列号级",
+      "verdict": "GAP"
+    },
+    {
+      "system": "MES 生产执行",
+      "count": 10,
+      "note": "工单/报工/路线/工序全链路通",
+      "verdict": "PASS"
+    },
+    {
+      "system": "WMS 仓储",
+      "count": 80,
+      "note": "收货两腿 / 发料负向 / 盘点差异均通",
+      "verdict": "PASS"
+    },
+    {
+      "system": "TPM 设备保养",
+      "count": 4,
+      "note": "计划→到期任务→点检→完工通",
+      "verdict": "PASS"
+    },
+    {
+      "system": "QA 质量管理",
+      "count": 3,
+      "note": "检验单/项/判定/抽样通；NG→NCR 需人工开",
+      "verdict": "PASS"
+    },
+    {
+      "system": "Andon 安灯",
+      "count": 4,
+      "note": "状态流转通，响应留痕 500",
+      "verdict": "FAIL"
+    }
+  ]
+}

@@ -63,6 +63,12 @@ class UpdateWorkOrderRequest(BaseModel):
     assigned_org_id: Optional[int] = None
     equipment_id: Optional[int] = None
     work_center_id: Optional[int] = None
+    # ★ 建单接口支持 route_id，改单接口漏了这个字段 → 工单一旦建错路线
+    #   （或建单时路线还没发布、传了 NULL），就**再也改不回来**：PUT 里带
+    #   route_id 会被 Pydantic 当未知字段丢掉，data 只剩别的字段时返回 200
+    #   但路线仍是 NULL；只带 route_id 时 data 为空 → 生成 `SET  WHERE` →
+    #   数据库语法错 → 500「内部服务异常」。两种表现都不是人能看懂的。
+    route_id: Optional[int] = None
     scheduled_start_at: Optional[datetime] = None
     scheduled_end_at: Optional[datetime] = None
     remark: Optional[str] = None

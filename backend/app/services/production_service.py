@@ -196,6 +196,12 @@ class ProductionService:
         # 与新建时挂上去是同一个后果。
         if "work_center_id" in data or "equipment_id" in data:
             await self._validate_resources(data)
+        # ★ data 为空时 `_build_set_clause` 会拼出 `SET  WHERE` → 数据库语法错
+        #   → 500「内部服务异常」。调用方少传/传了 schema 里没有的字段就会走到
+        #   这里，是个只需要一句人话就能说清的调用方错误，不该 500。
+        if not data:
+            raise _bad_request("没有需要更新的字段（改单至少传一个可改字段）",
+                               "400-0003")
         await self.repo.update_work_order(id, data)
         return {"message": "更新成功"}
 
