@@ -1,0 +1,156 @@
+/* ============================================================
+   知微 ziwi · 动效四档（T01 新增）
+   ------------------------------------------------------------
+   ★ 本文件只声明「档位令牌 + 少量落点类」。
+     组件只允许 `transition: var(--ziwi-motion-*)`，**禁止**写裸时长或裸 cubic-bezier。
+     静态闸（scripts/check_ui_contract.py）断言 .vue 内不出现
+     `transition:.*\d+m?s` 与 `cubic-bezier(`。
+
+   ★ 纪律：同一信息功能在 21 个模块必须同一档位，不允许某模块"更活泼"（UE §7.3）。
+
+   档位 ↔ UE §7.2 八类信息功能的映射（不可随意改）：
+     瞬时 tap-*    → A1 按下已注册
+     快速 result-* → A2 操作已生效、A6 注意力引导
+     常规 layer-*  → A3 层级关系、A4 方向与进度、A7 临界/危险预告、A8 空间连续性
+     舒缓 wait-*   → A5 等待中（循环）
+
+   时长取值说明：架构 §4.6 只给"档位名与用途"，不写毫秒数；此处按四档体感的
+   定义取值（瞬时 < 感知延迟门槛、快速一次性、常规可感知位移、舒缓循环不焦躁），
+   由 UI 阶段确认后可整体替换，组件侧无需改动。
+   ============================================================ */
+
+:root {
+  /* ── 瞬时档（A1 按下已注册）──
+     必须低于"感知为等待"的门槛，否则触屏手感会变钝。 */
+  --ziwi-motion-tap-duration: 90ms;
+  --ziwi-motion-tap-easing: cubic-bezier(0.4, 0, 0.2, 1);
+  --ziwi-motion-tap-scale: 0.97;
+
+  /* ── 快速档（A2 操作已生效 / A6 注意力引导）──
+     一次性、不阻塞下一次操作。 */
+  --ziwi-motion-result-duration: 180ms;
+  --ziwi-motion-result-easing: cubic-bezier(0.2, 0, 0, 1);
+  --ziwi-motion-result-hold: 600ms;   /* A6 高亮保持时长（之后自行淡出） */
+
+  /* ── 常规档（A3 层级 / A4 方向 / A7 临界 / A8 空间连续性）── */
+  --ziwi-motion-layer-duration: 240ms;
+  --ziwi-motion-layer-easing: cubic-bezier(0.2, 0, 0, 1);
+  --ziwi-motion-layer-distance: 24px;
+
+  /* ── 舒缓档（A5 等待中，循环）──
+     节奏平稳，不能焦躁；不用于承载进度百分比。 */
+  --ziwi-motion-wait-duration: 1200ms;
+  --ziwi-motion-wait-easing: linear;
+}
+
+/* ============================================================
+   落点类：把四档变成可直接用的原子类，避免每个页面各写一遍
+   （各页面自行写 transition 正是"裸时长"违规的来源）
+   ============================================================ */
+
+/* A1 按下已注册：任何可点元素都应有这个手感。
+   触屏没有 hover，这是唯一的手感来源（UE §7.1）。 */
+.ziwi-tap {
+  transition:
+    transform var(--ziwi-motion-tap-duration) var(--ziwi-motion-tap-easing),
+    opacity var(--ziwi-motion-tap-duration) var(--ziwi-motion-tap-easing);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.ziwi-tap:active:not([disabled]):not(.is-disabled) {
+  transform: scale(var(--ziwi-motion-tap-scale));
+  opacity: 0.86;
+}
+/* 禁用态也要有"按了但无效"的区分（UE §7.2 A1 必须避免项） */
+.ziwi-tap[disabled]:active,
+.ziwi-tap.is-disabled:active {
+  transform: none;
+  opacity: 0.4;
+}
+
+/* A2 操作已生效 + A6 注意力引导：一次性高亮，不做循环呼吸 */
+@keyframes ziwi-flash-in {
+  from { background-color: var(--ziwi-state-success-bg); }
+  to { background-color: transparent; }
+}
+.ziwi-flash {
+  animation: ziwi-flash-in var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing) 1;
+}
+.ziwi-flash--warning {
+  animation-name: ziwi-flash-warning-in;
+}
+@keyframes ziwi-flash-warning-in {
+  from { background-color: var(--ziwi-state-warning-bg); }
+  to { background-color: transparent; }
+}
+
+/* A3/A4/A8 层级与方向：位移由 layer-* 提供，方向由组件决定 */
+.ziwi-layer-enter-active,
+.ziwi-layer-leave-active {
+  transition:
+    transform var(--ziwi-motion-layer-duration) var(--ziwi-motion-layer-easing),
+    opacity var(--ziwi-motion-layer-duration) var(--ziwi-motion-layer-easing);
+}
+.ziwi-layer-enter-from,
+.ziwi-layer-leave-to {
+  transform: translateY(var(--ziwi-motion-layer-distance));
+  opacity: 0;
+}
+
+/* A5 等待中：循环但节奏平稳 */
+@keyframes ziwi-wait-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.ziwi-wait-anim {
+  animation: ziwi-wait-pulse var(--ziwi-motion-wait-duration) var(--ziwi-motion-wait-easing) infinite;
+}
+
+/* ============================================================
+   降级（UE §7.3）：
+     - A1 / A2 / A6 是**必需反馈**，任何情况下不得丢失 → 保留，但改为"无位移"
+     - A3 / A4 / A8 → 位移归零，退化为纯透明度切换
+     - A5 → 只保留静态进度指示
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ziwi-motion-layer-distance: 0px;
+    --ziwi-motion-tap-scale: 1;
+    /* 时长压到"能感知到发生了切换"的最低限度，避免完全无反馈 */
+    --ziwi-motion-tap-duration: 1ms;
+    --ziwi-motion-result-duration: 120ms;
+    --ziwi-motion-layer-duration: 120ms;
+  }
+
+  /* A1：只留透明度，不留位移 */
+  .ziwi-tap:active:not([disabled]):not(.is-disabled) {
+    transform: none;
+    opacity: 0.7;
+  }
+
+  /* A3/A4/A8：无位移 */
+  .ziwi-layer-enter-from,
+  .ziwi-layer-leave-to {
+    transform: none;
+  }
+
+  /* A5：仅静态进度指示 */
+  .ziwi-wait-anim {
+    animation: none;
+    opacity: 0.8;
+  }
+
+  /* * 兜底：关闭所有入场/装饰动画（不影响 A1/A2/A6 的透明度切换） */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* 但 A2/A6 的高亮必须仍然发生：显式恢复一次 */
+  .ziwi-flash {
+    animation: ziwi-flash-in var(--ziwi-motion-result-duration) linear 1 !important;
+  }
+}

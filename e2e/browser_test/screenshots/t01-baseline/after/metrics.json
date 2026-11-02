@@ -1,0 +1,1024 @@
+{
+  "phase": "after",
+  "base": "http://127.0.0.1:5173",
+  "recordedAt": "2026-11-02T02:55:48.008Z",
+  "results": [
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "CalendarView",
+      "title": "工厂日历",
+      "route": "/basics/calendar",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        }
+      ],
+      "overflowCount": 4,
+      "textLen": 253,
+      "touchMin": "48px",
+      "screenshot": "after/CalendarView--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "OperationList",
+      "title": "工序定义",
+      "route": "/basics/operations",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab active",
+          "right": 462
+        },
+        {
+          "tag": "span",
+          "cls": "",
+          "right": 439
+        },
+        {
+          "tag": "span",
+          "cls": "tab-close",
+          "right": 459
+        },
+        {
+          "tag": "table",
+          "cls": "op-table",
+          "right": 988
+        }
+      ],
+      "overflowCount": 70,
+      "textLen": 288,
+      "touchMin": "48px",
+      "screenshot": "after/OperationList--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "ProductList",
+      "title": "产品管理",
+      "route": "/basics/products",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 462
+        },
+        {
+          "tag": "span",
+          "cls": "",
+          "right": 439
+        },
+        {
+          "tag": "span",
+          "cls": "tab-close",
+          "right": 459
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab active",
+          "right": 548
+        }
+      ],
+      "overflowCount": 78,
+      "textLen": 317,
+      "touchMin": "48px",
+      "screenshot": "after/ProductList--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "RouteEditor",
+      "title": "工序编排",
+      "route": "/basics/route-editor/1",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 462
+        },
+        {
+          "tag": "span",
+          "cls": "",
+          "right": 439
+        },
+        {
+          "tag": "span",
+          "cls": "tab-close",
+          "right": 459
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 548
+        }
+      ],
+      "overflowCount": 10,
+      "textLen": 258,
+      "touchMin": "48px",
+      "screenshot": "after/RouteEditor--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "RouteList",
+      "title": "工艺路线",
+      "route": "/basics/routes",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 462
+        },
+        {
+          "tag": "span",
+          "cls": "",
+          "right": 439
+        },
+        {
+          "tag": "span",
+          "cls": "tab-close",
+          "right": 459
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 548
+        }
+      ],
+      "overflowCount": 38,
+      "textLen": 238,
+      "touchMin": "48px",
+      "screenshot": "after/RouteList--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "412x915",
+      "page": "WorkCenterList",
+      "title": "工作中心",
+      "route": "/basics/work-centers",
+      "formFactor": "H",
+      "glove": "off",
+      "innerWidth": 412,
+      "scrollWidth": 412,
+      "bodyScrollWidth": 412,
+      "bodyHeight": 915,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "div",
+          "cls": "top-right",
+          "right": 427
+        },
+        {
+          "tag": "span",
+          "cls": "top-icon logout",
+          "right": 427
+        },
+        {
+          "tag": "svg",
+          "cls": "[object SVGAnimatedString]",
+          "right": 423
+        },
+        {
+          "tag": "path",
+          "cls": "[object SVGAnimatedString]",
+          "right": 421
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 462
+        },
+        {
+          "tag": "span",
+          "cls": "",
+          "right": 439
+        },
+        {
+          "tag": "span",
+          "cls": "tab-close",
+          "right": 459
+        },
+        {
+          "tag": "span",
+          "cls": "page-tab",
+          "right": 548
+        }
+      ],
+      "overflowCount": 72,
+      "textLen": 305,
+      "touchMin": "48px",
+      "screenshot": "after/WorkCenterList--412x915.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "CalendarView",
+      "title": "工厂日历",
+      "route": "/basics/calendar",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 253,
+      "touchMin": "48px",
+      "screenshot": "after/CalendarView--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "OperationList",
+      "title": "工序定义",
+      "route": "/basics/operations",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "op-table",
+          "right": 996
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 996
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 996
+        },
+        {
+          "tag": "th",
+          "cls": "num",
+          "right": 784
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 859
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 996
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 996
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 996
+        }
+      ],
+      "overflowCount": 52,
+      "textLen": 288,
+      "touchMin": "48px",
+      "screenshot": "after/OperationList--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "ProductList",
+      "title": "产品管理",
+      "route": "/basics/products",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "prod-table",
+          "right": 1136
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 776
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 883
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 972
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1136
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 1136
+        }
+      ],
+      "overflowCount": 56,
+      "textLen": 317,
+      "touchMin": "48px",
+      "screenshot": "after/ProductList--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "RouteEditor",
+      "title": "工序编排",
+      "route": "/basics/route-editor/1",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 258,
+      "touchMin": "48px",
+      "screenshot": "after/RouteEditor--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "RouteList",
+      "title": "工艺路线",
+      "route": "/basics/routes",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "route-table",
+          "right": 1216
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 817
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 956
+        },
+        {
+          "tag": "th",
+          "cls": "num",
+          "right": 1069
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1216
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 1216
+        }
+      ],
+      "overflowCount": 20,
+      "textLen": 238,
+      "touchMin": "48px",
+      "screenshot": "after/RouteList--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "768x1024",
+      "page": "WorkCenterList",
+      "title": "工作中心",
+      "route": "/basics/work-centers",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 768,
+      "scrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "bodyHeight": 1024,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "wc-table",
+          "right": 1156
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "th",
+          "cls": "num",
+          "right": 774
+        },
+        {
+          "tag": "th",
+          "cls": "num",
+          "right": 856
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 920
+        },
+        {
+          "tag": "th",
+          "cls": "",
+          "right": 1004
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1156
+        }
+      ],
+      "overflowCount": 45,
+      "textLen": 305,
+      "touchMin": "48px",
+      "screenshot": "after/WorkCenterList--768x1024.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "CalendarView",
+      "title": "工厂日历",
+      "route": "/basics/calendar",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 253,
+      "touchMin": "48px",
+      "screenshot": "after/CalendarView--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "OperationList",
+      "title": "工序定义",
+      "route": "/basics/operations",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 288,
+      "touchMin": "48px",
+      "screenshot": "after/OperationList--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "ProductList",
+      "title": "产品管理",
+      "route": "/basics/products",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "prod-table",
+          "right": 1136
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1136
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1136
+        },
+        {
+          "tag": "td",
+          "cls": "op",
+          "right": 1136
+        },
+        {
+          "tag": "div",
+          "cls": "op-btns",
+          "right": 1124
+        }
+      ],
+      "overflowCount": 41,
+      "textLen": 317,
+      "touchMin": "48px",
+      "screenshot": "after/ProductList--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "RouteEditor",
+      "title": "工序编排",
+      "route": "/basics/route-editor/1",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 258,
+      "touchMin": "48px",
+      "screenshot": "after/RouteEditor--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "RouteList",
+      "title": "工艺路线",
+      "route": "/basics/routes",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "route-table",
+          "right": 1216
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "th",
+          "cls": "num",
+          "right": 1075
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1216
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1216
+        },
+        {
+          "tag": "td",
+          "cls": "num",
+          "right": 1075
+        }
+      ],
+      "overflowCount": 16,
+      "textLen": 238,
+      "touchMin": "48px",
+      "screenshot": "after/RouteList--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1024x768",
+      "page": "WorkCenterList",
+      "title": "工作中心",
+      "route": "/basics/work-centers",
+      "formFactor": "T",
+      "glove": "off",
+      "innerWidth": 1024,
+      "scrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "bodyHeight": 768,
+      "overflowX": 0,
+      "overflowers": [
+        {
+          "tag": "table",
+          "cls": "wc-table",
+          "right": 1156
+        },
+        {
+          "tag": "thead",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "th",
+          "cls": "op",
+          "right": 1156
+        },
+        {
+          "tag": "tbody",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "tr",
+          "cls": "",
+          "right": 1156
+        },
+        {
+          "tag": "td",
+          "cls": "op",
+          "right": 1156
+        },
+        {
+          "tag": "div",
+          "cls": "op-btns",
+          "right": 1144
+        }
+      ],
+      "overflowCount": 29,
+      "textLen": 305,
+      "touchMin": "48px",
+      "screenshot": "after/WorkCenterList--1024x768.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "CalendarView",
+      "title": "工厂日历",
+      "route": "/basics/calendar",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 253,
+      "touchMin": "48px",
+      "screenshot": "after/CalendarView--1440x900.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "OperationList",
+      "title": "工序定义",
+      "route": "/basics/operations",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 288,
+      "touchMin": "48px",
+      "screenshot": "after/OperationList--1440x900.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "ProductList",
+      "title": "产品管理",
+      "route": "/basics/products",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 317,
+      "touchMin": "48px",
+      "screenshot": "after/ProductList--1440x900.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "RouteEditor",
+      "title": "工序编排",
+      "route": "/basics/route-editor/1",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 258,
+      "touchMin": "48px",
+      "screenshot": "after/RouteEditor--1440x900.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "RouteList",
+      "title": "工艺路线",
+      "route": "/basics/routes",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 238,
+      "touchMin": "48px",
+      "screenshot": "after/RouteList--1440x900.png",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "phase": "after",
+      "viewport": "1440x900",
+      "page": "WorkCenterList",
+      "title": "工作中心",
+      "route": "/basics/work-centers",
+      "formFactor": "W",
+      "glove": "off",
+      "innerWidth": 1440,
+      "scrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "bodyHeight": 900,
+      "overflowX": 0,
+      "overflowers": [],
+      "overflowCount": 0,
+      "textLen": 305,
+      "touchMin": "48px",
+      "screenshot": "after/WorkCenterList--1440x900.png",
+      "errors": [],
+      "ok": true
+    }
+  ]
+}

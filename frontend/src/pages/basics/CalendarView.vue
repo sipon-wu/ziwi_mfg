@@ -171,22 +171,22 @@ onMounted(loadYear)
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="ziwi-page">
     <!-- 工具栏 -->
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex items-center gap-2">
+    <div class="ziwi-flex ziwi-items-center ziwi-justify-between ziwi-mb-4">
+      <div class="ziwi-flex ziwi-items-center ziwi-gap-2">
         <van-button icon="arrow-left" size="small" plain @click="prevMonth" />
-        <span class="text-lg font-bold">{{ currentYear }} 年 {{ currentMonth }} 月</span>
+        <span class="ziwi-text-lg ziwi-font-bold">{{ currentYear }} 年 {{ currentMonth }} 月</span>
         <van-button icon="arrow-right" size="small" plain @click="nextMonth" />
         <van-button size="small" plain @click="goToday">今天</van-button>
       </div>
-      <div class="flex gap-2">
+      <div class="ziwi-flex ziwi-gap-2">
         <van-button type="primary" size="small" @click="openInitDialog">初始化</van-button>
       </div>
     </div>
 
     <!-- 年月切换 -->
-    <div class="flex gap-1 mb-2">
+    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-1 ziwi-mb-2">
       <van-button
         v-for="m in 12" :key="m"
         :type="m === currentMonth ? 'primary' : 'default'"
@@ -197,7 +197,7 @@ onMounted(loadYear)
     </div>
 
     <!-- 统计 -->
-    <div class="flex gap-3 mb-3 text-xs text-gray-500">
+    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-3 ziwi-text-xs ziwi-text-secondary">
       <span>工作日: {{ yearSummary['workday'] || 0 }}</span>
       <span>休息: {{ yearSummary['rest'] || 0 }}</span>
       <span>假期: {{ yearSummary['holiday'] || 0 }}</span>
@@ -206,47 +206,47 @@ onMounted(loadYear)
     </div>
 
     <!-- 日历网格 -->
-    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
+    <div v-if="loading" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">加载中...</div>
 
-    <div v-else class="border rounded-lg bg-white overflow-hidden">
+    <div v-else class="ziwi-border ziwi-rounded-lg ziwi-bg-white ziwi-overflow-hidden">
       <!-- 星期头 -->
-      <div class="grid grid-cols-7 bg-gray-50 border-b">
-        <div v-for="lbl in weekDayLabels" :key="lbl" class="text-center text-sm font-medium py-2 text-gray-600">
+      <div class="ziwi-grid-7 ziwi-bg-muted ziwi-border-b">
+        <div v-for="lbl in weekDayLabels" :key="lbl" class="ziwi-text-center ziwi-text-sm ziwi-font-medium ziwi-py-2 ziwi-text-strong">
           {{ lbl }}
         </div>
       </div>
       <!-- 日期格 -->
-      <div class="grid grid-cols-7">
+      <div class="ziwi-grid-7">
         <div
           v-for="(d, idx) in monthDays"
           :key="idx"
-          class="border-b border-r p-1 min-h-[70px] cursor-pointer hover:bg-gray-50"
-          :class="{ 'bg-gray-50': idx % 7 >= 5 }"
+          class="cal-cell ziwi-border-b ziwi-border-r ziwi-p-1 ziwi-min-h-cell ziwi-tappable"
+          :class="{ 'ziwi-bg-muted': idx % 7 >= 5 }"
           @click="d && openDayDetail(d)"
         >
           <template v-if="d">
-            <div class="text-xs font-medium" :style="{ color: getDayConfig(d).color }">
+            <div class="ziwi-text-xs ziwi-font-medium" :style="{ color: getDayConfig(d).color }">
               {{ d.cal_date.slice(8, 10) }}
             </div>
             <div
-              class="inline-block text-xs px-1 rounded mt-0.5"
+              class="ziwi-inline-block ziwi-text-xs ziwi-px-1 ziwi-rounded ziwi-mt-2xs"
               :style="{ backgroundColor: getDayConfig(d).bg, color: getDayConfig(d).color }"
             >
               {{ getDayConfig(d).label }}
             </div>
-            <div v-if="d.name" class="text-xs text-gray-400 truncate mt-0.5">{{ d.name }}</div>
+            <div v-if="d.name" class="ziwi-text-xs ziwi-text-muted ziwi-truncate ziwi-mt-2xs">{{ d.name }}</div>
           </template>
         </div>
       </div>
     </div>
 
     <!-- ── 日期详情弹窗 ── -->
-    <van-dialog v-model:show="showDayDialog" title="日期设置" show-cancel-button @confirm="saveDay" class="!w-[400px]">
-      <div class="p-4 space-y-3">
-        <div class="text-sm font-medium">{{ editingDay.cal_date }}</div>
+    <van-dialog v-model:show="showDayDialog" title="日期设置" show-cancel-button @confirm="saveDay" class="ziwi-dialog-w-sm">
+      <div class="ziwi-p-4 ziwi-stack-3">
+        <div class="ziwi-text-sm ziwi-font-medium">{{ editingDay.cal_date }}</div>
         <van-field label="日期类型">
           <template #input>
-            <SelectField v-model="editingDay.day_type" :options="DAY_TYPE_OPTIONS" class="w-full" />
+            <SelectField v-model="editingDay.day_type" :options="DAY_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
         <van-field v-model="editingDay.name" label="名称" placeholder="如: 国庆节" />
@@ -254,9 +254,9 @@ onMounted(loadYear)
     </van-dialog>
 
     <!-- ── 初始化弹窗 ── -->
-    <van-dialog v-model:show="showInitDialog" title="初始化日历" show-cancel-button @confirm="confirmInit" :confirm-loading="initing" class="!w-[500px]">
-      <div class="p-4 space-y-3">
-        <div class="text-sm text-gray-500">将初始化 {{ currentYear }} 年全部日历数据（先清空再生成）</div>
+    <van-dialog v-model:show="showInitDialog" title="初始化日历" show-cancel-button @confirm="confirmInit" :confirm-loading="initing" class="ziwi-dialog-w-md">
+      <div class="ziwi-p-4 ziwi-stack-3">
+        <div class="ziwi-text-sm ziwi-text-secondary">将初始化 {{ currentYear }} 年全部日历数据（先清空再生成）</div>
 
         <van-field label="周末上班">
           <template #input>
@@ -275,3 +275,12 @@ onMounted(loadYear)
     </van-dialog>
   </div>
 </template>
+
+<style scoped>
+/* 日历日格：可点区域按 UE §6.1 至少 48 高（由 .ziwi-min-h-cell 的 70px 覆盖），
+   H 形态下 7 列会被压窄，这里只保证内容不撑破格宽。 */
+.cal-cell {
+  min-width: 0;
+  overflow: hidden;
+}
+</style>

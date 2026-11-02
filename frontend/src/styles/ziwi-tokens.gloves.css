@@ -1,0 +1,62 @@
+/* ============================================================
+   知微 ziwi · 手套模式令牌覆盖（T01 新增）
+   ------------------------------------------------------------
+   ★ 全站**唯一**允许出现手套档覆盖的文件（架构 §4.1）。
+     其他任何 css 都不得写 [data-glove="on"]，需要区分手套档时只能引用这里的变量。
+
+   开关：<html data-glove="on|off">，由 composables/useGloveMode.ts 下发。
+   依据：UE §6.1「戴手套（手套模式）」列、§6.3「手套模式」行、Q1/Q4 默认建议。
+
+   为什么用 html[data-glove="on"] 而不是 [data-glove="on"]：
+     --ziwi-touch-min 在 ziwi-tokens.css 的 :root 里已声明，二者特异性相同（0,1,0），
+     只靠文件导入顺序兜底太脆。加上标签名把特异性抬到 (0,1,1)，覆盖关系不依赖顺序。
+   ============================================================ */
+
+html[data-glove='on'] {
+  /* ── 触屏人因尺寸：整体抬一档（UE §6.1 手套列）── */
+  --ziwi-touch-min: 56px;          /* 48 → 56 */
+  --ziwi-touch-danger: 64px;       /* 56 → 64 */
+  --ziwi-touch-gap-adj: 12px;      /* 8  → 12 */
+  --ziwi-row-min-h: 56px;          /* 48 → 56 */
+  --ziwi-row-recommended: 64px;    /* 52 → 64 */
+  --ziwi-input-h: 56px;            /* 48 → 56 */
+  --ziwi-actionbar-h: 64px;        /* 56 → 64（含 safe-area 留白） */
+  --ziwi-close-hit: 56px;          /* 48 → 56 */
+
+  /* --ziwi-touch-gap-sem 保持 24：手套不改变「不同语义必须分开」的语义要求，
+     且 UE §6.1 原文即为 24/24，24 已是防误触下限。 */
+
+  /* ── 表格行高跟随行高令牌，避免只放大热区不放大行 ── */
+  --ziwi-table-row-min-h: var(--ziwi-row-min-h);
+  --ziwi-table-cell-py: var(--ziwi-gap-lg);
+
+  /* ── 浮层关闭按钮：58 → 兜底用 56 档 ── */
+  --ziwi-tap-target: var(--ziwi-touch-min);
+}
+
+/* 手套档下，可点元素的最小热区强制抬到 56（覆盖模板里写死的小尺寸） */
+html[data-glove='on'] .ziwi-tappable,
+html[data-glove='on'] .btn-xs,
+html[data-glove='on'] .btn-sm {
+  min-height: var(--ziwi-touch-min);
+  min-width: var(--ziwi-touch-min);
+}
+
+/* ============================================================
+   Vant 手套档重写（架构 §4.7 末段：手套档重写其中 4 个）
+   ------------------------------------------------------------
+   与 styles/vant-overrides.css 成对出现：那边是裸手档（选择器 `:root:root`，
+   特异性 0,2,0），这里是手套档。因此本块必须写到 `html[data-glove='on']:root`
+   （0,2,1）才能压过裸手档——只写 `html[data-glove='on']`（0,1,1）是不够的。
+   只允许 --van-X: var(--ziwi-Y) 的反向桥接（禁止把 ziwi 变量指向 van 变量）。
+   ============================================================ */
+html[data-glove='on']:root {
+  --van-cell-vertical-padding: var(--ziwi-gap-lg);      /* 12 → 16，行高 48 → 56 */
+  --van-button-default-height: var(--ziwi-touch-min);   /* 44 → 56 */
+  --van-picker-option-height: var(--ziwi-touch-min);    /* 44 → 56 */
+  --van-nav-bar-height: var(--ziwi-touch-min);          /* 46 → 56 */
+  --van-cell-font-size: var(--ziwi-font-size-xl);       /* 14 → 16，戴手套视距更远 */
+}
+/* 说明：不重写 --van-button-small-height / mini-height。理由见 vant-overrides.css
+   按钮段注释——把 mini 抬到 56 会让 24 个列表页行高翻倍，属于 R2 踩雷；
+   行内小按钮在 T02/T05 从结构上消掉。 */

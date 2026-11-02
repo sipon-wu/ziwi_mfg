@@ -1,0 +1,19 @@
+{
+  "generatedAt": "T01",
+  "note": "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint 必须为 0；inline_style / raw_transition / inline_statuslabel / legacy_term 只许降不许升。raw_transition 现存 6（MainLayout 4 / RolePermissions 1 / QuickAskChips 1）不在 T01 交付范围内，由 T05 换 var(--ziwi-motion-*) 后压到 0。",
+  "counts": {
+    "inline_style": 333,
+    "dead_tailwind": 0,
+    "min_width_480": 0,
+    "touch_target": 0,
+    "raw_transition": 6,
+    "media_breakpoint": 0,
+    "inline_statuslabel": 12,
+    "legacy_term": 12
+  },
+  "targets": {
+    "dead_tailwind": 0,
+    "min_width_480": 0,
+    "media_breakpoint": 0
+  }
+}

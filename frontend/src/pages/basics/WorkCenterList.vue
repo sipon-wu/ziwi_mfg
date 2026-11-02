@@ -162,10 +162,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="flex flex-wrap gap-3 mb-4 items-end">
-      <div class="flex-1 min-w-[200px]">
+    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+      <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
           placeholder="搜索工作中心编码/名称"
@@ -173,10 +173,10 @@ onMounted(() => {
           @keyup.enter="onSearch"
         />
       </div>
-      <div class="w-40">
+      <div class="ziwi-w-40">
         <SelectField v-model="wcTypeFilter" :options="WC_TYPE_OPTIONS" placeholder="工作中心类型" clearable />
       </div>
-      <div class="flex gap-2">
+      <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
         <van-button type="success" size="small" @click="openCreate">新增工作中心</van-button>
@@ -185,7 +185,7 @@ onMounted(() => {
     </div>
 
     <!-- 高级检索条件 chips -->
-    <div v-if="conditions.length" class="flex flex-wrap gap-2 mb-3 px-1">
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mb-3 ziwi-px-1">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -198,9 +198,9 @@ onMounted(() => {
     </div>
 
     <!-- 列表 -->
-    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
-    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <div v-else class="wc-table-wrap">
+    <div v-if="loading" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">加载中...</div>
+    <div v-else-if="list.length === 0" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">暂无数据</div>
+    <div v-else class="wc-table-wrap ziwi-table-scroll">
       <table class="wc-table">
         <thead>
           <tr>
@@ -228,7 +228,7 @@ onMounted(() => {
               <td class="num">{{ item.labor_count }}</td>
               <td>
                 <van-tag v-if="item.is_esd" type="warning" size="small">是</van-tag>
-                <span v-else class="text-gray-400">—</span>
+                <span v-else class="ziwi-text-muted">—</span>
               </td>
               <td>
                 <van-tag v-if="item.is_active" type="success" size="small">启用</van-tag>
@@ -263,14 +263,14 @@ onMounted(() => {
       :title="isEdit ? '编辑工作中心' : '新增工作中心'"
       show-cancel-button
       @confirm="handleSave"
-      class="!w-[500px]"
+      class="ziwi-dialog-w-md"
     >
-      <div class="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
         <van-field v-model="editing.code" label="工作中心编码" required placeholder="请输入编码" :disabled="isEdit" />
         <van-field v-model="editing.name" label="工作中心名称" required placeholder="请输入名称" />
         <van-field label="工作中心类型" required>
           <template #input>
-            <SelectField v-model="editing.wc_type" :options="WC_TYPE_OPTIONS" class="w-full" />
+            <SelectField v-model="editing.wc_type" :options="WC_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
         <van-field v-model.number="editing.efficiency" label="效率因子" type="number" placeholder="0.85" />
@@ -343,7 +343,8 @@ onMounted(() => {
 
 .op-btns {
   display: inline-flex;
-  gap: 6px;
+  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
+  gap: var(--ziwi-touch-gap-adj);
   justify-content: flex-end;
 }
 

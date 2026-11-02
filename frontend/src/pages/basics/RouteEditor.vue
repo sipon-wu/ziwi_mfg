@@ -281,61 +281,61 @@ function wcTypeLabel(t: string): string {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="ziwi-page">
     <!-- 返回按钮 -->
-    <div class="flex items-center gap-3 mb-4">
+    <div class="ziwi-flex ziwi-items-center ziwi-gap-3 ziwi-mb-4">
       <van-button icon="arrow-left" plain size="small" @click="router.push('/basics/routes')"/>
-      <div>
-        <div class="text-base font-medium">
+      <div class="ziwi-flex-1">
+        <div class="ziwi-text-base ziwi-font-medium">
           {{ routeInfo?.code }} V{{ routeInfo?.version }} - {{ routeInfo?.name }}
         </div>
-        <div class="text-xs text-gray-400">
+        <div class="ziwi-text-xs ziwi-text-muted">
           状态: {{ routeInfo?.status }} | 工序数: {{ steps.length }}
-          <van-tag v-if="!isDraft" type="warning" size="small" class="ml-1">只读</van-tag>
+          <van-tag v-if="!isDraft" type="warning" size="small" class="ziwi-ml-1">只读</van-tag>
         </div>
       </div>
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="text-center py-8 text-gray-400">加载中...</div>
+    <div v-if="loading" class="ziwi-text-center ziwi-py-8 ziwi-text-muted">加载中...</div>
 
     <template v-if="!loading">
       <!-- 操作区 -->
-      <div class="flex gap-2 mb-4 flex-wrap" v-if="isDraft">
+      <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mb-4" v-if="isDraft">
         <van-button type="primary" size="small" icon="plus" @click="openAddStep">添加工序</van-button>
         <van-button type="success" size="small" icon="success" :loading="saving" @click="saveSteps">保存编排</van-button>
       </div>
 
       <!-- 工序编排列表 -->
-      <div class="space-y-2">
+      <div class="ziwi-stack-2">
         <div
           v-for="(step, index) in steps"
           :key="step.step_seq"
-          class="border rounded-lg p-3 bg-white shadow-sm"
+          class="step-card ziwi-border ziwi-rounded-lg ziwi-p-3 ziwi-bg-white ziwi-shadow-sm"
         >
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <div class="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold">
+          <div class="ziwi-flex ziwi-items-center ziwi-justify-between">
+            <div class="step-card__main ziwi-flex ziwi-items-center ziwi-gap-2">
+              <div class="step-seq ziwi-w-7 ziwi-h-7 ziwi-rounded-full ziwi-bg-step ziwi-text-white ziwi-flex ziwi-items-center ziwi-justify-center ziwi-text-xs ziwi-font-bold">
                 {{ step.step_seq }}
               </div>
-              <div>
-                <div class="font-medium">
+              <div class="step-card__text">
+                <div class="ziwi-font-medium">
                   {{ step.op_code || '' }}
-                  <span class="text-gray-500 ml-1">{{ step.op_name || '' }}</span>
+                  <span class="ziwi-text-secondary ziwi-ml-1">{{ step.op_name || '' }}</span>
                 </div>
-                <div class="text-xs text-gray-400 flex gap-2 mt-0.5">
+                <div class="ziwi-text-xs ziwi-text-muted ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mt-2xs">
                   <van-tag plain size="mini">{{ step.step_type === 'outsource' ? '外协' : step.step_type === 'inspect' ? '检验' : '生产' }}</van-tag>
                   <span v-if="step.wc_id">工作中心: {{ getWcLabel(step.wc_id) }}</span>
                   <span v-if="step.parallel_group">并行组: {{ step.parallel_group }}</span>
                 </div>
-                <div v-if="step.setup_time_override || step.unit_time_override" class="text-xs text-gray-400 mt-0.5">
+                <div v-if="step.setup_time_override || step.unit_time_override" class="ziwi-text-xs ziwi-text-muted ziwi-mt-2xs">
                   准备: {{ step.setup_time_override }}min | 单件: {{ step.unit_time_override }}min
                 </div>
               </div>
             </div>
 
             <!-- 操作按钮 -->
-            <div class="flex gap-1 flex-shrink-0" v-if="isDraft">
+            <div class="step-card__actions ziwi-flex ziwi-gap-1 ziwi-flex-none" v-if="isDraft">
               <van-button icon="arrow-up" size="small" plain @click="moveStep(index, -1)" :disabled="index === 0" />
               <van-button icon="arrow-down" size="small" plain @click="moveStep(index, 1)" :disabled="index === steps.length - 1" />
               <van-button icon="edit" size="small" type="primary" plain @click="openEditStep(index)" />
@@ -344,8 +344,8 @@ function wcTypeLabel(t: string): string {
           </div>
         </div>
 
-        <div v-if="steps.length === 0" class="text-center py-10 text-gray-400 border rounded-lg bg-white">
-          <div class="text-4xl mb-2">+</div>
+        <div v-if="steps.length === 0" class="ziwi-text-center ziwi-py-10 ziwi-text-muted ziwi-border ziwi-rounded-lg ziwi-bg-white">
+          <div class="ziwi-text-4xl ziwi-mb-2">+</div>
           <div>暂无工序，请点击「添加工序」开始编排</div>
         </div>
       </div>
@@ -357,9 +357,9 @@ function wcTypeLabel(t: string): string {
       :title="isNewStep ? '添加工序' : '编辑工序'"
       show-cancel-button
       @confirm="confirmAddStep"
-      class="!w-[520px]"
+      class="ziwi-dialog-w-lg"
     >
-      <div class="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
         <van-field label="选择工序" required>
           <template #input>
             <SelectField
@@ -374,7 +374,7 @@ function wcTypeLabel(t: string): string {
 
         <van-field label="步骤类型">
           <template #input>
-            <SelectField v-model="editingStep.step_type" :options="STEP_TYPE_OPTIONS" class="w-full" />
+            <SelectField v-model="editingStep.step_type" :options="STEP_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
 
@@ -389,14 +389,14 @@ function wcTypeLabel(t: string): string {
           </template>
         </van-field>
 
-        <div class="flex gap-2">
+        <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
           <van-field v-model.number="editingStep.setup_time_override" label="准备时间(min)" type="number" placeholder="继承工序" />
           <van-field v-model.number="editingStep.unit_time_override" label="单件时间(min)" type="number" placeholder="继承工序" />
         </div>
 
         <van-field label="并行组标识" placeholder="可选，同组可并行">
           <template #input>
-            <van-field v-model="editingStep.parallel_group" placeholder="例如: P1, P2" style="border: none; padding: 0;" />
+            <van-field v-model="editingStep.parallel_group" placeholder="例如: P1, P2" class="ziwi-field-bare" />
           </template>
         </van-field>
 
@@ -411,3 +411,30 @@ function wcTypeLabel(t: string): string {
     </van-dialog>
   </div>
 </template>
+
+<style scoped>
+/* 工序卡片：H 形态下操作按钮会与主信息抢宽，因此主信息区必须能收缩。
+   这是原来靠失效类（flex / flex-1 / flex-shrink-0）表达而实际没生效的部分。 */
+.step-card {
+  min-width: 0;
+}
+.step-card__main {
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: flex-start;
+}
+.step-card__text {
+  min-width: 0;
+}
+.step-card__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+/* 内层裸 van-field（原为 style="border:none; padding:0"） */
+.ziwi-field-bare :deep(.van-cell) {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+</style>

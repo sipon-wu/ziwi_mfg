@@ -1,0 +1,219 @@
+/* ============================================================
+   知微 ziwi · 最小工具集（T01 新增）
+   ------------------------------------------------------------
+   背景：项目未安装 Tailwind，pages/ 下大量形如 `p-4` / `flex` / `space-y-3` /
+   `min-w-[200px]` 的类名**从未生效**（零报错、零效果）。UE §9.2 UE-07 要求
+   「无失效样式类残留」，T01 的任务是把它们换成**真的会生效的类**。
+
+   ★ 命名规则（架构 §8.1）：新增类一律 `ziwi-` 前缀，禁止 BEM 双下划线。
+     因此这里**故意不复用** Tailwind 的类名 —— 否则一旦将来引入 Tailwind，
+     两边定义会互相覆盖，且静态闸无法区分"已实现"与"仍失效"。
+
+   ★ 只收录实际被用到的类（最小集）。新增需求先看能不能用既有令牌，再考虑加类。
+   ★ 所有尺寸/间距都从 --ziwi-* 令牌取值，禁止在这里写裸 px（1px 边框与 0 除外）。
+   ============================================================ */
+
+/* ── 布局：flex ── */
+.ziwi-flex { display: flex; }
+.ziwi-inline-flex { display: inline-flex; }
+.ziwi-block { display: block; }
+.ziwi-inline-block { display: inline-block; }
+.ziwi-hidden { display: none; }
+.ziwi-flex-col { flex-direction: column; }
+.ziwi-flex-wrap { flex-wrap: wrap; }
+.ziwi-flex-none { flex: none; }
+/* flex-1 的等价物：必须带 min-width: 0，否则子内容（长编码/表格）会把父级撑爆。
+   这正是 H 形态横向溢出的常见根因。 */
+.ziwi-flex-1 { flex: 1 1 0%; min-width: 0; }
+.ziwi-items-start { align-items: flex-start; }
+.ziwi-items-center { align-items: center; }
+.ziwi-items-end { align-items: flex-end; }
+.ziwi-justify-start { justify-content: flex-start; }
+.ziwi-justify-center { justify-content: center; }
+.ziwi-justify-between { justify-content: space-between; }
+.ziwi-justify-end { justify-content: flex-end; }
+
+/* ── 布局：grid（日历 7 列等）──
+   repeat(7, minmax(0, 1fr))：minmax(0,…) 是必须的，否则长内容会撑破列宽。 */
+.ziwi-grid { display: grid; }
+.ziwi-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ziwi-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ziwi-grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ziwi-grid-7 { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+
+/* ── 间距：内外边距（取值自 --ziwi-gap-*）── */
+.ziwi-p-0 { padding: 0; }
+.ziwi-p-1 { padding: var(--ziwi-gap-xs); }
+.ziwi-p-2 { padding: var(--ziwi-gap-sm); }
+.ziwi-p-3 { padding: var(--ziwi-gap-md); }
+.ziwi-p-4 { padding: var(--ziwi-gap-lg); }
+.ziwi-px-1 { padding-left: var(--ziwi-gap-xs); padding-right: var(--ziwi-gap-xs); }
+.ziwi-px-2 { padding-left: var(--ziwi-gap-sm); padding-right: var(--ziwi-gap-sm); }
+.ziwi-py-1 { padding-top: var(--ziwi-gap-xs); padding-bottom: var(--ziwi-gap-xs); }
+.ziwi-py-2 { padding-top: var(--ziwi-gap-sm); padding-bottom: var(--ziwi-gap-sm); }
+.ziwi-py-3 { padding-top: var(--ziwi-gap-md); padding-bottom: var(--ziwi-gap-md); }
+.ziwi-py-8 { padding-top: var(--ziwi-gap-2xl); padding-bottom: var(--ziwi-gap-2xl); }
+.ziwi-py-10 { padding-top: var(--ziwi-gap-3xl); padding-bottom: var(--ziwi-gap-3xl); }
+.ziwi-mb-1 { margin-bottom: var(--ziwi-gap-xs); }
+.ziwi-mb-2 { margin-bottom: var(--ziwi-gap-sm); }
+.ziwi-mb-3 { margin-bottom: var(--ziwi-gap-md); }
+.ziwi-mb-4 { margin-bottom: var(--ziwi-gap-lg); }
+.ziwi-mt-1 { margin-top: var(--ziwi-gap-xs); }
+.ziwi-mt-2xs { margin-top: var(--ziwi-gap-2xs); }
+.ziwi-ml-1 { margin-left: var(--ziwi-gap-xs); }
+.ziwi-mx-2 { margin-left: var(--ziwi-gap-sm); margin-right: var(--ziwi-gap-sm); }
+
+/* ── 间距：栅格间距 ── */
+.ziwi-gap-1 { gap: var(--ziwi-gap-xs); }
+.ziwi-gap-2 { gap: var(--ziwi-gap-sm); }
+.ziwi-gap-3 { gap: var(--ziwi-gap-md); }
+.ziwi-gap-4 { gap: var(--ziwi-gap-lg); }
+.ziwi-gap-sem { gap: var(--ziwi-touch-gap-sem); } /* 不同语义之间的防误触间距 */
+
+/* ── 间距：纵向堆叠（替代 space-y-*）──
+   比给每个孩子写 margin 更安全：不会影响第一个孩子与外层间距。 */
+.ziwi-stack-1 > * + * { margin-top: var(--ziwi-gap-xs); }
+.ziwi-stack-2 > * + * { margin-top: var(--ziwi-gap-sm); }
+.ziwi-stack-3 > * + * { margin-top: var(--ziwi-gap-md); }
+
+/* ── 尺寸 ── */
+.ziwi-w-full { width: 100%; }
+.ziwi-w-32 { width: 128px; }
+.ziwi-w-36 { width: 144px; }
+.ziwi-w-40 { width: 160px; }
+/* 搜索框最小宽（原 min-w-[200px]）：H 形态下必须能让步，否则整行溢出 */
+.ziwi-min-w-field { min-width: min(200px, 100%); }
+.ziwi-h-7 { height: 28px; }
+.ziwi-w-7 { width: 28px; }
+/* 日历日格最小高（原 min-h-[70px]）*/
+.ziwi-min-h-cell { min-height: 70px; }
+/* 浮层内容最大高（原 max-h-[70vh]）：跟随令牌，切形态时无需改模板 */
+.ziwi-max-h-dialog { max-height: var(--ziwi-dialog-max-h); }
+
+/* ── 溢出 ── */
+.ziwi-overflow-hidden { overflow: hidden; }
+.ziwi-overflow-y-auto { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.ziwi-overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── 边框与圆角 ── */
+.ziwi-border { border: 1px solid var(--ziwi-border); }
+.ziwi-border-b { border-bottom: 1px solid var(--ziwi-border); }
+.ziwi-border-r { border-right: 1px solid var(--ziwi-border); }
+.ziwi-rounded-sm { border-radius: var(--ziwi-radius-sm); }
+.ziwi-rounded { border-radius: var(--ziwi-radius-md); }
+.ziwi-rounded-lg { border-radius: var(--ziwi-radius-lg); }
+.ziwi-rounded-full { border-radius: var(--ziwi-radius-round); }
+
+/* ── 背景与阴影 ── */
+.ziwi-bg-white { background: var(--ziwi-bg-white); }
+.ziwi-bg-page { background: var(--ziwi-bg); }
+/* 表头 / 斑马纹的弱底色（原 bg-gray-50）*/
+.ziwi-bg-muted { background: var(--ziwi-bg-light); }
+.ziwi-bg-brand { background: var(--ziwi-primary); }
+.ziwi-bg-step { background: var(--ziwi-info); } /* 工序序号圆点（原 bg-blue-500）*/
+.ziwi-shadow-sm { box-shadow: var(--ziwi-shadow-sm); }
+
+/* ── 文字 ── */
+.ziwi-text-center { text-align: center; }
+.ziwi-text-right { text-align: right; }
+.ziwi-text-xs { font-size: var(--ziwi-font-size-xs); }
+.ziwi-text-sm { font-size: var(--ziwi-font-size-sm); }
+.ziwi-text-base { font-size: var(--ziwi-font-size-lg); }
+.ziwi-text-lg { font-size: var(--ziwi-font-size-xl); }
+.ziwi-text-4xl { font-size: var(--ziwi-font-size-3xl); }
+.ziwi-font-medium { font-weight: 500; }
+.ziwi-font-bold { font-weight: 700; }
+.ziwi-text-primary { color: var(--ziwi-text-primary); }
+.ziwi-text-strong { color: var(--ziwi-text-regular); }
+.ziwi-text-secondary { color: var(--ziwi-text-secondary); }
+.ziwi-text-muted { color: var(--ziwi-text-muted); }
+.ziwi-text-white { color: var(--ziwi-text-white); }
+/* 单行省略（原 truncate）。H 形态主标识唯一可用的收敛方式（UE §4.2）*/
+.ziwi-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── 可点 ──
+   cursor: pointer 只在有指针的设备上出现；触摸反馈交给 .ziwi-tap（A1）。
+   悬停底色按 UE R5 包进 @media (hover: hover) —— 悬停只作增强，不承载唯一信息。 */
+.ziwi-tappable {
+  cursor: pointer;
+  min-height: var(--ziwi-touch-min);
+}
+@media (hover: hover) {
+  .ziwi-tappable:hover {
+    background: var(--ziwi-bg-light);
+  }
+}
+
+/* ── 浮层宽度策略（替代 !w-[400px] / !w-[500px] / !w-[520px]）──
+   宽度由外层策略决定，不由内容撑开（§3.3 R2）。
+   ★ 为什么要写成 `.van-dialog.ziwi-dialog-w-*` 这种双类选择器：
+     Vant 的 `.van-dialog { width: 320px }` 是单类（特异性 0,1,0），而
+     `vant/lib/index.css` 在本项目里被加载了两次（见 vant-overrides.css 顶部说明），
+     第二次落在本文件之后 —— 单类的 `.ziwi-dialog-w-md` 打平后按源序会输，
+     实测宽度仍是 320px。抬到双类（0,2,0）即可与加载顺序解耦。
+   同时保留无前缀的裸类，供自绘浮层（不依赖 Vant）复用。 */
+.ziwi-dialog-w-sm { width: var(--ziwi-dialog-w-sm); }
+.ziwi-dialog-w-md { width: var(--ziwi-dialog-w-md); }
+.ziwi-dialog-w-lg { width: var(--ziwi-dialog-w-lg); }
+.van-dialog.ziwi-dialog-w-sm { width: var(--ziwi-dialog-w-sm); }
+.van-dialog.ziwi-dialog-w-md { width: var(--ziwi-dialog-w-md); }
+.van-dialog.ziwi-dialog-w-lg { width: var(--ziwi-dialog-w-lg); }
+
+/* ── 触屏热区强制达标 ──
+   任何挂了 .ziwi-hit 的元素都不小于 --ziwi-touch-min（裸手 48 / 手套 56）。
+   这是 UE-P0-02 的落点。 */
+.ziwi-hit {
+  min-width: var(--ziwi-touch-min);
+  min-height: var(--ziwi-touch-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ziwi-hit-danger {
+  min-width: var(--ziwi-touch-danger);
+  min-height: var(--ziwi-touch-danger);
+}
+
+/* ── 页面外壳 ──
+   全站页面统一留白。H 形态下左右留白收窄，把宽度让给内容（实测内容区仅 172px）。 */
+.ziwi-page {
+  padding: var(--ziwi-gap-lg);
+  box-sizing: border-box;
+  min-width: 0;
+}
+html[data-form-factor='H'] .ziwi-page {
+  padding: var(--ziwi-gap-sm);
+}
+/* 底部主操作条出现时给页面留出让位高度，避免最后一行被盖住 */
+html[data-form-factor='H'] .ziwi-page--with-actionbar,
+html[data-form-factor='T'] .ziwi-page--with-actionbar {
+  padding-bottom: calc(var(--ziwi-actionbar-h) + env(safe-area-inset-bottom, 0px) + var(--ziwi-gap-lg));
+}
+
+/* ── 表格横向滚动提示（UE-05：必须显性提示）──
+   挂 .ziwi-table-scroll 的容器在内容宽 > 容器宽时右侧给渐变遮罩。 */
+.ziwi-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  background:
+    linear-gradient(to right, var(--ziwi-bg-white) 30%, rgba(255, 255, 255, 0)) left center,
+    linear-gradient(to left, var(--ziwi-bg-white) 30%, rgba(255, 255, 255, 0)) right center;
+  background-size: 24px 100%, 24px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local;
+}
+/* 可滚动提示：容器右边缘的静态箭头（不依赖悬停） */
+.ziwi-table-scroll::after {
+  content: '';
+  position: sticky;
+  right: 0;
+  display: block;
+  width: 0;
+  height: 0;
+}

@@ -1,0 +1,130 @@
+/* ============================================================
+   知微 ziwi · 交互令牌（T01 新增）
+   ------------------------------------------------------------
+   本文件只声明「值」，不含任何组件样式，不含任何选择器副作用。
+   命名规则（架构 §8.1）：--ziwi-{类别}-{语义}-{档位}
+   类别 ∈ touch / row / input / gap / font / state / motion / bp
+
+   ★ 与 ziwi-variables.css 的分工
+     - ziwi-variables.css：品牌色、圆角、阴影、字号、间距刻度、行高（既有文件，只增不改名）
+     - 本文件：断点镜像、触屏人因尺寸、状态语义色（双编码的"颜色"一半）、层级
+     ★ 手套档覆盖**只能**写在 ziwi-tokens.gloves.css，本文件不得出现 [data-glove]
+
+   依据：
+     - UE §6.1 尺寸与间距表（裸手 48 / 戴手套 56）
+     - UE §1.2 状态不能只用颜色
+     - 架构 §4.2 断点、§4.3 触屏尺寸、§4.5 状态语义色
+   ============================================================ */
+
+:root {
+  /* ── 断点镜像（架构 §4.2）──
+     CSS 变量不能用于 @media，因此断点的真源在 TS（config/formFactor.ts）。
+     这里只是镜像，供 getComputedStyle 调试与文档一致性核对。
+     改动必须同步 config/formFactor.ts 的 BREAKPOINTS。 */
+  --ziwi-bp-handheld: 600px;      /* H 上界（宽） */
+  --ziwi-bp-portrait-max: 768px;  /* 竖屏 H 上界 */
+  --ziwi-bp-medium: 1024px;       /* T / W 分界 */
+
+  /* ── 触屏人因尺寸（UE §6.1，裸手档）──
+     手套档见 ziwi-tokens.gloves.css */
+  --ziwi-touch-min: 48px;         /* 最小可点热区（UE-P0-02 阈值） */
+  --ziwi-touch-danger: 56px;      /* 危险操作热区 */
+  --ziwi-touch-gap-adj: 8px;      /* 同组相邻可点元素间距 */
+  --ziwi-touch-gap-sem: 24px;     /* 不同语义可点元素间距（§6.3 防误触删除） */
+  --ziwi-row-min-h: 48px;         /* 列表行最小高 */
+  --ziwi-row-recommended: 52px;   /* 列表行推荐高 */
+  --ziwi-input-h: 48px;           /* 输入框可点高度 */
+  --ziwi-actionbar-h: 56px;       /* 底部主操作条 */
+  --ziwi-close-hit: 48px;         /* 浮层关闭按钮热区 */
+  --ziwi-tap-target: var(--ziwi-touch-min); /* 语义别名：通用可点元素 */
+
+  /* ── 状态语义色 · 双编码的「颜色」一半（架构 §4.5）──
+     每档 3 个变量（fg / bg / bd）；另一半「文字 + 图标」在 config/statusDict.ts。
+     缺任一半即为违规。禁止在页面里直接写这几个色值以外的状态色。 */
+  --ziwi-state-neutral-fg: #475569;
+  --ziwi-state-neutral-bg: #f1f5f9;
+  --ziwi-state-neutral-bd: #e2e8f0;
+
+  --ziwi-state-progress-fg: #0369a1;
+  --ziwi-state-progress-bg: #e0f2fe;
+  --ziwi-state-progress-bd: #bae6fd;
+
+  --ziwi-state-success-fg: #15803d;
+  --ziwi-state-success-bg: #dcfce7;
+  --ziwi-state-success-bd: #bbf7d0;
+
+  --ziwi-state-warning-fg: #92400e;
+  --ziwi-state-warning-bg: #fef3c7;
+  --ziwi-state-warning-bd: #fde68a;
+
+  --ziwi-state-danger-fg: #991b1b;
+  --ziwi-state-danger-bg: #fee2e2;
+  --ziwi-state-danger-bd: #fecaca;
+
+  /* ── 层级（z-index）──
+     全站只允许用这几档，禁止裸数字。数值与 Vant 默认层（popup 2000+）兼容。 */
+  --ziwi-z-base: 0;
+  --ziwi-z-sticky: 10;        /* 表头吸顶 */
+  --ziwi-z-appbar: 100;       /* 顶栏 */
+  --ziwi-z-actionbar: 200;    /* 底部主操作条 */
+  --ziwi-z-offline-bar: 300;  /* 顶部离线常驻条 */
+  --ziwi-z-mask: 400;         /* 遮罩（低于 Vant 浮层） */
+  --ziwi-z-overlay: 500;      /* 自绘浮层 */
+  --ziwi-z-toast: 600;        /* 提示 */
+
+  /* ── 浮层宽度策略（§3.3 R2：宽度由外层策略决定，不得由内容撑开）──
+     替代原 Tailwind 的 !w-[400px] / !w-[500px] / !w-[520px]。
+     统一口径：min(设计宽度, 视口 92%)，保证 H 形态近全宽（UE-02）。 */
+  --ziwi-dialog-w-sm: min(420px, 92vw);
+  --ziwi-dialog-w-md: min(520px, 92vw);
+  --ziwi-dialog-w-lg: min(640px, 92vw);
+  --ziwi-dialog-max-h: 80vh;
+
+  /* ── 表格（UE §6.1：列表行 ≥ 48，手套 56）──  */
+  --ziwi-table-cell-py: var(--ziwi-gap-md);
+  --ziwi-table-cell-px: var(--ziwi-gap-md);
+  --ziwi-table-row-min-h: var(--ziwi-row-min-h);
+}
+
+/* ============================================================
+   状态语义色原子类（配色只从这里取）
+   用法：<span class="ziwi-state ziwi-state--success">…</span>
+   注意：这只是一个"颜色壳"，文字与图标必须由 useStatusTag 提供。
+   ============================================================ */
+.ziwi-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ziwi-gap-xs);
+  padding: var(--ziwi-gap-2xs) var(--ziwi-gap-sm);
+  border-radius: var(--ziwi-radius-lg);
+  border: 1px solid transparent;
+  font-size: var(--ziwi-font-size-sm);
+  line-height: var(--ziwi-lineheight-tight);
+  white-space: nowrap;
+}
+
+.ziwi-state--neutral {
+  color: var(--ziwi-state-neutral-fg);
+  background: var(--ziwi-state-neutral-bg);
+  border-color: var(--ziwi-state-neutral-bd);
+}
+.ziwi-state--progress {
+  color: var(--ziwi-state-progress-fg);
+  background: var(--ziwi-state-progress-bg);
+  border-color: var(--ziwi-state-progress-bd);
+}
+.ziwi-state--success {
+  color: var(--ziwi-state-success-fg);
+  background: var(--ziwi-state-success-bg);
+  border-color: var(--ziwi-state-success-bd);
+}
+.ziwi-state--warning {
+  color: var(--ziwi-state-warning-fg);
+  background: var(--ziwi-state-warning-bg);
+  border-color: var(--ziwi-state-warning-bd);
+}
+.ziwi-state--danger {
+  color: var(--ziwi-state-danger-fg);
+  background: var(--ziwi-state-danger-bg);
+  border-color: var(--ziwi-state-danger-bd);
+}

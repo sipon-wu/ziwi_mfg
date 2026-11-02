@@ -222,10 +222,10 @@ onMounted(fetchData)
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="flex flex-wrap gap-3 mb-4 items-end">
-      <div class="flex-1 min-w-[200px]">
+    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+      <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
           placeholder="搜索路线编码/名称"
@@ -233,10 +233,10 @@ onMounted(fetchData)
           @keyup.enter="onSearch"
         />
       </div>
-      <div class="w-36">
+      <div class="ziwi-w-36">
         <SelectField v-model="statusFilter" :options="STATUS_OPTIONS" placeholder="状态" clearable />
       </div>
-      <div class="flex gap-2">
+      <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
         <van-button v-perm="'M00:route:create'" type="success" size="small" @click="openCreate">新建路线</van-button>
@@ -245,7 +245,7 @@ onMounted(fetchData)
     </div>
 
     <!-- 高级检索条件 chips -->
-    <div v-if="conditions.length" class="flex flex-wrap gap-2 mb-3 px-1">
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mb-3 ziwi-px-1">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -258,9 +258,9 @@ onMounted(fetchData)
     </div>
 
     <!-- 列表 -->
-    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
-    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <div v-else class="route-table-wrap">
+    <div v-if="loading" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">加载中...</div>
+    <div v-else-if="list.length === 0" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">暂无数据</div>
+    <div v-else class="route-table-wrap ziwi-table-scroll">
       <table class="route-table">
         <thead>
           <tr>
@@ -342,14 +342,14 @@ onMounted(fetchData)
       :title="isEdit ? '编辑工艺路线' : '新增工艺路线'"
       show-cancel-button
       @confirm="handleSave"
-      class="!w-[500px]"
+      class="ziwi-dialog-w-md"
     >
-      <div class="p-4 space-y-3">
+      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
         <van-field v-model="editing.code" label="路线编码" required placeholder="请输入编码" :disabled="isEdit" />
         <van-field v-model="editing.name" label="路线名称" required placeholder="请输入名称" />
         <van-field label="路线类型" required>
           <template #input>
-            <SelectField v-model="editing.route_type" :options="ROUTE_TYPE_OPTIONS" class="w-full" />
+            <SelectField v-model="editing.route_type" :options="ROUTE_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
         <van-field v-model="editing.effective_from" label="生效日期" type="date" placeholder="可选" />
@@ -416,7 +416,8 @@ onMounted(fetchData)
 .op-btns {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
+  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
+  gap: var(--ziwi-touch-gap-adj);
   justify-content: flex-end;
   max-width: 340px;
 }

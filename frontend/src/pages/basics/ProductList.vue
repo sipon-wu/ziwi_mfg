@@ -158,10 +158,10 @@ onMounted(fetchData)
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="ziwi-page">
     <!-- 搜索栏 -->
-    <div class="flex flex-wrap gap-3 mb-4 items-end">
-      <div class="flex-1 min-w-[200px]">
+    <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-3 ziwi-mb-4 ziwi-items-end">
+      <div class="ziwi-flex-1 ziwi-min-w-field">
         <van-field
           v-model="keyword"
           placeholder="搜索编码/名称/规格"
@@ -169,11 +169,11 @@ onMounted(fetchData)
           @keyup.enter="onSearch"
         />
       </div>
-      <div class="w-32">
+      <div class="ziwi-w-32">
         <SelectField v-model="typeFilter" :options="PRODUCT_TYPE_OPTIONS" placeholder="产品类型" clearable />
       </div>
-      <van-field v-model="categoryFilter" placeholder="产品分类" class="w-36" clearable @keyup.enter="onSearch" />
-      <div class="flex gap-2">
+      <van-field v-model="categoryFilter" placeholder="产品分类" class="ziwi-w-36" clearable @keyup.enter="onSearch" />
+      <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
         <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
         <van-button plain size="small" @click="onReset">重置</van-button>
         <van-button type="success" size="small" @click="openCreate">新增产品</van-button>
@@ -182,7 +182,7 @@ onMounted(fetchData)
     </div>
 
     <!-- 高级检索条件 chips -->
-    <div v-if="conditions.length" class="flex flex-wrap gap-2 mb-3 px-1">
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mb-3 ziwi-px-1">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -195,9 +195,9 @@ onMounted(fetchData)
     </div>
 
     <!-- 列表 -->
-    <div v-if="loading" class="text-center py-10 text-gray-400">加载中...</div>
-    <div v-else-if="list.length === 0" class="text-center py-10 text-gray-400">暂无数据</div>
-    <div v-else class="prod-table-wrap">
+    <div v-if="loading" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">加载中...</div>
+    <div v-else-if="list.length === 0" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">暂无数据</div>
+    <div v-else class="prod-table-wrap ziwi-table-scroll">
       <table class="prod-table">
         <thead>
           <tr>
@@ -260,15 +260,15 @@ onMounted(fetchData)
       :title="isEdit ? '编辑产品' : '新增产品'"
       show-cancel-button
       @confirm="handleSave"
-      class="!w-[500px]"
+      class="ziwi-dialog-w-md"
     >
-      <div class="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+      <div class="ziwi-p-4 ziwi-stack-3 ziwi-max-h-dialog ziwi-overflow-y-auto">
         <van-field v-model="editing.code" label="产品编码" required placeholder="请输入编码" :disabled="isEdit" />
         <van-field v-model="editing.name" label="产品名称" required placeholder="请输入名称" />
         <van-field v-model="editing.spec" label="规格型号" placeholder="可选" />
         <van-field label="产品类型" required>
           <template #input>
-            <SelectField v-model="editing.product_type" :options="PRODUCT_TYPE_OPTIONS" class="w-full" />
+            <SelectField v-model="editing.product_type" :options="PRODUCT_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
         <van-field v-model="editing.unit" label="单位" required placeholder="个/件/套/Kg/m" />
@@ -336,7 +336,8 @@ onMounted(fetchData)
 .op-btns {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
+  /* 同组相邻可点元素间距：UE §6.1 要求裸手 8 / 手套 12（原 6px 偏挤，油污手套易误触）*/
+  gap: var(--ziwi-touch-gap-adj);
   justify-content: flex-end;
   max-width: 220px;
 }

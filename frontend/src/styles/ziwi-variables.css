@@ -54,13 +54,24 @@
   --ziwi-shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
   --ziwi-shadow-card: 0 1px 4px rgba(0,0,0,0.06);
 
-  /* ── 间距 ── */
+  /* ── 间距 ──
+     4-based 刻度。T01 只补两端（架构 §4.4）：2xs 补"极小缝"，3xl 补"空态留白"。
+     约定：新代码禁止裸 px 写 margin/padding，必须在这里选。
+     允许裸 px 的例外仅三类：1px 边框、0、env(safe-area-inset-*)。 */
+  --ziwi-gap-2xs: 2px;
   --ziwi-gap-xs: 4px;
   --ziwi-gap-sm: 8px;
   --ziwi-gap-md: 12px;
   --ziwi-gap-lg: 16px;
   --ziwi-gap-xl: 24px;
   --ziwi-gap-2xl: 32px;
+  --ziwi-gap-3xl: 48px;
+
+  /* ── 行高（架构 §4.4）──
+     tight：单行数据 / 表格单元格；normal：正文与字段值；loose：多行备注与异常描述。 */
+  --ziwi-lineheight-tight: 1.25;
+  --ziwi-lineheight-normal: 1.5;
+  --ziwi-lineheight-loose: 1.7;
 
   /* ── 字体 ── */
   --ziwi-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
@@ -106,7 +117,15 @@
 .btn-link:hover { color: var(--ziwi-primary-hover); }
 
 .btn-sm { padding: 4px 10px; font-size: var(--ziwi-font-size-sm); }
-.btn-xs { padding: 2px 6px; font-size: var(--ziwi-font-size-xs); }
+/* T01：`.btn-xs` 原为 padding:2px 6px（实测热区约 22×20），是 UE §6.1「最小可点热区
+   48×48」的反面案例。这里只放大**可点面积**（min-width/min-height + 居中），
+   不放大字号与内边距，视觉密度基本不变，热区达标。 */
+.btn-xs {
+  padding: 2px 6px; font-size: var(--ziwi-font-size-xs);
+  min-width: var(--ziwi-touch-min);
+  min-height: var(--ziwi-touch-min);
+  display: inline-flex; align-items: center; justify-content: center;
+}
 .btn-danger { background: var(--ziwi-danger); }
 .btn-danger:hover { background: #dc2626; }
 .btn-danger-outline { border-color: var(--ziwi-danger); color: var(--ziwi-danger); }
@@ -131,22 +150,36 @@
 .kpi-card .kpi-trend.up { color: var(--ziwi-success); }
 .kpi-card .kpi-trend.down { color: var(--ziwi-danger); }
 
-/* ── 表格 ── */
+/* ── 表格 ──
+   T01 修正：
+   1. padding 改为走 --ziwi-table-cell-* 令牌（裸手 12，手套 16，见 ziwi-tokens.gloves.css）；
+   2. 行高：td 上的 height 在表格布局里等价于 min-height，取 --ziwi-table-row-min-h
+      = 48（裸手）/ 56（手套），满足 UE-08「列表行 ≥48/56」；
+   3. 行悬停底色按 UE R5 收进 @media (hover: hover) —— 触屏上根本不存在悬停，
+      原来无条件生效的 hover 只是白担一次样式计算。 */
 .ziwi-table {
   width: 100%; border-collapse: collapse;
   font-size: var(--ziwi-font-size-md);
+  line-height: var(--ziwi-lineheight-tight);
 }
 .ziwi-table th {
   background: var(--ziwi-bg-light); color: var(--ziwi-text-secondary);
-  padding: 10px 12px; text-align: left; font-weight: 500;
+  padding: var(--ziwi-table-cell-py) var(--ziwi-table-cell-px);
+  height: var(--ziwi-table-row-min-h);
+  text-align: left; font-weight: 500;
   border-bottom: 1px solid var(--ziwi-border);
   white-space: nowrap;
 }
 .ziwi-table td {
-  padding: 10px 12px; color: var(--ziwi-text-regular);
+  padding: var(--ziwi-table-cell-py) var(--ziwi-table-cell-px);
+  height: var(--ziwi-table-row-min-h);
+  color: var(--ziwi-text-regular);
   border-bottom: 1px solid var(--ziwi-border-light);
+  vertical-align: middle;
 }
-.ziwi-table tr:hover td { background: #f8fafc; }
+@media (hover: hover) {
+  .ziwi-table tr:hover td { background: var(--ziwi-bg-light); }
+}
 .ziwi-table .status-tag {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: var(--ziwi-font-size-xs); font-weight: 500;
@@ -188,16 +221,24 @@
   border-color: var(--ziwi-primary);
 }
 
-/* ── 弹窗（Modal） ── */
+/* ── 弹窗（Modal） ──
+   T01 关键修正：删除原来的 480px 硬 min-width 下限。
+   480 这个固定下限在 412 宽手持屏上必然横向溢出（UE-04），且违反 §3.3 R2
+   「浮层宽度由外层策略决定，不得由内容撑开」。
+   现行策略：宽度 = min(设计上限, 视口 92%)，H 形态近似全宽。 */
 .modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
   display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
+  z-index: var(--ziwi-z-overlay);
 }
 .modal-content {
   background: var(--ziwi-bg-white); border-radius: var(--ziwi-radius-lg);
-  padding: var(--ziwi-gap-xl); min-width: 480px; max-width: 640px;
-  max-height: 80vh; overflow-y: auto;
+  padding: var(--ziwi-gap-xl);
+  width: var(--ziwi-dialog-w-md);
+  max-width: var(--ziwi-dialog-w-md);
+  max-height: var(--ziwi-dialog-max-h);
+  overflow-y: auto;
+  box-sizing: border-box;
   box-shadow: var(--ziwi-shadow-lg);
 }
 .modal-content h3 { margin: 0 0 var(--ziwi-gap-lg); font-size: var(--ziwi-font-size-xl); color: var(--ziwi-text-primary); }

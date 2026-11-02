@@ -1,10 +1,114 @@
-/* Vant 4 主题色覆写 — 对齐知微品牌色 #0d7377 */
-:root {
-  --van-primary-color: #0d7377;
-  --van-button-primary-background: #0d7377;
-  --van-button-primary-border-color: #0d7377;
-  --van-tab-active-text-color: #0d7377;
-  --van-tab-bottom-bar-color: #0d7377;
-  --van-nav-bar-title-text-color: #1e293b;
-  --van-cell-vertical-padding: 12px;
+/* ============================================================
+   Vant 4 主题桥接 — 单向：--van-* ← --ziwi-*
+   ------------------------------------------------------------
+   ★ 铁律（架构 §4.7）：本文件只允许 `--van-X: var(--ziwi-Y)` 或字面色值，
+     **禁止反向**（不得出现 `--ziwi-X: var(--van-Y)`）。因为 ziwi 令牌是唯一真源，
+     一旦反向，主题就变成由组件库决定，21 个模块没法统一。
+
+   ★ 手套档在 ziwi-tokens.gloves.css 里重写其中 4 个
+     （cell-vertical-padding / button-default-height / picker-option-height / nav-bar-height）。
+     本文件是**裸手档**，不要在这里写 [data-glove]。
+
+   ★ 风险提示（架构 §10 R2）：这一段合入后，Vant 组件在全站 86 页的高度/字号
+     会同时变化。T01 只做了"值对齐到既有品牌令牌"，未放大字号档位，
+     因此除 cell 行高按 48 令牌外，其余为等价替换或小幅收敛。
+   ★ 为什么选择器是 `:root:root` 而不是 `:root`
+     `vant/lib/index.css` 里的变量声明在 `:root, :host` 上（特异性 0,1,0），
+     而这份样式表**会被加载两次**（`main.ts` 显式 import 一次；
+     unplugin-vue-components 的 VantResolver 按组件补 style 时，
+     `vant/es/<comp>/style/index` 又会把整份 index.css 带进来一次）。
+     第二次注入落在我们的覆盖**之后**，普通 `:root` 打平后按源序就输了 —— 实测
+     `.van-cell` 的 paddingTop 仍是 10px 而不是 12px。抬高一级写成 `:root:root`
+     （0,2,0）即可与加载顺序解耦。
+   ============================================================ */
+
+:root:root {
+  /* ── 品牌色（既有 6 条，值不变，改为指向令牌）── */
+  --van-primary-color: var(--ziwi-primary);
+  --van-button-primary-background: var(--ziwi-primary);
+  --van-button-primary-border-color: var(--ziwi-primary);
+  --van-tab-active-text-color: var(--ziwi-primary);
+  --van-tab-bottom-bar-color: var(--ziwi-primary);
+  --van-nav-bar-title-text-color: var(--ziwi-text-primary);
+
+  /* ── Cell（列表行 / 表单行）──
+     现场视距 30–80cm，13px 认不出（UE §1.2），因此字号走 lg(14)。
+     行高由 vertical-padding + line-height 共同决定，必须能承载 ≥48（UE-08）。 */
+  --van-cell-font-size: var(--ziwi-font-size-lg);
+  --van-cell-vertical-padding: var(--ziwi-gap-md);      /* 12px → 行高 12*2 + 14*1.5 ≈ 45，加边框 ≥48 */
+  --van-cell-line-height: var(--ziwi-lineheight-normal);
+  --van-cell-right-icon-color: var(--ziwi-text-muted);
+  --van-cell-text-color: var(--ziwi-text-primary);
+  --van-cell-background: var(--ziwi-bg-white);
+  --van-cell-border-color: var(--ziwi-border-light);
+  --van-cell-group-background: var(--ziwi-bg-white);
+  --van-cell-group-title-color: var(--ziwi-text-secondary);
+
+  /* ── 字段 ── */
+  --van-field-input-text-color: var(--ziwi-text-primary);
+  --van-field-label-color: var(--ziwi-text-secondary);
+  --van-field-placeholder-text-color: var(--ziwi-text-placeholder);
+  --van-field-error-message-color: var(--ziwi-danger);
+  --van-field-required-mark-color: var(--ziwi-danger);
+
+  /* ── 按钮：热区是 UE-P0-02 的落点 ──
+     ★ 只抬 default 档（架构 §4.7 表里也只列了这一条）。
+       small / mini 档**故意不动**：全站 24 个列表页的行内图标按钮用的就是 mini，
+       一旦把 mini 抬到 48，所有表格行高会从 ~48 翻到 ~72（实测 OperationList 1024
+       视口 3 行占 216px），属于 §10 R2「一次性影响 86 页」的典型踩雷。
+       行内小按钮的正解是**结构上消掉**（T02/T05：换 ZiwiActionBar 或行展开），
+       不是靠放大热区硬扛。 */
+  --van-button-default-height: var(--ziwi-touch-min);
+  --van-button-default-font-size: var(--ziwi-font-size-lg);
+  --van-button-normal-font-size: var(--ziwi-font-size-lg);
+  --van-button-border-radius: var(--ziwi-radius-sm);
+  --van-button-danger-background: var(--ziwi-danger);
+  --van-button-danger-border-color: var(--ziwi-danger);
+  --van-button-success-background: var(--ziwi-success);
+  --van-button-success-border-color: var(--ziwi-success);
+  --van-button-warning-background: var(--ziwi-warning);
+  --van-button-warning-border-color: var(--ziwi-warning);
+
+  /* ── 选择器（picker）：工具栏与滚轮行必须拇指可达 ── */
+  --van-picker-toolbar-height: var(--ziwi-actionbar-h);
+  --van-picker-option-height: var(--ziwi-touch-min);
+  --van-picker-option-font-size: var(--ziwi-font-size-lg);
+  --van-picker-background: var(--ziwi-bg-white);
+  --van-picker-toolbar-title-font-size: var(--ziwi-font-size-xl);
+
+  /* ── 浮层 ──
+     遮罩透明度 0.4 → 0.45：车间强光环境下 0.4 偏浅（架构 §4.7）。 */
+  --van-overlay-background: rgba(0, 0, 0, 0.45);
+  --van-popup-round-radius: var(--ziwi-radius-xl);
+  --van-popup-background: var(--ziwi-bg-white);
+  --van-dialog-border-radius: var(--ziwi-radius-lg);
+  --van-dialog-background: var(--ziwi-bg-white);
+  --van-dialog-header-font-weight: 500;
+  --van-dialog-confirm-button-text-color: var(--ziwi-primary);
+  --van-dialog-message-font-size: var(--ziwi-font-size-lg);
+  --van-action-sheet-item-font-size: var(--ziwi-font-size-lg);
+  --van-action-sheet-item-height: var(--ziwi-touch-min);
+
+  /* ── 顶栏 ── */
+  --van-nav-bar-height: var(--ziwi-actionbar-h);
+  --van-nav-bar-background: var(--ziwi-bg-white);
+  --van-nav-bar-icon-color: var(--ziwi-text-primary);
+  --van-nav-bar-text-color: var(--ziwi-primary);
+
+  /* ── 标签 ── */
+  --van-tag-padding: 0 var(--ziwi-gap-sm);
+  --van-tag-font-size: var(--ziwi-font-size-sm);
+  --van-tag-radius: var(--ziwi-radius-sm);
+
+  /* ── 空态 / 加载 ── */
+  --van-empty-description-color: var(--ziwi-text-secondary);
+  --van-empty-description-font-size: var(--ziwi-font-size-lg);
+  --van-loading-spinner-color: var(--ziwi-primary);
+  --van-toast-font-size: var(--ziwi-font-size-lg);
+  --van-toast-radius: var(--ziwi-radius-lg);
+
+  /* ── 开关 / 步进器 / 对话框按钮 ── */
+  --van-switch-size: 24px;
+  --van-stepper-input-height: var(--ziwi-touch-min);
+  --van-stepper-button-height: var(--ziwi-touch-min);
 }
