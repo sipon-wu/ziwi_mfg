@@ -1,8 +1,8 @@
 {
   "generatedAt": "T01",
-  "note": "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint / raw_transition / inline_statuslabel / legacy_term 必须保持 0；inline_style 只许降不许升。T05 收口记录：raw_transition 10 → 0（裸 transition 全换 --ziwi-motion-* 令牌）；inline_style 331 → 316（28 处 van-dialog 换 ZiwiFormSheet、41 处 van-empty 换 ZiwiStateView、报工表单改分区+令牌化，内联样式随之删除）；inline_statuslabel 12 → 0（页面内联 statusLabel/statusColor/RESULT_MAP 全部改 useStatusTag，状态码→文案/图标/语义统一由 config/statusDict.ts 提供，实现 UE §1.2 双编码）；legacy_term 9 → 0（Q5 术语统一，含 2 处真实业务标签：wo_type=maintenance 维护→维修、equipment.status=maintenance 维护中→保养中）。",
+  "note": "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint / raw_transition / inline_statuslabel / legacy_term 必须保持 0；inline_style 只许降不许升。T05 收口记录：raw_transition 10 → 0（裸 transition 全换 --ziwi-motion-* 令牌）；inline_style 331 → 316（28 处 van-dialog 换 ZiwiFormSheet、41 处 van-empty 换 ZiwiStateView、报工表单改分区+令牌化，内联样式随之删除）；inline_statuslabel 12 → 0（页面内联 statusLabel/statusColor/RESULT_MAP 全部改 useStatusTag，状态码→文案/图标/语义统一由 config/statusDict.ts 提供，实现 UE §1.2 双编码）；legacy_term 9 → 0（Q5 术语统一，含 2 处真实业务标签：wo_type=maintenance 维护→维修、equipment.status=maintenance 维护中→保养中）。B2 记录：inline_style 316 → 315。白名单精确化为「纯 CSS 变量注入」一条语义，同时识别静态 `style=\"--x: y\"` 与 Vue 对象式 `:style=\"{ '--x': y }\"`；此前 KpiCard / ZiwiActionBar 两处合法变量注入被误计，ZiwiSelect 新增 1 处（W 档下拉的运行时几何必须注入变量，CSS 表达不了），净减 1。设计值（`height:'80%'`、`cursor/padding`、`color`）仍全部被拦，未放宽。",
   "counts": {
-    "inline_style": 316,
+    "inline_style": 315,
     "dead_tailwind": 0,
     "min_width_480": 0,
     "touch_target": 0,

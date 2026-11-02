@@ -4,23 +4,46 @@
  *
  * ## 它修掉的三件事（架构 §2.2「替换现状的 3 个坑」）
  * ① `selectedValues[0]` 陷阱：内部只认 `option.value`，不再依赖 Vant picker 的回传结构；
- * ② **内联进 `#input` 插槽**：彻底删除，改 `van-popup position="bottom"` + `teleport="body"`
+ * ② **内联进 `#input` 插槽**：彻底删除，改浮层 + `teleport="body"`
  *   （不 teleport 会被 Sheet 的 `overflow:hidden` 裁剪 → 表现为"点了没反应"）；
  * ③ 100 条滚轮：`options.length > 8` 强制切 `search-list`（`van-search` + 行列表），不是 picker。
  *
- * ## 两种模式（同一份 DOM 骨架，只差搜索框）
+ * ## 两种模式（同一份面板，只差搜索框）
  * - `picker`：≤8 项，纯点击选（无滚轮、无「取消/确认」工具栏 → 不产生第二组同语义按钮，R3）
  * - `search-list`：>8 项强制出现搜索框，支持键盘上下移动 + 回车选中 + 服务端搜索 `remote`
+ *
+ * ## 三档形态（UE §3.2「枚举选择器」= 必须不同）
+ *
+ * | 形态 | 容器 | 位置 | 遮罩 | 标题栏 |
+ * |---|---|---|---|---|
+ * | **W** | 自绘 `fixed` 下拉 | **锚定字段下方**（空间不足翻上方） | **无** | 无 |
+ * | **T** | `van-popup position="bottom"` | 视口底部 | 有 | 有 |
+ * | **H** | 同上 | 视口底部 | 有 | 有 |
+ *
+ * ### 为什么 W 档必须换形态（B2 之前是错的）
+ * 改造前三种形态共用 `position="bottom"`：在 1440 宽的一体机上选 3 个词，会从屏幕
+ * 底部升起一个 **1440px 宽**的浮层把整张表格盖住，并且带遮罩、需要点关闭键才能退出。
+ * 这与桌面端"下拉"的肌肉记忆完全相反（用户点字段 → 期望就地展开一个小面板）。
+ * 实测几何：改造前 W/T/H 三档浮层宽度占比 1/1/1、距底 0/0/0px、面板高均 217px，
+ * 即 `formFactor` 在本组件里出现 0 次。
+ *
+ * ### W 档为什么不加遮罩
+ * 下拉是**非模态**控件：用户选完要继续看到并操作后面的字段。加遮罩会把
+ * "就地选一个值"变成"进入一个模式"，多一次退出成本，且遮蔽了上下文。
  *
  * ## 清空语义
  * `clearable` 且非 disabled 时**永远**渲染清空位（不因"当前无值"而消失）；
  * 清空 emit `null`（不是 `''`，与 `inspection_order.result` 空值语义一致）；清空后焦点留在字段。
  *
- * 依据：架构 §2.2；UE §3.2「枚举选择器」行、§4.2 长编码、§6.1 尺寸、UE-P0-01/02、UE-08/15/22。
+ * 依据：架构 §2.2；UE §3.1 三形态、§3.2「枚举选择器」行、§4.2 长编码、§6.1 尺寸、
+ *       UE-P0-01/02、UE-08/15/22；R1/R2/R3/R5。
  */
 import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useFormFactor } from '@/composables/useFormFactor'
 import { ZIWI_SHEET_CTX } from './context'
-import ZiwiSelectList, { type ZiwiOption } from './ZiwiSelectList.vue'
+// 面板已抽到 ZiwiSelectPanel（两档共用），这里只需要选项类型
+import type { ZiwiOption } from './ZiwiSelectList.vue'
+import ZiwiSelectPanel from './ZiwiSelectPanel.vue'
 
 interface Props {
   modelValue: string | number | null
@@ -128,6 +151,107 @@ const isSearchList = computed<boolean>(() => {
 const sizeClass = computed(() => `ziwi-select--${props.size}`)
 
 /* ------------------------------------------------------------------ *
+ * W 档锚定下拉
+ * ------------------------------------------------------------------ */
+
+const { isWide } = useFormFactor()
+
+/** 字段根节点（定位锚点） */
+const anchorRef = ref<HTMLElement | null>(null)
+/** 下拉面板根节点（用于"点外部关闭"的命中判断） */
+const dropdownRef = ref<HTMLElement | null>(null)
+
+interface DropdownGeometry {
+  top: number
+  left: number
+  width: number
+  maxHeight: number
+}
+
+const dropdown = ref<DropdownGeometry | null>(null)
+
+/** 下拉与字段、下拉与视口边缘的间距 */
+const DROPDOWN_GAP = 4
+const DROPDOWN_PAD = 8
+/** 下拉最小宽度：字段很窄时（如内联小字段）也要放得下选项副行 */
+const DROPDOWN_MIN_W = 240
+/** 下拉最大高度（超出则面板内部滚动） */
+const DROPDOWN_MAX_H = 360
+/** 下方可用空间小于这个值就翻到上方展开 */
+const DROPDOWN_FLIP_THRESHOLD = 200
+
+/**
+ * 依据字段当前位置算出下拉几何。
+ *
+ * 定位规则（R2：宽度由外层策略决定，不由内容撑开）：
+ * - 宽度 = max(字段宽, 240)，再夹到视口内；
+ * - 水平优先左对齐字段，右侧放不下则右对齐，仍放不下则贴左边距；
+ * - 垂直优先字段下方，下方空间 < 200 且比上方更小则翻到上方。
+ */
+function computeDropdown(): void {
+  const el = anchorRef.value
+  if (!el || typeof window === 'undefined') return
+
+  const rect = el.getBoundingClientRect()
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+
+  const width = Math.min(Math.max(rect.width, DROPDOWN_MIN_W), vw - DROPDOWN_PAD * 2)
+
+  let left = rect.left
+  if (left + width > vw - DROPDOWN_PAD) left = vw - DROPDOWN_PAD - width
+  if (left < DROPDOWN_PAD) left = DROPDOWN_PAD
+
+  const spaceBelow = vh - rect.bottom - DROPDOWN_GAP - DROPDOWN_PAD
+  const spaceAbove = rect.top - DROPDOWN_GAP - DROPDOWN_PAD
+  const openUp = spaceBelow < DROPDOWN_FLIP_THRESHOLD && spaceAbove > spaceBelow
+
+  const available = Math.max(0, openUp ? spaceAbove : spaceBelow)
+  const maxHeight = Math.min(DROPDOWN_MAX_H, available)
+  const top = openUp
+    ? Math.max(DROPDOWN_PAD, rect.top - DROPDOWN_GAP - maxHeight)
+    : rect.bottom + DROPDOWN_GAP
+
+  dropdown.value = { top, left, width, maxHeight }
+}
+
+/**
+ * W 档：点击面板与字段之外的地方关闭。
+ *
+ * 用 `pointerdown`（而不是 `click`）是为了在字段失焦前就关掉，
+ * 避免"先失焦再关"造成的闪烁。
+ */
+function onDocumentPointerDown(event: MouseEvent): void {
+  if (!show.value || !isWide.value) return
+  const target = event.target as Node | null
+  if (!target) return
+  if (dropdownRef.value?.contains(target)) return
+  if (anchorRef.value?.contains(target)) return
+  close()
+}
+
+/** W 档：页面/容器滚动时关闭（下拉是 `fixed` 定位，不跟随锚点会"飘走"） */
+function onDocumentScroll(): void {
+  if (!show.value || !isWide.value) return
+  close()
+}
+
+function bindWideListeners(): void {
+  if (typeof document === 'undefined') return
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  // capture 才能收到 Sheet 内部滚动容器的 scroll（window 上不冒泡）
+  document.addEventListener('scroll', onDocumentScroll, true)
+  window.addEventListener('resize', onDocumentScroll)
+}
+
+function unbindWideListeners(): void {
+  if (typeof document === 'undefined') return
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  document.removeEventListener('scroll', onDocumentScroll, true)
+  window.removeEventListener('resize', onDocumentScroll)
+}
+
+/* ------------------------------------------------------------------ *
  * 选中值 / 展示文案
  * ------------------------------------------------------------------ */
 
@@ -215,7 +339,9 @@ const sheetContext = inject(ZIWI_SHEET_CTX, null)
 
 watch(show, (open) => {
   if (sheetContext) {
-    if (open) sheetContext.registerOwnedConfirm(OWNED_CONFIRM_TOKEN)
+    // 只有 T/H 档的底部浮层会占用屏幕下半部分，才需要让外层 Sheet footer 让位（R3）。
+    // W 档下拉是就地展开的小面板，不动外层底部按钮，否则下拉一开一关底部会跳。
+    if (open && !isWide.value) sheetContext.registerOwnedConfirm(OWNED_CONFIRM_TOKEN)
     else sheetContext.unregisterOwnedConfirm(OWNED_CONFIRM_TOKEN)
   }
   if (open) {
@@ -226,9 +352,22 @@ watch(show, (open) => {
     if (typeof document !== 'undefined') {
       document.addEventListener('keydown', onPopupKeydown, true)
     }
-  } else if (typeof document !== 'undefined') {
-    document.removeEventListener('keydown', onPopupKeydown, true)
+    if (isWide.value) {
+      // 先算几何再绑监听：监听里的 close() 依赖 show，顺序无关，但几何必须在首帧前就位
+      computeDropdown()
+      bindWideListeners()
+    }
+  } else {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('keydown', onPopupKeydown, true)
+    }
+    unbindWideListeners()
   }
+})
+
+/** 形态切换（拖窗跨断点 / 旋屏）时关掉已开浮层：两种容器不通用，强行保留会错位 */
+watch(isWide, () => {
+  if (show.value) close()
 })
 
 /**
@@ -258,6 +397,7 @@ onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('keydown', onPopupKeydown, true)
   }
+  unbindWideListeners()
   sheetContext?.unregisterOwnedConfirm(OWNED_CONFIRM_TOKEN)
 })
 
@@ -273,6 +413,22 @@ function open(): void {
     const idx = filteredOptions.value.findIndex((o) => o.value === props.modelValue)
     activeIndex.value = idx
   })
+}
+
+/**
+ * 字段点击：W 档做开关（再点一次收起），T/H 档只开不关。
+ *
+ * 为什么分档：W 档是没有遮罩的就地下拉，字段本身仍可点，「点一下开、再点一下关」
+ * 是桌面下拉的通行行为；T/H 档是有遮罩的模态浮层，字段已被遮罩覆盖，不存在
+ * "再点一次"的场景，保持原语义即可。
+ */
+function toggle(): void {
+  if (props.disabled) return
+  if (isWide.value && show.value) {
+    close()
+    return
+  }
+  open()
 }
 
 function close(): void {
@@ -364,8 +520,9 @@ function onFieldKeydown(event: KeyboardEvent): void {
 
 <template>
   <div
+    ref="anchorRef"
     class="ziwi-select"
-    :class="sizeClass"
+    :class="[sizeClass, { 'ziwi-select--open': show }]"
     :data-field="fieldName || undefined"
   >
     <van-field
@@ -379,7 +536,7 @@ function onFieldKeydown(event: KeyboardEvent): void {
       :rules="rules as never"
       readonly
       clickable
-      @click="open"
+      @click="toggle"
       @keydown="onFieldKeydown"
     >
       <template #button>
@@ -407,8 +564,47 @@ function onFieldKeydown(event: KeyboardEvent): void {
       </template>
     </van-field>
 
-    <!-- R1：绝不内联进表单流；teleport 到 body，避免被 Sheet 的 overflow 裁剪 -->
+    <!-- ── W 档：锚定下拉（无遮罩、无标题栏、点外部关闭）──
+         R1：绝不内联进表单流；teleport 到 body，避免被 Sheet 的 overflow 裁剪 -->
+    <Teleport v-if="isWide" to="body">
+      <div
+        v-if="show && dropdown"
+        ref="dropdownRef"
+        class="ziwi-select__dropdown"
+        role="dialog"
+        :style="{
+          '--ziwi-dd-top': `${dropdown.top}px`,
+          '--ziwi-dd-left': `${dropdown.left}px`,
+          '--ziwi-dd-width': `${dropdown.width}px`,
+          '--ziwi-dd-max-h': `${dropdown.maxHeight}px`,
+        }"
+      >
+        <ZiwiSelectPanel
+          variant="dropdown"
+          :title="popupTitle"
+          :count="filteredOptions.length"
+          :show-search="isSearchList"
+          :keyword="keyword"
+          :search-placeholder="searchPlaceholder"
+          :loading="remoteLoading"
+          :options="filteredOptions"
+          :model-value="modelValue"
+          :display-mode="displayMode"
+          :middle-ellipsis="middleEllipsis"
+          :empty-kind="resolvedEmptyKind"
+          :object-name="objectName"
+          :active-index="activeIndex"
+          @select="onSelect"
+          @update:keyword="onKeywordInput"
+          @keydown="onFieldKeydown"
+          @hover="(i: number) => (activeIndex = i)"
+        />
+      </div>
+    </Teleport>
+
+    <!-- ── T/H 档：底部浮层（模态，有遮罩与标题栏）── -->
     <van-popup
+      v-else
       v-model:show="show"
       position="bottom"
       round
@@ -416,47 +612,27 @@ function onFieldKeydown(event: KeyboardEvent): void {
       :lock-scroll="true"
       class="ziwi-select__popup"
     >
-      <div class="ziwi-select__panel">
-        <header class="ziwi-select__header">
-          <h3 class="ziwi-select__title">{{ popupTitle }}</h3>
-          <span v-if="filteredOptions.length" class="ziwi-select__count">
-            {{ filteredOptions.length }} 项
-          </span>
-          <button
-            type="button"
-            class="ziwi-select__close"
-            aria-label="关闭"
-            @click="close"
-          >
-            <van-icon name="cross" size="18" />
-          </button>
-        </header>
-
-        <!-- 搜索框外面包一层自己的 div：Vant Search 会把 class 透给内部 van-field，
-             直接把类名写在 <van-search> 上会导致内层 field 也吃到 padding（视觉上双内边距）。 -->
-        <div v-if="isSearchList" class="ziwi-select__search">
-          <van-search
-            :model-value="keyword"
-            :placeholder="searchPlaceholder"
-            :loading="remoteLoading"
-            @update:model-value="onKeywordInput"
-            @keydown="onFieldKeydown"
-          />
-        </div>
-
-        <ZiwiSelectList
-          :options="filteredOptions"
-          :model-value="modelValue"
-          :display-mode="displayMode"
-          :middle-ellipsis="middleEllipsis"
-          :empty-kind="resolvedEmptyKind"
-          :keyword="keyword"
-          :object-name="objectName"
-          :active-index="activeIndex"
-          @select="onSelect"
-          @hover="(i: number) => (activeIndex = i)"
-        />
-      </div>
+      <ZiwiSelectPanel
+        variant="sheet"
+        :title="popupTitle"
+        :count="filteredOptions.length"
+        :show-search="isSearchList"
+        :keyword="keyword"
+        :search-placeholder="searchPlaceholder"
+        :loading="remoteLoading"
+        :options="filteredOptions"
+        :model-value="modelValue"
+        :display-mode="displayMode"
+        :middle-ellipsis="middleEllipsis"
+        :empty-kind="resolvedEmptyKind"
+        :object-name="objectName"
+        :active-index="activeIndex"
+        @select="onSelect"
+        @update:keyword="onKeywordInput"
+        @keydown="onFieldKeydown"
+        @close="close"
+        @hover="(i: number) => (activeIndex = i)"
+      />
     </van-popup>
   </div>
 </template>
@@ -518,77 +694,61 @@ html[data-hover='on'] .ziwi-select__icon-btn:hover {
   color: var(--ziwi-text-primary);
 }
 
-/* 浮层：宽度 100%（底部浮层），高度由内容决定，最高 80vh */
+/* 底部浮层（T/H）：宽度 100%，高度由内容决定，最高 80vh */
 .ziwi-select__popup {
   border-radius: var(--ziwi-radius-xl) var(--ziwi-radius-xl) 0 0;
   overflow: hidden;
 }
 
-.ziwi-select__panel {
+/* ── 锚定下拉（W）──
+   几何由 `computeDropdown()` 在运行时算出，通过 CSS 变量注入（架构 §8.5：
+   模板只注入变量，视觉属性一律留在 CSS），所以这里消费 --ziwi-dd-*。
+   圆角 8 比卡片(10)小一档：浮层比页面块更轻。
+   无遮罩 → 必须自带边框+阴影把面板与背后的表格分开。 */
+.ziwi-select__dropdown {
+  position: fixed;
+  top: var(--ziwi-dd-top);
+  left: var(--ziwi-dd-left);
+  width: var(--ziwi-dd-width);
+  max-height: var(--ziwi-dd-max-h);
+  z-index: var(--ziwi-z-dropdown);
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  max-height: 80vh;
-  background: var(--ziwi-bg-white);
-}
-
-.ziwi-select__header {
-  display: flex;
-  align-items: center;
-  gap: var(--ziwi-gap-sm);
-  flex: none;
-  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg);
-  border-bottom: 1px solid var(--ziwi-border);
-  min-height: var(--ziwi-actionbar-h);
-}
-
-.ziwi-select__title {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--ziwi-font-size-xl);
-  font-weight: 700;
-  line-height: var(--ziwi-lineheight-tight);
+  box-sizing: border-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ziwi-select__count {
-  flex: none;
-  font-size: var(--ziwi-font-size-sm);
-  color: var(--ziwi-text-muted);
-}
-
-.ziwi-select__close {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--ziwi-close-hit);
-  min-height: var(--ziwi-close-hit);
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--ziwi-text-muted);
-  cursor: pointer;
-  border-radius: var(--ziwi-radius-md);
-}
-
-html[data-hover='on'] .ziwi-select__close:hover {
-  background: var(--ziwi-bg-light);
-  color: var(--ziwi-text-primary);
-}
-
-.ziwi-select__search {
-  flex: none;
-  padding: var(--ziwi-gap-sm) var(--ziwi-gap-md);
   background: var(--ziwi-bg-white);
+  border: 1px solid var(--ziwi-border-card);
+  border-radius: var(--ziwi-radius-lg);
+  /* 阴影取 lg 而不是 md：W 档下拉最常见的落点是**白色表单浮层内部**
+     （`ZiwiFormSheet` 白底），md(0 2px 8px rgba(0,0,0,.08)) 在白底上几乎看不见，
+     下拉会与表单背景融为一体、看不出是一个独立的浮层。lg 才有足够边界感。 */
+  box-shadow: var(--ziwi-shadow-lg);
+  /* 下拉出现：缩放 + 淡入，锚点方向感（A3 层级关系 / A6 注意力引导）*/
+  transform-origin: top center;
+  animation: ziwi-select-drop-in var(--ziwi-motion-layer-duration)
+    var(--ziwi-motion-layer-easing);
 }
 
-/* 搜索框本体的热区由令牌保证（UE-08） */
-.ziwi-select__search :deep(.van-search__content) {
-  min-height: var(--ziwi-select-hit);
-  align-items: center;
+@keyframes ziwi-select-drop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 字段在打开期间的视觉回执（A2 操作已生效）：边框转主色，与下拉连成一体 */
+.ziwi-select--open :deep(.van-field) {
+  background: var(--ziwi-primary-bg);
+}
+
+/* 减少动效偏好：只保留状态变化，不播动画（A1 按下已注册不依赖动画） */
+@media (prefers-reduced-motion: reduce) {
+  .ziwi-select__dropdown {
+    animation: none;
+  }
 }
 </style>

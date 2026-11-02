@@ -273,3 +273,65 @@ W: [1024,+∞) 横屏
 | **D3** | `ZiwiSelect` 三档浮层几何完全相同，W 档用了 T/H 的形态（1440px 宽底部浮层盖表格） | B2 |
 | **D4** | 搜索框 placeholder「工作中心类型」被截成「工作中心类」 | B2/B4 |
 | **D5** | `Cockpit.vue` 的 M11 KPI 卡仍读 mfg 侧 `/energy/*`；`SolutionConfig.vue`「快速启用能碳」仍指 `/energy`；4 个占位页 + 4 条路由 + 后端 `app/api/energy.py`（16 端点）未删 | 能碳边界收尾（未授权，未动） |
+
+---
+
+## 8. B2 执行记录（2026-11-03）
+
+### 8.1 修掉的问题（D3）
+
+改造前三档共用 `van-popup position="bottom"`：在 1440 宽一体机上选 3 个词，会从屏幕底部升起一个 **1440px 宽**的浮层把整张表格盖住，还带遮罩、必须点关闭键才能退出。`formFactor` 在本组件里出现 **0 次**。
+
+### 8.2 三档形态（实施口径）
+
+| 形态 | 容器 | 位置 | 遮罩 | 标题栏 | 关闭方式 |
+|---|---|---|---|---|---|
+| **W** | 自绘 `fixed` 下拉 | **锚定字段下方**，下方空间 < 200 且比上方小时翻上方 | **无**（非模态） | 无 | 点外部 / 再点字段 / Esc / 滚动 |
+| **T** | `van-popup bottom` | 视口底部 | 有 | 有 | 点遮罩 / 关闭键 / Esc |
+| **H** | 同上 | 视口底部 | 有 | 有 | 同上 |
+
+三档共同项（不分档）：**选项行高 48（触屏底线，不因 W 档变桌面就压到 40/43）**、`↑↓/Enter` 键盘选择、搜索框（>8 项时）、清空 emit `null`。
+
+### 8.3 改了哪些文件
+
+| 文件 | 改动 |
+|---|---|
+| `components/ziwi/ZiwiSelectPanel.vue`（新建） | 把「搜索框 + 选项列表」抽成内部件。容器分 `sheet`（带标题栏）/ `dropdown`（无标题栏），避免 40 行模板在两个分支里各写一遍 |
+| `components/ziwi/ZiwiSelect.vue` | 加 `isWide` 分支 + `computeDropdown()` 几何计算 + 点外部/滚动/resize 关闭 + `toggle()`（W 档再点字段收起） |
+| `styles/ziwi-tokens.css` | 新增 `--ziwi-z-dropdown: 3000` |
+| `scripts/check_ui_contract.py` | `INLINE_STYLE_ALLOW` 白名单精确化为「纯 CSS 变量注入」一条语义，同时识别 `style="--x: y"` 与 `:style="{ '--x': y }"`；`--write-baseline` 加 `--note` 且**不再覆盖历史记录** |
+
+### 8.4 四个坑（都在「以为对了其实没生效 / 以为坏了其实没坏」这一类）
+
+1. **`--ziwi-z-overlay: 500` 在 Sheet 里不够用**。W 档下拉会出现在 `ZiwiFormSheet`（`van-popup`，实测 z=2002）内部，500 会被外层面板压住 —— 表现是「点了字段，下拉在 Sheet 底下看不见」。新增 `--ziwi-z-dropdown: 3000`。**必须用 `elementFromPoint` 命中测试验证，只看 z-index 数值不算数。**
+
+2. **`van-popup` 关闭后 DOM 不消失**。T/H 两档的 Esc 断言第一版用 `querySelector` 判存在性 → 恒为 true → 两条假红。Vant 用 `v-show` + transition，关闭后元素仍在 DOM。必须用**可见性**（`display/visibility/opacity/尺寸`）判定。
+
+3. **`Number(null) === 0` 造出假绿**。Sheet 的 class 我猜成 `.van-popup--bottom.van-popup--round`，实际 W 档是居中弹窗、类名不同 → `sheetZ=null` → 断言 `3000 > Number(null)` 恒真。已改成「先证明 sheetZ 可读，再比大小」的两段式，并改用 `.ziwi-sheet` 往上找父级（不猜外层类名）。
+
+4. **`shadow-md` 在白底表单浮层上几乎看不见**。下拉最常见的落点就是白色 Sheet 内部，`0 2px 8px rgba(0,0,0,.08)` 导致面板与表单背景融为一体。升到 `shadow-lg`。
+
+### 8.5 验收证据
+
+| 项 | 结果 |
+|---|---|
+| `t10_select_three_tier_e2e.js`（新增） | **36/36 PASS**：W 档锚定 ±8px、无遮罩、无标题栏、宽 240、z=3000、圆角 8、不越界、点外部关、toggle 关；T/H 距底 0、有遮罩、有标题栏、宽=视口；三档行高 48、Esc 可关 |
+| `t11_select_sheet_and_smoke_e2e.js`（新增） | 断言 **9/9**（Sheet 内下拉命中测试通过、`3000 > 2002`）+ 14 页 × 3 档冒烟 **42/42 无 JS 错误** |
+| `t08_visual_align_e2e.js` | 12/12 无回归 |
+| `t09_card_model_audit.js` | 34/34 无回归 |
+| `check_ui_contract.py` | `inline_style` **315**（较基线 316 降 1），其余 7 项全 0 |
+| `vue-tsc --noEmit` | 76 条存量错误不变，改动文件 0 新增 |
+
+### 8.6 inline_style 从 316 降到 315 的原因（为什么这不是「放宽标准」）
+
+白名单语义没变，仍是「模板里只出现数据，不出现设计值」，只是把 Vue 对象式绑定纳入识别范围。净效果：
+- `KpiCard` / `ZiwiActionBar` 两处**合法**变量注入此前被误计 → 纠正；
+- `ZiwiSelect` 新增 1 处（W 档几何只能在运行时算，CSS 表达不了）→ 以变量注入形式放行；
+- 设计值（`height:'80%'`、`cursor/padding`、`color`）**仍全部被拦**，已逐条核对未放宽。
+
+### 8.7 新登记（本轮不动）
+
+| 编号 | 问题 | 归属 |
+|---|---|---|
+| **D6** | W 档 Sheet 内字段 `label` 被挤成两行（「工作中心类型」→「工作中心类/型」，编码同理），Sheet 内容区明明有 730px 宽 | B4（筛选/表单 label 宽度策略） |
+| **D7** | 库房树三列卡高参差（同 D2） | B3/B4 |

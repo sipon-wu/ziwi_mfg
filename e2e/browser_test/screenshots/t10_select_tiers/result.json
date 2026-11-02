@@ -1,0 +1,223 @@
+{
+  "base": "http://127.0.0.1:5173",
+  "pass": 36,
+  "total": 36,
+  "results": [
+    {
+      "tier": "W",
+      "name": "视口落入预期档（1440x900）",
+      "ok": true,
+      "detail": "实际 W"
+    },
+    {
+      "tier": "W",
+      "name": "容器是自绘下拉（不是 van-popup）",
+      "ok": true,
+      "detail": "dropdown"
+    },
+    {
+      "tier": "W",
+      "name": "锚定在字段下方（±8px）",
+      "ok": true,
+      "detail": "下拉top=189 字段bottom=185"
+    },
+    {
+      "tier": "W",
+      "name": "无遮罩（非模态）",
+      "ok": true,
+      "detail": "overlay=false"
+    },
+    {
+      "tier": "W",
+      "name": "无标题栏",
+      "ok": true,
+      "detail": "header=false"
+    },
+    {
+      "tier": "W",
+      "name": "宽度不铺满视口（< 70%）",
+      "ok": true,
+      "detail": "240/1440"
+    },
+    {
+      "tier": "W",
+      "name": "宽度 ≥ 240（放得下副行）",
+      "ok": true,
+      "detail": "240px"
+    },
+    {
+      "tier": "W",
+      "name": "层级高于 Vant 浮层（z ≥ 2000）",
+      "ok": true,
+      "detail": "z=3000"
+    },
+    {
+      "tier": "W",
+      "name": "圆角 8px（比卡片小一档）",
+      "ok": true,
+      "detail": "8px"
+    },
+    {
+      "tier": "W",
+      "name": "右边界不越出视口",
+      "ok": true,
+      "detail": "1190 vs 1440"
+    },
+    {
+      "tier": "W",
+      "name": "点外部关闭",
+      "ok": true,
+      "detail": "仍打开=false"
+    },
+    {
+      "tier": "W",
+      "name": "再点字段可收起（toggle）",
+      "ok": true,
+      "detail": "仍打开=false"
+    },
+    {
+      "tier": "W",
+      "name": "选项行高 ≥ 48（触屏底线）",
+      "ok": true,
+      "detail": "48px"
+    },
+    {
+      "tier": "W",
+      "name": "选项列表非空",
+      "ok": true,
+      "detail": "3 项"
+    },
+    {
+      "tier": "W",
+      "name": "无 JS 运行时错误",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "tier": "W",
+      "name": "Esc 可关闭",
+      "ok": true,
+      "detail": "dropdown=false popup=false"
+    },
+    {
+      "tier": "T",
+      "name": "视口落入预期档（900x700）",
+      "ok": true,
+      "detail": "实际 T"
+    },
+    {
+      "tier": "T",
+      "name": "容器是底部分组浮层（van-popup）",
+      "ok": true,
+      "detail": "popup"
+    },
+    {
+      "tier": "T",
+      "name": "从视口底部升起（距底 0）",
+      "ok": true,
+      "detail": "距底 0px"
+    },
+    {
+      "tier": "T",
+      "name": "有遮罩（模态）",
+      "ok": true,
+      "detail": "overlay=true"
+    },
+    {
+      "tier": "T",
+      "name": "有标题栏",
+      "ok": true,
+      "detail": "header=true「请选择」"
+    },
+    {
+      "tier": "T",
+      "name": "宽度铺满视口",
+      "ok": true,
+      "detail": "900/900"
+    },
+    {
+      "tier": "T",
+      "name": "选项行高 ≥ 48（触屏底线）",
+      "ok": true,
+      "detail": "48px"
+    },
+    {
+      "tier": "T",
+      "name": "选项列表非空",
+      "ok": true,
+      "detail": "3 项"
+    },
+    {
+      "tier": "T",
+      "name": "无 JS 运行时错误",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "tier": "T",
+      "name": "Esc 可关闭",
+      "ok": true,
+      "detail": "dropdown=false popup=false"
+    },
+    {
+      "tier": "H",
+      "name": "视口落入预期档（412x915）",
+      "ok": true,
+      "detail": "实际 H"
+    },
+    {
+      "tier": "H",
+      "name": "容器是底部分组浮层（van-popup）",
+      "ok": true,
+      "detail": "popup"
+    },
+    {
+      "tier": "H",
+      "name": "从视口底部升起（距底 0）",
+      "ok": true,
+      "detail": "距底 0px"
+    },
+    {
+      "tier": "H",
+      "name": "有遮罩（模态）",
+      "ok": true,
+      "detail": "overlay=true"
+    },
+    {
+      "tier": "H",
+      "name": "有标题栏",
+      "ok": true,
+      "detail": "header=true「请选择」"
+    },
+    {
+      "tier": "H",
+      "name": "宽度铺满视口",
+      "ok": true,
+      "detail": "412/412"
+    },
+    {
+      "tier": "H",
+      "name": "选项行高 ≥ 48（触屏底线）",
+      "ok": true,
+      "detail": "48px"
+    },
+    {
+      "tier": "H",
+      "name": "选项列表非空",
+      "ok": true,
+      "detail": "3 项"
+    },
+    {
+      "tier": "H",
+      "name": "无 JS 运行时错误",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "tier": "H",
+      "name": "Esc 可关闭",
+      "ok": true,
+      "detail": "dropdown=false popup=false"
+    }
+  ]
+}

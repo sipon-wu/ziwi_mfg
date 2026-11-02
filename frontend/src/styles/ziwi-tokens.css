@@ -71,6 +71,11 @@
   --ziwi-z-mask: 400;         /* 遮罩（低于 Vant 浮层） */
   --ziwi-z-overlay: 500;      /* 自绘浮层 */
   --ziwi-z-toast: 600;        /* 提示 */
+  /* 锚定下拉专用。必须**高于 Vant 浮层（2000+）**：W 档的枚举下拉会出现在
+     `ZiwiFormSheet`（van-popup）内部，若沿用 --ziwi-z-overlay(500) 会被外层面板
+     压住 —— 表现是"点了字段，下拉在 Sheet 底下看不见"。
+     Vant 同时存在多个 popup 时按 2000/2001/2002… 递增，3000 留足余量。 */
+  --ziwi-z-dropdown: 3000;
 
   /* ── 浮层宽度策略（§3.3 R2：宽度由外层策略决定，不得由内容撑开）──
      替代原 Tailwind 的 !w-[400px] / !w-[500px] / !w-[520px]。

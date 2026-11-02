@@ -1,0 +1,52 @@
+{
+  "base": "http://127.0.0.1:5173",
+  "pass": 9,
+  "total": 9,
+  "results": [
+    {
+      "name": "Sheet 已打开",
+      "ok": true,
+      "detail": "true"
+    },
+    {
+      "name": "Sheet 内存在选择器",
+      "ok": true,
+      "detail": "1 个"
+    },
+    {
+      "name": "Sheet 内下拉已渲染",
+      "ok": true,
+      "detail": "[404,423,730,146]"
+    },
+    {
+      "name": "下拉未被 Sheet 遮挡（命中测试）",
+      "ok": true,
+      "detail": "命中=ziwi-select-list__row 下拉z=3000 Sheet z=2002"
+    },
+    {
+      "name": "Sheet 的 z-index 可读（防假绿）",
+      "ok": true,
+      "detail": "sheetZ=2002"
+    },
+    {
+      "name": "下拉 z-index 高于 Sheet",
+      "ok": true,
+      "detail": "3000 > 2002"
+    },
+    {
+      "name": "下拉完整落在视口内",
+      "ok": true,
+      "detail": "[404,423,730,146]"
+    },
+    {
+      "name": "Sheet 场景无 JS 错误",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "14 页 × 3 档 无 JS 错误",
+      "ok": true,
+      "detail": "42/42"
+    }
+  ]
+}

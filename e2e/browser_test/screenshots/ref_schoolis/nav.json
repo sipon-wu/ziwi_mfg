@@ -1,0 +1,30 @@
+{
+  "linkCount": 0,
+  "links": [],
+  "fixed": [
+    {
+      "tag": "DIV",
+      "cls": "layout-sidebar driver-highlighted-element",
+      "w": 176,
+      "bg": "rgba(0, 0, 0, 0)",
+      "boxShadow": "none",
+      "borderRight": "0px none rgba(0, 0, 0, 0.65)"
+    },
+    {
+      "tag": "DIV",
+      "cls": "index-module__menus___OKkAC Light",
+      "w": 176,
+      "bg": "rgba(0, 0, 0, 0)",
+      "boxShadow": "rgba(211, 222, 241, 0.2) 2px 2px 17px 0px",
+      "borderRight": "0px none rgb(34, 34, 34)"
+    },
+    {
+      "tag": "DIV",
+      "cls": "funnelLine",
+      "w": 154,
+      "bg": "rgba(0, 0, 0, 0)",
+      "boxShadow": "none",
+      "borderRight": "0px none rgba(0, 0, 0, 0.65)"
+    }
+  ]
+}

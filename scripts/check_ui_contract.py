@@ -91,8 +91,20 @@ DEAD_TAILWIND_PATTERNS = [
     re.compile(r"\btruncate\b"),
 ]
 
-# 内联 style 的白名单：纯 CSS 变量注入（Vue 动态令牌），见架构 §8.5
-INLINE_STYLE_ALLOW = re.compile(r'style="\s*--[a-z0-9-]+\s*:')
+# 内联 style 的白名单：**纯 CSS 变量注入**（架构 §8.5）
+#
+# 放行两种写法，语义是同一条 ——「模板里只出现数据，不出现设计值」：
+#   1. 静态注入：`style="--ziwi-x: 12px"`
+#   2. 动态注入：`:style="{ '--ziwi-x': `${v}px` }"`（Vue 对象绑定，首键即变量）
+#
+# ★ 为什么必须放行第 2 种：有些几何只能在运行时算（如 W 档下拉要按字段的
+#   `getBoundingClientRect()` 决定 top/left/宽/高），CSS class 表达不了。
+#   但注入的必须是**变量**而不是 `top: 24px` 这类设计值 —— 后者仍然会被拦。
+#   判定方式就是"绑定的第一个键是 `--xxx`"，把设计值混进去一定不会命中。
+INLINE_STYLE_ALLOW = re.compile(
+    r"""style="\s*--[a-z0-9-]+\s*:"""  # style="--x: y"
+    r"""|:style="\{\s*['"]--[a-z0-9-]+['"]\s*:"""  # :style="{ '--x': y }"
+)
 
 INLINE_STYLE = re.compile(r'style="')
 # 裸时长：transition 里出现数字+ms/s
@@ -338,16 +350,32 @@ def load_baseline() -> dict:
         return {}
 
 
-def write_baseline(report: Report) -> None:
-    """写基线快照。"""
-    payload = {
-        "generatedAt": "T01",
-        "note": (
+def write_baseline(report: Report, note: str = "") -> None:
+    """写基线快照。
+
+    ★ `note` 必须**可累积**。早期实现每次都用一段硬编码的 T01 说明整段覆盖，
+    结果 T05 的收口记录（`inline_style` 331 → 316 等）在第一次重写基线时就被抹掉了 ——
+    记录只存在于 git 历史里，下次谁再写基线又丢一次。
+    现在：已有 note 原样保留，本轮说明以独立条目追加在末尾。
+    """
+    previous_note = ""
+    if BASELINE_FILE.exists():
+        try:
+            previous_note = json.loads(BASELINE_FILE.read_text(encoding="utf-8")).get("note", "")
+        except (json.JSONDecodeError, OSError):
+            previous_note = ""
+
+    if previous_note:
+        merged_note = previous_note.rstrip("。") + "。" + (note or "")
+    else:
+        merged_note = note or (
             "UI 契约 ratchet 基线。dead_tailwind / min_width_480 / media_breakpoint 必须为 0；"
             "inline_style / raw_transition / inline_statuslabel / legacy_term 只许降不许升。"
-            "raw_transition 现存 6（MainLayout 4 / RolePermissions 1 / QuickAskChips 1）"
-            "不在 T01 交付范围内，由 T05 换 var(--ziwi-motion-*) 后压到 0。"
-        ),
+        )
+
+    payload = {
+        "generatedAt": "T01",
+        "note": merged_note.strip(),
         "counts": report.counts,
         "targets": {
             "dead_tailwind": 0,
@@ -417,6 +445,11 @@ def main() -> int:
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument(
+        "--note",
+        default="",
+        help="写基线时追加的说明（会拼在已有 note 之后，不会覆盖历史记录）",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", help="列出每条命中（默认只列前 20 条）"
     )
     args = parser.parse_args()
@@ -424,7 +457,7 @@ def main() -> int:
     report = run_checks()
 
     if args.write_baseline:
-        write_baseline(report)
+        write_baseline(report, args.note)
         return 0
 
     baseline = load_baseline()

@@ -1,0 +1,110 @@
+{
+  "首页": {
+    "rect": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgba(0, 0, 0, 0.65)",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "borderRadius": "0px",
+    "padding": "0px",
+    "height": "auto",
+    "boxShadow": "none",
+    "border": "0px none rgba(0, 0, 0, 0.65)"
+  },
+  "招生管理": {
+    "rect": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgba(0, 0, 0, 0.65)",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "borderRadius": "0px",
+    "padding": "0px",
+    "height": "auto",
+    "boxShadow": "none",
+    "border": "0px none rgba(0, 0, 0, 0.65)"
+  },
+  "一级菜单容器": {
+    "rect": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgba(0, 0, 0, 0.65)",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "borderRadius": "0px",
+    "padding": "0px",
+    "height": "auto",
+    "boxShadow": "none",
+    "border": "0px none rgba(0, 0, 0, 0.65)"
+  },
+  "顶栏系统切换": null,
+  "卡片候选": [
+    {
+      "cls": "box",
+      "rect": [
+        1112,
+        64,
+        312,
+        174
+      ],
+      "backgroundColor": "rgb(255, 255, 255)",
+      "color": "rgba(0, 0, 0, 0.65)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "borderRadius": "16px",
+      "padding": "24px",
+      "height": "174px",
+      "boxShadow": "none",
+      "border": "1px solid rgb(255, 255, 255)"
+    },
+    {
+      "cls": "container",
+      "rect": [
+        1112,
+        254,
+        312,
+        146
+      ],
+      "backgroundColor": "rgb(255, 255, 255)",
+      "color": "rgba(0, 0, 0, 0.65)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "borderRadius": "16px",
+      "padding": "0px",
+      "height": "146px",
+      "boxShadow": "none",
+      "border": "0px none rgba(0, 0, 0, 0.65)"
+    },
+    {
+      "cls": "one-step-popover-class",
+      "rect": [
+        196,
+        -10,
+        250,
+        118
+      ],
+      "backgroundColor": "rgb(255, 255, 255)",
+      "color": "rgb(45, 45, 45)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "borderRadius": "5px",
+      "padding": "15px",
+      "height": "117.797px",
+      "boxShadow": "rgba(0, 0, 0, 0.4) 0px 1px 10px 0px",
+      "border": "0px none rgb(45, 45, 45)"
+    }
+  ]
+}
