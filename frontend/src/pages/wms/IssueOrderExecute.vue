@@ -245,7 +245,12 @@ const receipt = reactive({
   requiredQty: 0,
   time: '',
   shortClosed: false,
+  /** 欠发摘要（逐行"第 N 行欠 X"） */
   shortageText: '',
+  /** 欠发行数（回执差异摘要用） */
+  shortCount: 0,
+  /** 欠发合计（回执差异摘要用） */
+  shortQtyText: '0',
   statusLabel: '',
   statusSemantic: 'success' as 'success' | 'warning' | 'danger' | 'neutral' | 'progress',
 })
@@ -304,9 +309,15 @@ async function issueLine(line: IssueLine): Promise<void> {
       post<{ item_id: number; qty: number; order_status: string }>(
         `/wms/issue-order-items/${line.item_id}/issue`,
         {
+          // 只发数量，**不指定批次/库位** —— 让后端的自动拣选走完：
+          // · 拣货建议（suggest_batch_no / suggest_location_name）本来就取自
+          //   后端的 FIFO 查询，自动拣选命中的就是同一批，结果一致；
+          // · 显式指定批次/库位走的是"先解析出候选库存行"的分支，一旦那一行
+          //   可用量不足就直接报错，而现场没有换批的界面，等于把路堵死；
+          // · 自动分支能跨批次分摊，也能回退到 batch_id IS NULL 的物料级行
+          //   （历史收货没有批次的场景）。过账语义（记负值、多批分摊、
+          //   行级 partial/picked、issued_qty 累计）全在后端，本页不参与。
           issued_qty: qty,
-          batch_no: line.suggest_batch_no || line.batch_no || undefined,
-          from_location_id: line.suggest_location_id || undefined,
         },
       ),
     )
@@ -353,7 +364,12 @@ async function completeOrder(allowShortage: boolean): Promise<void> {
     receipt.requiredQty = Number(res?.required_qty ?? requiredTotal.value)
     receipt.time = dayjs().format('MM-DD HH:mm')
     receipt.shortClosed = Boolean(res?.short_closed)
-    receipt.shortageText = (res?.shortage_lines || [])
+    const shortLines = res?.shortage_lines || []
+    receipt.shortCount = shortLines.length
+    receipt.shortQtyText = formatQty(
+      shortLines.reduce((s, x) => s + Number(x.short_qty || 0), 0),
+    )
+    receipt.shortageText = shortLines
       .map((s) => txt.execute.shortageLine(s.line_no, formatQty(s.short_qty), s.unit || ''))
       .join('；')
     const entry = getStateEntry('wms_issue', res?.status || order.value?.status || '')
@@ -537,7 +553,10 @@ onMounted(load)
       <template #extra>
         <p v-if="receipt.shortClosed && receipt.shortageText" class="ioe-receipt-diff">
           <van-icon name="warning-o" />
-          <span>{{ txt.receipt.diff(shortageLines.length, '') }}{{ receipt.shortageText }}</span>
+          <span>
+            <strong>{{ txt.receipt.diff(receipt.shortCount, receipt.shortQtyText) }}</strong>
+            <em class="ioe-receipt-diff__detail">{{ receipt.shortageText }}</em>
+          </span>
         </p>
         <p v-else class="ioe-receipt-ok">全部行已发齐</p>
       </template>
@@ -706,6 +725,12 @@ onMounted(load)
   margin: 0;
   font-size: 13px;
   color: var(--ziwi-state-warning-fg);
+}
+.ioe-receipt-diff__detail {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  color: #6c757d;
 }
 .ioe-receipt-ok { margin: 0; font-size: 13px; color: var(--ziwi-state-success-fg); }
 

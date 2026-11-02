@@ -63,7 +63,9 @@ const routes: RouteRecordRaw[] = [
       //   id='maintenance-tasks' → Number() 为 NaN → 空白页。
       { path: 'equipment/maintenance-tasks', name: 'MaintenanceTasks', component: () => import('@/pages/equipment/MaintenanceTasks.vue'), meta: { title: '保养任务', perm: 'M06:equipment:read' } },
       // T04 点检执行：扫设备码 → 该设备待执行任务（0 条给空态 + 新建入口）
-      // ★ 随「点检执行」一并交付，本轮不注册（页面与路由同批提交，避免悬空引用）
+      { path: 'equipment/tasks', name: 'EquipmentTasks', component: () => import('@/pages/equipment/EquipmentTasks.vue'), meta: { title: '设备任务', perm: 'M06:equipment:read' } },
+      // T04 点检执行页：项级三态 + 异常联动安灯。段数比 'equipment/:id' 多，不会被遮蔽。
+      { path: 'equipment/maintenance-tasks/:id/execute', name: 'MaintenanceTaskExecute', component: () => import('@/pages/equipment/MaintenanceExecute.vue'), meta: { title: '执行点检', perm: 'M06:equipment:read' } },
       // Q5 术语：维护计划 → 保养计划
       { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '保养计划', perm: 'M06:equipment:read' } },
       { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', perm: 'M06:equipment:read' } },
@@ -120,7 +122,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'wms/issue-orders', name: 'IssueOrderList', component: () => import('@/pages/wms/IssueOrderList.vue'), meta: { perm: 'M04:wms_issue_order:read', title: '出库单管理' } },
       // ★ T04a：先把 404 堵掉 —— `IssueOrderList.vue` 早就 link 到
       //   `/wms/issue-orders/:id`，但路由一直没注册，点进去落 NotFound 兜底页。
-      //   `:id/execute`（发料执行）随下一批交付，与页面同批提交。
+      //   `:id/execute` 段数更多，不会被 `:id` 吃掉。
+      { path: 'wms/issue-orders/:id/execute', name: 'IssueOrderExecute', component: () => import('@/pages/wms/IssueOrderExecute.vue'), meta: { perm: 'M04:wms_issue_order:read', title: '出库执行' } },
       { path: 'wms/issue-orders/:id', name: 'IssueOrderDetail', component: () => import('@/pages/wms/IssueOrderDetail.vue'), meta: { perm: 'M04:wms_issue_order:read', title: '出库单详情' } },
       { path: 'wms/stock-query', name: 'StockQuery', component: () => import('@/pages/wms/StockQuery.vue'), meta: { perm: 'M04:wms_inventory:read', title: '库存查询' } },
       { path: 'wms/inventory', redirect: '/wms/stock-query' },

@@ -100,14 +100,17 @@ async function loadTasks(equipmentId: number): Promise<void> {
   tasksLoading.value = true
   tasksFailed.value = false
   try {
-    // 【为何在客户端过滤】后端 `/maintenance-tasks` 只支持 `page/page_size/status`，
-    // 没有 `equipment_id` 参数（`app/api/tpm.py::list_tasks`）。T03 也没加，
-    // 所以只能取回后按 equipment_id 过滤。
+    // 服务端过滤（`GET /maintenance-tasks?equipment_id=`，后端 commit 47e035a 起支持）。
+    // `total` 就是该设备的真实任务数，不再需要"取回全量后在客户端 filter"。
     //
-    // 【为何必须翻页而不是只取一页】台账口径"取一页后在客户端过滤"在数据量小时
-    // 看不出问题，但单页上限 100：一旦任务总量 > 100，某台设备的任务完全可能
-    // 全落在第 2 页 —— 详情页会显示"暂无任务"，而列表页里这些任务明明存在。
-    // 这是**静默漏数据**，比报错更难发现，因此这里按 total 翻到够为止。
+    // 【T02b 临时修法为什么删掉】当时后端没有 equipment_id 参数，只能取回后过滤；
+    // 而"只取第 1 页 100 条再过滤"在任务总量 > 100 时会把整台设备的任务漏掉
+    // （详情页显示"暂无任务"，列表页里任务明明存在）——静默漏数据。当时的兜底是
+    // 按 total 翻页扫到够为止。服务端过滤上线后这个兜底没有存在意义：口径由后端定，
+    // 前端不再持有第二份"哪些任务属于这台设备"的判断。
+    //
+    // 仍然按 total 翻页：单页上限 100（后端 `Query(le=100)`），单台设备的任务
+    // 超过 100 条时只取第一页依然会截断。
     const collected: MaintenanceTaskLite[] = []
     let page = 1
     let total = Number.POSITIVE_INFINITY
@@ -115,6 +118,7 @@ async function loadTasks(equipmentId: number): Promise<void> {
       const res = await get<PaginatedResponse<MaintenanceTaskLite>>('/maintenance-tasks', {
         page,
         page_size: TASK_PAGE_SIZE,
+        equipment_id: equipmentId,
       })
       const items = res.items || []
       collected.push(...items)
@@ -122,7 +126,7 @@ async function loadTasks(equipmentId: number): Promise<void> {
       if (items.length < TASK_PAGE_SIZE) break
       page += 1
     }
-    tasks.value = collected.filter((t) => Number(t.equipment_id) === equipmentId)
+    tasks.value = collected
   } catch {
     tasksFailed.value = true
     tasks.value = []

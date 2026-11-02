@@ -233,10 +233,10 @@ function removeItem(item: LocalItem): void {
 }
 
 function setVerdict(item: LocalItem, v: Verdict): void {
+  // 再点一次同一个判定 = 取消（误点的最常见形态）。
+  // 切走「异常」时**保留**已填的异常描述与照片：可能只是先点了正常再想起来
+  // 有问题，清掉会让人白填一遍。
   item.verdict = item.verdict === v ? null : v
-  if (item.verdict !== 'abnormal') {
-    // 切走「异常」时保留已填内容：可能是误点，清掉会让人白填一遍
-  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -347,8 +347,6 @@ const receipt = reactive({
   abnormalCount: 0,
   andonId: 0,
   time: '',
-  statusLabel: '',
-  statusSemantic: 'success' as 'success' | 'default' | 'primary' | 'warning' | 'danger' | 'neutral' | 'progress',
 })
 
 const receiptNextState = computed(() => {
@@ -632,6 +630,33 @@ onMounted(load)
       @primary="submitChecklist(true)"
       @secondary="submitChecklist(false)"
     />
+
+    <!-- 回执卡：**必须**有 —— 提交成功却没回执，现场会当成没提交再点一次，
+         而"重复提交"的根因往往不是手滑，是系统没给成功信号（T02b Bug 1）。 -->
+    <ZiwiReceipt
+      v-model:show="receipt.show"
+      :title="`${TERM.maintenanceTask}已提交`"
+      :doc-no="receipt.taskNo"
+      doc-no-label="任务单号"
+      :quantities="[
+        { label: '已点检', value: receipt.checkedCount, unit: '项' },
+        { label: '异常', value: receipt.abnormalCount, unit: '项' },
+      ]"
+      :time="receipt.time"
+      :next-state="receiptNextState"
+      :secondary-action="{ text: txt.receipt.nextBack() }"
+      @secondary="closeReceipt"
+    >
+      <template #extra>
+        <p class="mex-receipt-summary">
+          {{ txt.execute.checkedSummary(receipt.checkedCount, receipt.abnormalCount) }}
+        </p>
+        <button v-if="receipt.andonId > 0" type="button" class="mex-andon" @click="goAndon">
+          <van-icon name="warning-o" />
+          {{ txt.execute.andonRaised(receipt.andonId) }}
+        </button>
+      </template>
+    </ZiwiReceipt>
   </div>
 </template>
 
@@ -852,4 +877,24 @@ onMounted(load)
 /* H 形态：三态按钮换行成 3 列等宽，长文案不挤（412 视口下「不适用」会被压成两行） */
 :global(html[data-form-factor='H']) .mex-verdicts { flex-wrap: wrap; }
 :global(html[data-form-factor='H']) .mex-verdict { flex: 1 1 30%; font-size: 14px; }
+
+/* 回执里的联动摘要与安灯入口 */
+.mex-receipt-summary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #495057;
+}
+.mex-andon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ziwi-touch-min);
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ziwi-state-danger-bd);
+  background: var(--ziwi-state-danger-bg);
+  color: var(--ziwi-state-danger-fg);
+  font-size: 14px;
+  cursor: pointer;
+}
 </style>

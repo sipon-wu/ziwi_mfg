@@ -134,15 +134,6 @@ function goExecute(): void {
   router.push(`/wms/issue-orders/${orderId.value}/execute`)
 }
 
-/**
- * 发料执行页是否已注册。
- *
- * 本轮只交付"堵 404"的只读详情；执行页与它的路由**同批**提交。
- * 路由没注册时不渲染「开始出库」——列表/详情给出的入口必须是能兑现的承诺，
- * 否则就是把 404 从列表挪到详情（同一个坑换个位置）。
- */
-const hasExecuteRoute = computed<boolean>(() => router.hasRoute('IssueOrderExecute'))
-
 onMounted(load)
 </script>
 
@@ -253,7 +244,7 @@ onMounted(load)
     </ZiwiStateView>
 
     <ZiwiActionBar
-      v-if="state === 'ready' && hasExecuteRoute"
+      v-if="state === 'ready'"
       :primary-text="canExecute ? '开始出库' : statusEntry.label"
       :primary-disabled="!canExecute"
       secondary-text="返回列表"
