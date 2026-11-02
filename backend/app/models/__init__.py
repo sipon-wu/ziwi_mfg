@@ -48,6 +48,7 @@ from app.models.copilot import (
     MetricDefinition, CopilotDocChunk,
 )
 from app.models.api_key import ApiKey
+from app.models.idempotency import IdempotencyKey
 from app.models.audit import AuditLog
 
 __all__ = [
@@ -96,4 +97,6 @@ __all__ = [
     "MetricDefinition", "CopilotDocChunk",
     # Integration Gateway（IG MVP）
     "ApiKey",
+    # 服务端幂等键（出库过账等不可重复执行的写操作）
+    "IdempotencyKey",
 ]

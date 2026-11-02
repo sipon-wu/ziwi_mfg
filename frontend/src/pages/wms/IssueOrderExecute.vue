@@ -128,6 +128,42 @@ const lineError = reactive<Record<number, string>>({})
 const scanError = ref('')
 const scanHint = ref('')
 
+/**
+ * 服务端幂等键：`"<明细行>:<实发数量>" → request_id`。
+ *
+ * 前端锁（`useSubmitLock`）只挡得住**同一个页面里的连点**，挡不住
+ * 「响应没回来用户再点一次」「换台终端重试」「两个标签页同时操作」——
+ * 而这条接口每调一次就真扣一次库存。所以必须带服务端幂等键。
+ *
+ * ## 键里为什么带数量
+ * 重试同一次操作要**沿用同一个** request_id，服务端才认得出来是重复；
+ * 但"发 5 件失败后改发 3 件"是**另一次操作**，沿用旧键会被服务端判成重复、
+ * 直接重放 5 件的结果 —— 账上多扣 2 件。所以数量变化必须换新键。
+ *
+ * 成功后清掉该行的所有键（下一次发料是全新操作，不该复用旧键）。
+ */
+const lineReqId = new Map<string, string>()
+
+function reqIdFor(itemId: number, qty: number): string {
+  const key = `${itemId}:${qty}`
+  let id = lineReqId.get(key)
+  if (!id) {
+    // crypto.randomUUID 在 http 非 localhost 下不可用（车间内网常见），
+    // 退化成时间戳 + 随机串，服务端只看唯一性、不看格式。
+    const raw = globalThis.crypto?.randomUUID?.()
+      ?? `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    id = raw.slice(0, 64)
+    lineReqId.set(key, id)
+  }
+  return id
+}
+
+function clearReqIds(itemId: number): void {
+  for (const key of [...lineReqId.keys()]) {
+    if (key.startsWith(`${itemId}:`)) lineReqId.delete(key)
+  }
+}
+
 const statusEntry = computed(() => getStateEntry('wms_issue', order.value?.status ?? ''))
 
 /** 未发完的行优先（现场打开就是来发剩下的） */
@@ -318,11 +354,16 @@ async function issueLine(line: IssueLine): Promise<void> {
           //   （历史收货没有批次的场景）。过账语义（记负值、多批分摊、
           //   行级 partial/picked、issued_qty 累计）全在后端，本页不参与。
           issued_qty: qty,
+          // 服务端幂等键（见 reqIdFor 的说明）。同 (行, 数量) 的重试沿用同一个，
+          // 服务端按 (tenant_id, request_id) 去重，重复请求不再扣库存。
+          request_id: reqIdFor(line.item_id, qty),
         },
       ),
     )
     // 服务端真正拥有的字段用于覆盖，其余本地累加
     applyIssued(line, Number(res?.qty ?? qty), res?.order_status)
+    // 已成功：该行的幂等键作废，下次发料是全新操作
+    clearReqIds(line.item_id)
     if (allDone.value) await completeOrder(false)
   } catch (error) {
     lineError[line.item_id] = messageOf(error, txt.error.server())

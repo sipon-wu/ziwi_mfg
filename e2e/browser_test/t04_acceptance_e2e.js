@@ -144,8 +144,14 @@ const ROUTES = [
     //   真实场景（手套连击）是**同一 tick 内连点**，所以必须在页面内直接连调
     //   `button.click()` 三次，这才是 UE-P0-05 想验的东西。
     let postCount = 0;
+    const postBodies = [];
     await ctx.route('**/api/v1/wms/issue-order-items/*/issue', async (route) => {
       postCount += 1;
+      try {
+        postBodies.push(JSON.parse(route.request().postData() || '{}'));
+      } catch {
+        postBodies.push({});
+      }
       await sleep(1200);
       await route.abort();
     });
@@ -165,6 +171,12 @@ const ROUTES = [
     rec(`${vp.label}-H1`, '同一 tick 连点 3 次发料只 1 次 POST（UE-P0-05）',
       tap.found && postCount === 1 ? 'PASS' : 'FAIL',
       `按钮数=${tap.count ?? 0}；实际 POST=${postCount}`);
+
+    // H2：前端必须带上服务端幂等键，否则重复过账的防线只剩前端锁
+    const b0 = postBodies[0] || {};
+    const ridOk = typeof b0.request_id === 'string' && b0.request_id.length >= 8 && b0.request_id.length <= 64;
+    rec(`${vp.label}-H2`, '发料请求带服务端幂等键 request_id', ridOk ? 'PASS' : 'FAIL',
+      ridOk ? `长度=${b0.request_id.length}` : `body=${JSON.stringify(b0).slice(0, 160)}`);
     await ctx.unroute('**/api/v1/wms/issue-order-items/*/issue');
 
     // ── 控制台错误 ──

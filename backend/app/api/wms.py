@@ -28,6 +28,7 @@ from app.services.wms_service import (
     InventoryAlertService, MaterialRequestService,
 )
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
+from app.services.idempotency import run_once
 from app.schemas.wms import (
     WarehouseCreate, WarehouseUpdate,
     ZoneCreate, ZoneUpdate,
@@ -783,16 +784,45 @@ async def issue_item_action(item_id: int, req: IssueOrderItemUpdate, current_use
     item_repo: IssueOrderItemRepository = Depends(get_tenant_repo(IssueOrderItemRepository, require_auth=True)),
     inv_repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
     tx_repo: InventoryTransactionRepository = Depends(get_tenant_repo(InventoryTransactionRepository, require_auth=True)),
+    db: AsyncSession = Depends(get_db),
 ):
+    """出库确认（过账）。**每调一次真扣一次库存**，因此支持 ``request_id`` 幂等。
+
+    幂等口径见 ``services/idempotency.py``：同 ``(tenant_id, request_id)`` 重复
+    请求不再扣库存，原样返回上次结果（``idempotent_replay=true``）。
+    ``request_id`` 缺省时行为与改造前完全一致。
+    """
     svc = IssueOrderService(repo, item_repo, inv_repo, tx_repo)
+    payload = req.model_dump(exclude_unset=True)
+    # request_id 只给幂等层用，不往业务层塞（业务层不认识这个字段，
+    # 留着会随 data 一路进到仓储更新里）
+    request_id = payload.pop("request_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
+
+    async def _do_issue() -> dict:
+        try:
+            return await svc.issue_item(item_id, payload, tenant_id,
+                                        created_by=current_user.get("id"))
+        except PostingError as e:
+            raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
+        except ValueError as e:
+            raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
     try:
-        result = await svc.issue_item(item_id, req.model_dump(exclude_unset=True),
-                                      current_user.get("tenant_id", "default"), created_by=current_user.get("id"))
-        return {"code": 0, "message": "出库成功", "data": result}
+        result, replayed = await run_once(
+            tenant_id=tenant_id, request_id=request_id,
+            endpoint="wms.issue_item", action=_do_issue,
+            # 成功标记随业务事务一起提交（见 run_once 的 mark_session 说明）
+            mark_session=db,
+        )
     except PostingError as e:
         raise HTTPException(e.http_status, detail={"code": e.code, "message": e.message})
-    except ValueError as e:
-        raise HTTPException(400, detail={"code": "400-0000", "message": str(e)})
+
+    body = {"code": 0, "message": "出库成功" if not replayed else "出库成功（重复请求已忽略）",
+            "data": result}
+    if replayed:
+        body["idempotent_replay"] = True
+    return body
 
 @router.post("/issue-orders/{io_id}/complete")
 async def complete_issue_order(io_id: int, req: IssueOrderCompleteRequest,

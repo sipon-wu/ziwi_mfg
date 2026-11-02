@@ -1,5 +1,5 @@
 {
-  "ts": "2026-11-02T05:36:22.274Z",
+  "ts": "2026-11-02T06:07:59.314Z",
   "base": "http://127.0.0.1:5173",
   "results": [
     {
@@ -85,6 +85,12 @@
       "name": "同一 tick 连点 3 次发料只 1 次 POST（UE-P0-05）",
       "status": "PASS",
       "detail": "按钮数=1；实际 POST=1"
+    },
+    {
+      "id": "W-H2",
+      "name": "发料请求带服务端幂等键 request_id",
+      "status": "PASS",
+      "detail": "长度=36"
     },
     {
       "id": "W-Z1",
@@ -175,6 +181,12 @@
       "name": "同一 tick 连点 3 次发料只 1 次 POST（UE-P0-05）",
       "status": "PASS",
       "detail": "按钮数=1；实际 POST=1"
+    },
+    {
+      "id": "H-H2",
+      "name": "发料请求带服务端幂等键 request_id",
+      "status": "PASS",
+      "detail": "长度=36"
     },
     {
       "id": "H-Z1",

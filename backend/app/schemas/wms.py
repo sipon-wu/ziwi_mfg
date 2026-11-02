@@ -230,6 +230,14 @@ class IssueOrderItemUpdate(BaseModel):
     batch_no: Optional[str] = None
     from_location_id: Optional[int] = None
     pick_status: Optional[str] = None
+    request_id: Optional[str] = Field(
+        default=None, max_length=64,
+        description=(
+            "幂等键。同一次逻辑发料重试时必须沿用同一个值，服务端按 "
+            "(tenant_id, request_id) 去重 15 分钟，重复请求不再扣库存而是"
+            "原样返回上次结果。不传则退化为无幂等的原行为（兼容老客户端）。"
+        ),
+    )
 
 
 class IssueOrderCompleteRequest(BaseModel):
