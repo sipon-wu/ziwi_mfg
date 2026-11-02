@@ -1,0 +1,186 @@
+{
+  "ts": "2026-11-02T05:36:22.274Z",
+  "base": "http://127.0.0.1:5173",
+  "results": [
+    {
+      "id": "W-A0",
+      "name": "登录",
+      "status": "PASS",
+      "detail": "/cockpit"
+    },
+    {
+      "id": "W-R1",
+      "name": "检验执行(降级)",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「本单未关联检验标准」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-R2",
+      "name": "检验执行(有标准)",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「检验单号」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-R3",
+      "name": "设备任务(扫码头)",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「对准设备编码扫一下」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-R4",
+      "name": "点检执行(0项)",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「点检」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-R5",
+      "name": "出库单详情",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「开始出库」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-R6",
+      "name": "出库执行",
+      "status": "PASS",
+      "detail": "formFactor=W；特征文案「发料」=有；scrollWidth=1024/1024"
+    },
+    {
+      "id": "W-B1",
+      "name": "降级横幅带可选项数",
+      "status": "PASS",
+      "detail": "含\"21\"=true"
+    },
+    {
+      "id": "W-B2",
+      "name": "降级步骤有确认适用项按钮",
+      "status": "PASS",
+      "detail": "含确认/已选=true"
+    },
+    {
+      "id": "W-C1",
+      "name": "有标准的单不显示降级横幅",
+      "status": "PASS",
+      "detail": "横幅存在=false"
+    },
+    {
+      "id": "W-E1",
+      "name": "点检 0 项给「使用标准点检项模板」出路",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W-E2",
+      "name": "点检 0 项给「添加点检项」出路",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W-E3",
+      "name": "点检空态副文案是本场景语境",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "W-H1",
+      "name": "同一 tick 连点 3 次发料只 1 次 POST（UE-P0-05）",
+      "status": "PASS",
+      "detail": "按钮数=1；实际 POST=1"
+    },
+    {
+      "id": "W-Z1",
+      "name": "控制台无未处理错误",
+      "status": "PASS",
+      "detail": "0 条"
+    },
+    {
+      "id": "H-A0",
+      "name": "登录",
+      "status": "PASS",
+      "detail": "/cockpit"
+    },
+    {
+      "id": "H-R1",
+      "name": "检验执行(降级)",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「本单未关联检验标准」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-R2",
+      "name": "检验执行(有标准)",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「检验单号」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-R3",
+      "name": "设备任务(扫码头)",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「对准设备编码扫一下」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-R4",
+      "name": "点检执行(0项)",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「点检」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-R5",
+      "name": "出库单详情",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「开始出库」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-R6",
+      "name": "出库执行",
+      "status": "PASS",
+      "detail": "formFactor=H；特征文案「发料」=有；scrollWidth=412/412"
+    },
+    {
+      "id": "H-B1",
+      "name": "降级横幅带可选项数",
+      "status": "PASS",
+      "detail": "含\"21\"=true"
+    },
+    {
+      "id": "H-B2",
+      "name": "降级步骤有确认适用项按钮",
+      "status": "PASS",
+      "detail": "含确认/已选=true"
+    },
+    {
+      "id": "H-C1",
+      "name": "有标准的单不显示降级横幅",
+      "status": "PASS",
+      "detail": "横幅存在=false"
+    },
+    {
+      "id": "H-E1",
+      "name": "点检 0 项给「使用标准点检项模板」出路",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "H-E2",
+      "name": "点检 0 项给「添加点检项」出路",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "H-E3",
+      "name": "点检空态副文案是本场景语境",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "H-H1",
+      "name": "同一 tick 连点 3 次发料只 1 次 POST（UE-P0-05）",
+      "status": "PASS",
+      "detail": "按钮数=1；实际 POST=1"
+    },
+    {
+      "id": "H-Z1",
+      "name": "控制台无未处理错误",
+      "status": "PASS",
+      "detail": "0 条"
+    }
+  ]
+}
