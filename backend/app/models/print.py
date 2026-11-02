@@ -25,6 +25,9 @@
   就复现不出来。模板版本不进库，留痕在第一次改模板那天就失效了。
 - **`copy_no` 单调递增**：同一版本重打必须能看出来是第几份，否则一叠纸里
   分不清哪张是原件。
+- **`paper_kind` 单独成列**：留痕要能回答"这张是归档件还是现场贴标"。
+  这是**纸质属性**，不能靠解析 `template_code` 字符串去猜——模板码会改名，
+  而纸型决定了补打时该拿哪种纸、该不该签字、能不能归档。
 """
 
 from sqlalchemy import (
@@ -62,6 +65,10 @@ class PrintArtifact(Base):
     # ── 打印了什么 ──
     template_code = Column(String(60), nullable=False, comment="打印模板标识")
     template_version = Column(String(20), nullable=False, comment="打印模板版本")
+    paper_kind = Column(
+        String(20), default="a4", nullable=False,
+        comment="纸型：a4（归档件）/ label80（热敏贴标）",
+    )
     snapshot_json = Column(JSON, comment="打印时刻的完整内容快照")
     content_hash = Column(String(64), nullable=False, comment="快照规范化 JSON 的 sha256")
 

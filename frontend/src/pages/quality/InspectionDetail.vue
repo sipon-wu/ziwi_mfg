@@ -248,6 +248,13 @@ function goExecute() {
 
       <!-- 打印检验记录单：判定结果是终态，纸质件要交品质归档 -->
       <ZiwiPrintButton doc-type="inspection_order" :doc-id="order.id" text="打印检验记录单" block />
+      <!-- 打印贴标：贴在送检批次/试样袋上，扫码即可回查这张检验单 -->
+      <ZiwiPrintButton
+        doc-type="inspection_order"
+        :doc-id="order.id"
+        paper="label80"
+        text="打印贴标"
+        block />
 
       <!-- 已录明细：现场最常问"这项到底测了没、测的多少" -->
       <van-cell-group title="检验明细" style="margin-top:12px;">

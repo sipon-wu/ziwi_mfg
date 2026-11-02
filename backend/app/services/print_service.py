@@ -40,7 +40,14 @@ from sqlalchemy import select, update
 from app.core.config import get_settings
 from app.models.print import PrintArtifact
 from app.services.audit_service import AuditAction, AuditService
-from app.services.print import REGISTRY, TEMPLATES, RenderMeta, render_pdf
+from app.services.print import (
+    LABEL_TEMPLATES,
+    REGISTRY,
+    TEMPLATES,
+    RenderMeta,
+    render_label,
+    render_pdf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,13 @@ class PrintDocNotFound(LookupError):
 
 class PrintDocTypeUnknown(ValueError):
     """未注册的单据类型。"""
+
+
+# 纸型常量。刻意用字符串而不是枚举：这个值会原样落进 `print_artifacts.paper_kind`
+# 并从 API 透出，字符串最不容易在序列化层走样。
+PAPER_A4 = "a4"
+PAPER_LABEL = "label80"
+PAPERS = (PAPER_A4, PAPER_LABEL)
 
 
 def _now_local() -> datetime:
@@ -181,12 +195,23 @@ class PrintService:
         doc_type: str,
         doc_id: str,
         *,
+        paper: str = PAPER_A4,
         actor_id: Optional[int] = None,
         actor_name: str = "",
         print_source: str = "web",
         client_hint: str = "",
     ) -> dict:
-        """出一份 PDF 并落留痕。返回不含 PDF 字节的元信息字典。"""
+        """出一份 PDF 并落留痕。返回不含 PDF 字节的元信息字典。
+
+        Args:
+            paper: 纸型。``a4`` 出归档件（分页、页码、签署栏），``label80``
+                出热敏贴标（单页、纯黑白、无签署栏）。**两种纸型共用同一份快照**，
+                所以同一单据的 A4 版与标签版 `content_hash` 相同 —— 补打时才能
+                证明"贴标与归档件是同一次打印的内容"。
+        """
+        if paper not in PAPERS:
+            raise ValueError(f"不支持的纸型：{paper}（可选：{'/'.join(PAPERS)}）")
+
         builder = REGISTRY.get(doc_type)
         if builder is None:
             raise PrintDocTypeUnknown(
@@ -205,7 +230,13 @@ class PrintService:
             content_hash,
         )
 
-        template_code, template_version = TEMPLATES[doc_type]
+        # 模板码按纸型分表取：改标签版面只 +1 标签的版本，不动 A4 归档件的解释链
+        template_map = LABEL_TEMPLATES if paper == PAPER_LABEL else TEMPLATES
+        if doc_type not in template_map:
+            raise PrintDocTypeUnknown(
+                f"单据 {doc_type} 没有登记 {paper} 模板（LABEL_TEMPLATES / TEMPLATES 需同步补齐）"
+            )
+        template_code, template_version = template_map[doc_type]
         verify_code = await self._new_verify_code()
         printed_at = _now_local()
 
@@ -221,7 +252,13 @@ class PrintService:
             tenant_name=await self._tenant_name(),
         )
 
-        pdf_bytes, page_count = render_pdf(pdoc, meta)
+        if paper == PAPER_LABEL:
+            # 标签恒为单页：不数页，也不做分页 —— 热敏卷筒打多页会连成一张长纸，
+            # 现场没法按单张撕下来贴。page_count 写死 1 才对得上实物。
+            pdf_bytes = render_label(pdoc, meta)
+            page_count = 1
+        else:
+            pdf_bytes, page_count = render_pdf(pdoc, meta)
 
         artifact = PrintArtifact(
             tenant_id=self._tenant_id,          # ★ INSERT 的 tenant_id 由应用层显式写
@@ -233,6 +270,7 @@ class PrintService:
             doc_status=(pdoc.doc_status or "")[:30] or None,
             template_code=template_code,
             template_version=template_version,
+            paper_kind=paper,
             snapshot_json=snapshot,
             content_hash=content_hash,
             printed_by=actor_id,
@@ -295,6 +333,7 @@ class PrintService:
             "verify_url": _verify_url(verify_code),
             "template_code": template_code,
             "template_version": template_version,
+            "paper": paper,
             "page_count": page_count,
             "file_size": len(pdf_bytes),
             "printed_at": printed_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -339,6 +378,7 @@ class PrintService:
                     PrintArtifact.doc_status,
                     PrintArtifact.template_code,
                     PrintArtifact.template_version,
+                    PrintArtifact.paper_kind,
                     PrintArtifact.content_hash,
                     PrintArtifact.printed_by_name,
                     PrintArtifact.print_source,
@@ -407,6 +447,9 @@ class PrintService:
             "copy_no": art.copy_no,
             "template": f"{art.template_code} v{art.template_version}",
             "content_hash": art.content_hash,
+            # 纸型：扫一张贴标和扫一张归档件，看到的结论应当能区分开，
+            # 否则现场没法判断"手里这张是不是被人从归档件上剪下来贴的"
+            "paper": art.paper_kind or PAPER_A4,
             "printed_by_name": art.printed_by_name,
             "printed_at": art.created_at.strftime("%Y-%m-%d %H:%M:%S") if art.created_at else None,
             "page_count": art.page_count,

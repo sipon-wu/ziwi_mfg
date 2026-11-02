@@ -26,6 +26,8 @@ from app.services.print.renderer import (
     _VOID_STATUS,
     render_pdf,
 )
+from app.services.print.label import LabelSpec, _sanitize_mm, render_label
+from app.services.print.registry import LABEL_TEMPLATES, TEMPLATES
 
 
 # ── 版本号 / 副本号 ──────────────────────────────────────────
@@ -148,6 +150,102 @@ class TestRenderPdf:
         pdf, pages = render_pdf(doc, _meta())
         assert pdf.startswith(b"%PDF-")
         assert pages >= 1
+
+
+# ── 热敏标签 ────────────────────────────────────────────────
+
+
+class TestRenderLabel:
+    """热敏标签渲染。
+
+    与 A4 的差别决定了这几条必须单独测：标签是**固定页数**（卷筒纸打多页会连成
+    一条撕不开）、**不许溢出**（纸只有 58mm 宽，排不下就丢字段，绝不能压到纸外
+    或者报错），而且回查码必须留在纸面 —— 那张码是标签能被追溯的唯一凭据。
+    """
+
+    def _pdoc(self, doc_no: str = "WO-20261102-0001", status: str = "in_progress") -> PrintDoc:
+        return PrintDoc(
+            doc_type="work_order", title="生产工单", doc_no=doc_no,
+            meta=[("产品名称", "变速箱壳体 A 型"), ("数量", "1,200"), ("工序", "OP20 精铣")],
+            sections=[], doc_status=status,
+        )
+
+    def test_renders_single_page(self):
+        """卷筒纸一定只能出 1 页：第 2 页会跟前一页连成一张长纸，撕都撕不开。"""
+        pdf = render_label(self._pdoc(), _meta())
+        assert pdf.startswith(b"%PDF-")
+        assert pdf.rstrip().endswith(b"%%EOF")
+        assert _pdf_page_count(pdf) == 1
+
+    @pytest.mark.parametrize("size", [(80, 60), (70, 50), (58, 40), (40, 30)])
+    def test_any_paper_size_fits_on_one_page(self, size):
+        """常见标签纸都要排得进 —— 尺寸是参数，不是枚举。"""
+        from reportlab.lib.units import mm
+
+        w, h = size
+        pdf = render_label(self._pdoc(), _meta(), LabelSpec(width_mm=w, height_mm=h))
+        assert _pdf_page_count(pdf) == 1
+        pw, ph = _pdf_page_size(pdf)  # MediaBox 单位是 pt，不是 mm
+        assert abs(pw - w * mm) < 1.5 and abs(ph - h * mm) < 1.5
+
+    def test_void_badge_does_not_break_layout(self):
+        """作废标签仍要出纸并保留回查码 —— 恰好是作废单最需要被追溯。"""
+        pdf = render_label(self._pdoc(status="cancelled"), _meta())
+        assert _pdf_page_count(pdf) == 1
+        assert len(pdf) > 10_000  # 含字体子集 + 二维码，太小说明二维码没画进去
+
+    def test_docno_is_actually_drawn(self):
+        """单号换了字节就该变 —— 不变说明单号压根没印上去。"""
+        a = render_label(self._pdoc(doc_no="WO-A"), _meta())
+        b = render_label(self._pdoc(doc_no="WO-B-20261102"), _meta())
+        assert a != b
+
+    def test_overlong_docno_does_not_crash(self):
+        """超长单号必须截断，不能溢出纸外也不能抛异常。"""
+        pdf = render_label(self._pdoc(doc_no="WO-" + "9" * 40), _meta())
+        assert _pdf_page_count(pdf) == 1
+
+
+class TestLabelSpecSanitize:
+    """配置手误不能升级成 500 —— 打印是现场高频操作，整条不可用比尺寸略偏严重得多。"""
+
+    @pytest.mark.parametrize("bad", ["", "abc", "60mm", None, 0, -1, float("nan"), 500])
+    def test_invalid_value_falls_back(self, bad):
+        assert _sanitize_mm(bad, 80.0, 40.0) == 80.0
+
+    def test_below_floor_is_clamped_not_rejected(self):
+        """明确小于下限的正数视为"现场确实用小纸"，clamp 到下限而不是回默认。"""
+        assert _sanitize_mm(20, 80.0, 40.0) == 40.0
+
+    def test_valid_value_passes_through(self):
+        assert _sanitize_mm("58", 80.0, 40.0) == 58.0
+
+
+def test_label_templates_cover_every_printable_doc_type():
+    """新增可打印单据时必须同时登记标签模板，否则打标签会 KeyError 500。
+
+    A4 与标签是两张分表（同一单据两种纸能用不同版式），所以覆盖性要单独校验，
+    不能指望 `TEMPLATES` 的检查顺带管到。
+    """
+    assert set(LABEL_TEMPLATES) <= set(TEMPLATES), "标签模板里出现了不可打印的单据类型"
+    assert set(LABEL_TEMPLATES) == set(TEMPLATES), (
+        f"这些单据能打 A4 但还没登记标签模板：{set(TEMPLATES) - set(LABEL_TEMPLATES)}"
+    )
+
+
+def _pdf_page_count(pdf: bytes) -> int:
+    """数 `/Type /Page` 出现次数（不含 `/Pages`），避免为一条断言引入 pypdf 依赖。"""
+    return pdf.count(b"/Type /Page") + pdf.count(b"/Type/Page") - (
+        pdf.count(b"/Type /Pages") + pdf.count(b"/Type/Pages"))
+
+
+def _pdf_page_size(pdf: bytes) -> tuple[float, float]:
+    """从 MediaBox 取页面宽高（pt）。"""
+    import re
+
+    m = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]", pdf)
+    assert m, "PDF 里找不到 MediaBox"
+    return float(m.group(1)), float(m.group(2))
 
 
 class TestVerifyCodeFormat:

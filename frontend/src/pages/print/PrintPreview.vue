@@ -21,7 +21,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
-import { renderPrint, triggerPrint, type PrintArtifactMeta } from '@/api/print'
+import {
+  PAPER_LABEL,
+  renderPrint,
+  triggerPrint,
+  type PrintArtifactMeta,
+  type PrintPaper,
+} from '@/api/print'
 import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 const route = useRoute()
@@ -29,6 +35,11 @@ const router = useRouter()
 
 const docType = String(route.params.docType || '')
 const docId = String(route.params.docId || '')
+
+/** 纸型从 query 来（详情页「打印流转卡」/「打印贴标」分别带 a4 / label80）。 */
+const paper = computed<PrintPaper>(() =>
+  String(route.query.paper || '') === 'label80' ? 'label80' : 'a4',
+)
 
 /** 单据类型 → 中文名。新增可打印单据时这里也要加一行（否则页面标题是英文码）。 */
 const DOC_TITLE: Record<string, string> = {
@@ -50,11 +61,20 @@ const pageState = computed(() => {
   return 'ready'
 })
 
+/** 常驻提示。标签纸的缩放警告要在点之前就看得见 —— 用户完全可能直接用
+ *  PDF 查看器自带的打印按钮，绕过我们那个 toast。 */
+const footerTip = computed(() => {
+  if (hint.value) return hint.value
+  return paper.value === 'label80'
+    ? '热敏标签：打印请选「实际大小 / 100%」，缩放会让二维码扫不出来'
+    : ''
+})
+
 async function load(): Promise<void> {
   loading.value = true
   failed.value = ''
   try {
-    const r = await renderPrint(docType, docId)
+    const r = await renderPrint(docType, docId, paper.value)
     url.value = r.url
     meta.value = r.meta
   } catch (e: any) {
@@ -66,9 +86,16 @@ async function load(): Promise<void> {
 
 function onPrint(): void {
   const ok = triggerPrint(frame.value)
-  hint.value = ok
-    ? '若无打印窗口弹出，请点 PDF 预览右上角的打印图标'
-    : '请点 PDF 预览右上角的打印图标完成打印'
+  // 标签必须提醒缩放：二维码模块是 0.5mm（203dpi 下正好 4 dots）算死的，
+  // 打印对话框只要勾了「适合纸张」就会缩放，模块变成 3 dots 或糊成 5 dots，
+  // 手持机当场扫不出来 —— 而纸已经贴到工件上了，只能撕掉重打。
+  hint.value = paper.value === 'label80'
+    ? (ok
+      ? '打印对话框请选「实际大小 / 100%」，不要勾「适合纸张」；无窗口弹出时点 PDF 右上角打印图标'
+      : '请在 PDF 右上角打印图标里选「实际大小 / 100%」打印')
+    : (ok
+      ? '若无打印窗口弹出，请点 PDF 预览右上角的打印图标'
+      : '请点 PDF 预览右上角的打印图标完成打印')
   showToast({ message: hint.value, position: 'bottom' })
 }
 
@@ -76,7 +103,8 @@ function onDownload(): void {
   if (!url.value) return
   const a = document.createElement('a')
   a.href = url.value
-  a.download = `${meta.value?.docNo || docType}-V${meta.value?.revision || 1}C${meta.value?.copyNo || 1}.pdf`
+  const suffix = paper.value === 'a4' ? '' : '-label'
+  a.download = `${meta.value?.docNo || docType}-V${meta.value?.revision || 1}C${meta.value?.copyNo || 1}${suffix}.pdf`
   a.click()
 }
 
@@ -95,7 +123,10 @@ onBeforeUnmount(() => {
         ←
       </button>
       <div class="print-page__titles">
-        <div class="print-page__title">{{ DOC_TITLE[docType] || docType }}</div>
+        <div class="print-page__title">
+          {{ DOC_TITLE[docType] || docType }}
+          <span class="print-page__paper">{{ PAPER_LABEL[paper] }}</span>
+        </div>
         <div v-if="meta" class="print-page__sub">
           留痕码 {{ meta.verifyCode }} · 第 {{ meta.revision }} 版 · 副本 {{ meta.copyNo }}
         </div>
@@ -116,7 +147,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer v-if="pageState === 'ready'" class="print-page__foot">
-      <div v-if="hint" class="print-page__hint">{{ hint }}</div>
+      <div v-if="footerTip" class="print-page__hint">{{ footerTip }}</div>
       <div class="print-page__actions">
         <van-button class="print-page__btn" plain @click="onDownload">下载 PDF</van-button>
         <van-button class="print-page__btn" type="primary" @click="onPrint">打印</van-button>
@@ -172,6 +203,19 @@ onBeforeUnmount(() => {
   font-size: var(--ziwi-font-size-lg);
   font-weight: 600;
   color: var(--ziwi-text-primary);
+}
+
+/* 纸型徽标：两种纸的版面差别很大，标题上必须一眼能看出打开的是哪一种 */
+.print-page__paper {
+  display: inline-block;
+  margin-left: var(--ziwi-gap-xs);
+  padding: 1px 6px;
+  border-radius: var(--ziwi-radius-sm);
+  background: var(--ziwi-bg-light);
+  color: var(--ziwi-text-muted);
+  font-size: var(--ziwi-font-size-xs);
+  font-weight: 400;
+  vertical-align: middle;
 }
 
 .print-page__sub {

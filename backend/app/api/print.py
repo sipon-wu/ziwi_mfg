@@ -38,6 +38,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.services.print import REGISTRY
 from app.services.print_service import (
+    PAPERS,
     PrintDocNotFound,
     PrintDocTypeUnknown,
     PrintService,
@@ -88,6 +89,7 @@ async def render_print(
     doc_type: str,
     doc_id: str,
     request: Request,
+    paper: str = Query("a4", description="纸型：a4 归档件 / label80 热敏贴标"),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,13 +104,21 @@ async def render_print(
             "message": f"不支持打印的单据类型：{doc_type}（已支持：{'/'.join(REGISTRY)}）",
         })
 
+    if paper not in PAPERS:
+        # 纸型走参数而不是新路由：新增路径会再造一个无人拥有的权限码
+        # （EXECUTE_SUFFIXES 同类问题已经踩过 6 次）。
+        raise HTTPException(status_code=400, detail={
+            "code": "PRINT_BAD_PAPER",
+            "message": f"不支持的纸型：{paper}（可选：{'/'.join(PAPERS)}）",
+        })
+
     svc = _svc(current_user, db)
     source, hint = _guess_source(request)
     actor_name = current_user.get("real_name") or current_user.get("username") or ""
 
     try:
         info = await svc.render_and_store(
-            doc_type, doc_id,
+            doc_type, doc_id, paper=paper,
             actor_id=current_user.get("id"),
             actor_name=actor_name,
             print_source=source,
@@ -125,7 +135,10 @@ async def render_print(
             "code": "PRINT_BAD_DOC_ID", "message": f"单据标识不合法：{doc_id}（{e}）"})
 
     pdf, _name, _pages = await svc.get_pdf(info["id"])
-    filename = f"{info['doc_no']}-V{info['doc_revision']}C{info['copy_no']}.pdf"
+    # 文件名带纸型：同一单打出的 A4 与贴标落进同一个下载目录时不会互相覆盖，
+    # 后面靠文件名也能认出哪张是归档件。
+    suffix = "-label" if paper != "a4" else ""
+    filename = f"{info['doc_no']}-V{info['doc_revision']}C{info['copy_no']}{suffix}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -139,6 +152,7 @@ async def render_print(
             "X-Print-Revision": str(info["doc_revision"]),
             "X-Print-Copy-No": str(info["copy_no"]),
             "X-Print-Page-Count": str(info["page_count"]),
+            "X-Print-Paper": info["paper"],
             "X-Print-Template": f"{info['template_code']} v{info['template_version']}",
             "X-Print-At": info["printed_at"],
         },

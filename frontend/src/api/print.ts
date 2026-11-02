@@ -21,6 +21,15 @@
  */
 import client from './client'
 
+/** 打印纸型。`a4` = 归档件（多页、可签核、存档）；`label80` = 热敏贴标（单页、贴实物）。 */
+export type PrintPaper = 'a4' | 'label80'
+
+/** 纸型中文名。页面要显示"这张纸是归档件还是贴标"，否则两种纸混在一起分不清。 */
+export const PAPER_LABEL: Record<PrintPaper, string> = {
+  a4: 'A4 归档件',
+  label80: '热敏贴标',
+}
+
 /** 一次打印产生的留痕信息（服务端写在响应头 `X-Print-*` 上）。 */
 export interface PrintArtifactMeta {
   artifactId: number
@@ -31,6 +40,7 @@ export interface PrintArtifactMeta {
   pageCount: number
   template: string
   printedAt: string
+  paper: PrintPaper
 }
 
 export interface RenderedPrint {
@@ -51,6 +61,8 @@ export interface PrintArtifactRow {
   doc_status: string | null
   template_code: string
   template_version: string
+  /** 纸型：`a4` / `label80`（同一单据可能两种纸都打过） */
+  paper_kind: PrintPaper
   content_hash: string
   printed_by_name: string | null
   print_source: string | null
@@ -72,6 +84,8 @@ export interface PrintVerifyResult {
   doc_revision?: number
   copy_no?: number
   template?: string
+  /** 纸型：扫贴标 vs 扫归档件要能区分 */
+  paper?: PrintPaper
   content_hash?: string
   printed_by_name?: string | null
   printed_at?: string | null
@@ -104,14 +118,23 @@ async function blobErrorText(error: any, fallback: string): Promise<string> {
   return fallback
 }
 
-/** 重打：用当前数据出一份新纸（会落一条新留痕，副本号 +1）。 */
+/** 重打：用当前数据出一份新纸（会落一条新留痕，副本号 +1）。
+ *
+ * @param paper 纸型。默认 `a4`。两种纸**共用同一份内容快照**，因此同一单据的
+ *   归档件与贴标 content_hash 相同 —— 这正是"贴在工件上的标签与归档的那张纸是
+ *   同一份内容"的证据。
+ */
 export async function renderPrint(
   docType: string,
   docId: string | number,
+  paper: PrintPaper = 'a4',
 ): Promise<RenderedPrint> {
   let res
   try {
-    res = await client.post(`/print/${docType}/${docId}`, null, { responseType: 'blob' })
+    res = await client.post(`/print/${docType}/${docId}`, null, {
+      responseType: 'blob',
+      params: paper === 'a4' ? {} : { paper },
+    })
   } catch (e: any) {
     // 抛出的错误对象里挂上可读文案，调用方直接取 `.readable`
     const err: any = new Error(await blobErrorText(e, '打印失败'))
@@ -132,6 +155,8 @@ export async function renderPrint(
       pageCount: Number(h['x-print-page-count'] || 1),
       template: String(h['x-print-template'] || ''),
       printedAt: String(h['x-print-at'] || ''),
+      // 响应头缺失时回落到入参 —— 少一个头不该让页面显示不出纸型
+      paper: (String(h['x-print-paper'] || paper) as PrintPaper),
     },
   }
 }

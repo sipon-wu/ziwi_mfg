@@ -352,6 +352,13 @@ function fmtTime(v?: string | null) {
         </van-button>
         <!-- 打印流转卡：纸质件要随工单流转、各工序签认，是现场刚需 -->
         <ZiwiPrintButton doc-type="work_order" :doc-id="order.id" text="打印流转卡" />
+        <!-- 打印贴标（热敏 80×60）：贴在工件/周转箱上，靠二维码回查这张单。
+             与流转卡共用同一份内容快照，所以两者留痕码可互相印证。 -->
+        <ZiwiPrintButton
+          doc-type="work_order"
+          :doc-id="order.id"
+          paper="label80"
+          text="打印贴标" />
         <div v-if="!canOperate && actions.length" style="color:#969799;font-size:13px">
           当前状态可执行的操作需要「工单操作」权限（M01:work_order:execute），你的角色没有开通
         </div>

@@ -10,11 +10,14 @@
  */
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import type { PrintPaper } from '@/api/print'
 
 interface Props {
   docType: string
   docId: string | number
   text?: string
+  /** 纸型：`a4` 归档件（默认）/ `label80` 热敏贴标 */
+  paper?: PrintPaper
   /** 撑满一行（宽屏下默认只占内容宽） */
   block?: boolean
   disabled?: boolean
@@ -22,6 +25,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   text: '打印',
+  paper: 'a4',
   block: false,
   disabled: false,
 })
@@ -37,6 +41,8 @@ function go(): void {
   router.push({
     name: 'PrintPreview',
     params: { docType: props.docType, docId: String(props.docId) },
+    // a4 不带参数（保持旧链接/历史书签可用），只有标签才标出来
+    query: props.paper === 'a4' ? {} : { paper: props.paper },
   })
 }
 </script>

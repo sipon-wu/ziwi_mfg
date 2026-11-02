@@ -214,3 +214,17 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "work_order": ("WO-CARD", "1.0"),
     "inspection_order": ("IQC-SHEET", "1.0"),
 }
+
+# 标签模板：与 A4 单据模板**分开登记**。
+#
+# 同一个 doc_type 两种纸型各自有一套模板版本：改了热敏标签的版面只 +1 标签的
+# 版本，不会让档案柜里那批 A4 归档件的"模板 v1.0"变成谎话。反过来也一样 ——
+# 改 A4 版面不该影响已经贴在设备上的标签的可解释性。
+#
+# 版面本身目前是 `services/print/label.py` 里的一套内置默认版式（标题+二维码 /
+# 单号 / 5 行字段 / 留痕码）。后续会做一个小的标签模板编辑器，届时这里换成
+# 读库里的模板定义，`template_version` 仍然是这条留痕可解释的依据。
+LABEL_TEMPLATES: dict[str, tuple[str, str]] = {
+    "work_order": ("WO-LABEL", "1.0"),
+    "inspection_order": ("INSP-LABEL", "1.0"),
+}

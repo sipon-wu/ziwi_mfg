@@ -19,7 +19,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { verifyArtifact, type PrintVerifyResult } from '@/api/print'
+import { verifyArtifact, PAPER_LABEL, type PrintVerifyResult } from '@/api/print'
 import { errorText } from '@/api/client'
 import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
@@ -60,6 +60,14 @@ const statusText = computed(() => {
   }
   const s = result.value?.doc_status || ''
   return m[s] || s || '—'
+})
+
+/** 纸型。扫到的是一张贴标还是一张归档件，现场要能分清 ——
+ * 万一有人把归档件剪下来贴到工件上，至少扫码结果里对不上。 */
+const paperText = computed(() => {
+  const p = result.value?.paper
+  if (!p) return '—'
+  return PAPER_LABEL[p] || p
 })
 
 async function load(): Promise<void> {
@@ -117,6 +125,7 @@ onMounted(load)
         <van-cell title="单据" :value="`${result.title || ''} ${result.doc_no || ''}`.trim()" />
         <van-cell title="单据状态" :value="statusText" />
         <van-cell title="版本 / 副本" :value="`第 ${result.doc_revision} 版 · 副本 ${result.copy_no}`" />
+        <van-cell title="纸型" :value="paperText" />
         <van-cell title="模板" :value="result.template || '—'" />
         <van-cell title="打印人" :value="result.printed_by_name || '—'" />
         <van-cell title="打印时间" :value="result.printed_at || '—'" />

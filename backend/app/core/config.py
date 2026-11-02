@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     # 上的时间错了，整张纸的证据价值就没了。
     PRINT_TZ_OFFSET_HOURS: int = 8
 
+    # 热敏标签纸实际规格。不同客户现场的标签纸与模切刀具尺寸不同，且无法提前
+    # 穷举（用户原话：「标签纸好像也不好提前穷举」），所以不在代码里建规格库 ——
+    # 现场量一次，改这两个环境变量即可，无需发版。
+    # 单位 mm；高度只影响版面留白，内容不足时下方留白，不压缩字号。
+    # 取值非法（≤0 / 非数字 / 大到不像纸）时渲染器会兜底回默认值，不抛异常 ——
+    # 现场一个手误不该让整个打印接口 500。
+    PRINT_LABEL_W_MM: float = 80.0
+    PRINT_LABEL_H_MM: float = 60.0
+
     # ── cloud.ziwi.cn 统一 JWT 认证配置（RS256 非对称验签） ──
 
     CLOUD_JWKS_URL: str = "https://cloud.ziwi.cn/api/v1/auth/public-key"
