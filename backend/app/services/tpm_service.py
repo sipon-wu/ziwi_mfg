@@ -90,7 +90,8 @@ class TpmService:
     async def delete_equipment(self, id: int) -> dict:
         return {"affected": await self.repo.delete_equipment(id)}
 
-    async def list_tasks(self, page: int, page_size: int, status: str = None) -> dict:
+    async def list_tasks(self, page: int, page_size: int, status: str = None,
+                         equipment_id: int = None) -> dict:
         """保养任务列表。
 
         F-E1：每条任务带**逾期判定**—— `is_overdue` / `overdue_days` /
@@ -99,8 +100,12 @@ class TpmService:
         全靠人对着日期算 —— 越拖越久也没人往上捅。
         升级口径（简单可解释）：超期 ≥3 天 = `urgent`（建议班组长介入），
         ≥7 天 = `critical`（建议设备主管介入），其余 `normal`。
+
+        ``equipment_id`` 必须**下推**到 SQL 过滤（见 repo 注释）：客户端过滤会
+        被 page_size 上限截断，表现为"设备详情页说没有任务、列表页里却有"。
         """
-        data = await self.repo.list_tasks(page, page_size, status)
+        data = await self.repo.list_tasks(page, page_size, status,
+                                          equipment_id=equipment_id)
         now = datetime.now(timezone.utc)
         for row in (data.get("list") or data.get("items") or []):
             if (row.get("status") or "") in ("completed", "canceled"):

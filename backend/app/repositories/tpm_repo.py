@@ -121,7 +121,14 @@ class TpmRepository(MultiTenantRepository):
         return rows
 
     # === 维保任务 ===
-    async def list_tasks(self, page: int = 1, page_size: int = 20, status: str = None, task_type: str = None) -> dict:
+    async def list_tasks(self, page: int = 1, page_size: int = 20, status: str = None,
+                         task_type: str = None, equipment_id: int = None) -> dict:
+        """任务列表（可按状态 / 类型 / **设备** 过滤）。
+
+        ``equipment_id`` 是服务端过滤：设备详情页此前拉"第 1 页 100 条"再在客户端
+        按 equipment_id 过滤，``page_size`` 被 ``Query(le=100)`` 卡死 —— 总量一旦过百，
+        某台设备的任务可能整批落在第 2 页，详情页显示"暂无任务"而列表页里明明有。
+        """
         sql = "SELECT mt.*, e.equipment_name FROM maintenance_tasks mt LEFT JOIN equipment e ON e.id = mt.equipment_id WHERE 1=1"
         params = {}
         if status:
@@ -130,6 +137,12 @@ class TpmRepository(MultiTenantRepository):
         if task_type:
             sql += " AND mt.task_type = :task_type"
             params["task_type"] = task_type
+        if equipment_id is not None:
+            # 整数列，绑定值必须是 int（PG 严格类型，不收字符串）；
+            # 用 ``is not None`` 而不是真值判断：equipment_id=0 是非法 id 但
+            # 语义上"给了过滤条件"，回全量会让人以为设备 0 真有 80 条任务。
+            sql += " AND mt.equipment_id = :equipment_id"
+            params["equipment_id"] = int(equipment_id)
         sql += " ORDER BY mt.created_at DESC"
         return await self.query_page(sql, params, page, page_size)
 

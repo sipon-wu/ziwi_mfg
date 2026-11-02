@@ -124,10 +124,17 @@ async def delete_equipment(
 async def list_tasks(
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
     status: str = Query(None),
+    equipment_id: int = Query(None, description="按设备过滤（服务端过滤，勿在客户端二次筛）"),
     repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
 ):
+    """保养任务列表（可按 status / equipment_id 过滤）。
+
+    ★ ``equipment_id`` 走服务端过滤：设备详情页此前拉"第 1 页 100 条"再在客户端
+    按 equipment_id 筛，而 ``page_size`` 被 ``Query(le=100)`` 卡死 —— 总量过百后
+    某台设备的任务可能整批落在第 2 页，详情页显示"暂无任务"、列表页里却有。
+    """
     svc = TpmService(repo)
-    data = await svc.list_tasks(page, page_size, status)
+    data = await svc.list_tasks(page, page_size, status, equipment_id=equipment_id)
     return {"code": 0, "message": "success", "data": data}
 
 
