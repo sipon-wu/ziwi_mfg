@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { get, post } from '@/api/client'
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -55,9 +56,9 @@ const withBatch = ref(false)
 const withLocation = ref(false)
 let dialogIntent: { action: 'receive' | 'store'; itemId: number } | null = null
 
-const locationColumns = computed(() =>
+const locationOptions = computed(() =>
   locations.value.map((l: any) => ({
-    text: `${l.location_code}${l.location_name ? ' - ' + l.location_name : ''}`,
+    label: `${l.location_code}${l.location_name ? ' - ' + l.location_name : ''}`,
     value: l.id,
   }))
 )
@@ -113,7 +114,7 @@ function openStore(item: any) {
   batchNo.value = item.batch_no || ''
   withBatch.value = false
   withLocation.value = true
-  locationId.value = item.location_id || locationColumns.value[0]?.value || ''
+  locationId.value = item.location_id || locationOptions.value[0]?.value || ''
   showDialog.value = true
 }
 
@@ -236,13 +237,18 @@ function canSubmitInspection(item: any) {
       <div style="padding:12px">
         <van-field v-model.number="qty" type="number" label="数量" placeholder="请输入数量" />
         <van-field v-if="withBatch" v-model="batchNo" label="批号" placeholder="选填" />
-        <van-field v-if="withLocation" label="目标库位">
-          <template #input>
-            <!-- Vant4 confirm 回传 {selectedOptions}，不是 {value} -->
-            <van-picker :columns="locationColumns"
-              @confirm="(v:any) => locationId = v.selectedOptions?.[0]?.value ?? v.selectedValues?.[0]" />
-          </template>
-        </van-field>
+        <!-- R1：选择器不进表单流，改浮层（原 van-picker 内联进 #input） -->
+        <ZiwiSelect
+          v-if="withLocation"
+          v-model="locationId"
+          field-name="location_id"
+          label="目标库位"
+          required
+          :clearable="false"
+          :options="locationOptions"
+          object-name="库位"
+          placeholder="选择目标库位"
+        />
       </div>
     </van-dialog>
   </div>

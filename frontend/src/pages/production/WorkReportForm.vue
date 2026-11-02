@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
 import { showToast } from 'vant'
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import dayjs from 'dayjs'
 import type { WorkOrder, PaginatedResponse } from '@/types'
 
@@ -38,8 +39,9 @@ const submitting = ref(false)
 // 可报工的工单状态：草稿未下达、已关闭/已作废均已收口（后端会 400，这里先过滤）
 const REPORTABLE_STATUS = ['released', 'in_progress', 'paused']
 const reportableOrders = computed(() => orders.value.filter(o => REPORTABLE_STATUS.includes(o.wo_status)))
-const orderColumns = computed(() =>
-  reportableOrders.value.map(o => ({ text: `${o.wo_no} - ${o.product_name}`, value: o.id }))
+// 选项用 `label` 而非 Vant 滚轮的 `text`：ZiwiSelect 只认 `label/value`（内部再归一化）
+const orderOptions = computed(() =>
+  reportableOrders.value.map(o => ({ label: `${o.wo_no} - ${o.product_name}`, value: o.id }))
 )
 
 // 工价自动计算（前端计算展示；有工价接口时再对接）
@@ -101,16 +103,17 @@ async function handleSubmit() {
       </van-cell-group>
 
       <van-cell-group title="报工明细" style="margin-top:12px;">
-        <van-field v-model="form.work_order_id" label="工单" placeholder="选择工单" :rules="[{required:true}]">
-          <template #input>
-            <!-- Vant4 confirm 回传 {selectedValues, selectedOptions}，不是 {value}；
-                 旧写法 v.value 恒为 undefined → 选了工单也提交不了（实测踩过） -->
-            <van-picker
-              :columns="orderColumns"
-              @confirm="(v:any) => form.work_order_id = v.selectedOptions?.[0]?.value ?? v.selectedValues?.[0]"
-            />
-          </template>
-        </van-field>
+        <!-- R1：选择器不进表单流，改浮层（原 van-picker 内联进 #input，滚轮在触屏上极易误触） -->
+        <ZiwiSelect
+          v-model="form.work_order_id"
+          field-name="work_order_id"
+          label="工单"
+          required
+          :clearable="false"
+          :options="orderOptions"
+          object-name="工单"
+          placeholder="选择工单"
+        />
         <van-field v-model="form.report_date" label="报工日期" type="date" :rules="[{required:true}]" />
         <van-field v-model="form.operation_code" label="工序编码" />
         <van-field v-model="form.operation_name" label="工序名称" />

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { showToast, showConfirmDialog, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 
@@ -227,14 +228,16 @@ onMounted(() => {
       <div style="padding:16px">
         <van-field v-model.number="buildForm.product_id" label="产品ID" type="digit" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model.number="buildForm.customer_id" label="客户ID" type="digit" placeholder="必填" :rules="[{ required: true }]" />
-        <van-field name="level_no" label="PPAP等级">
-          <template #input>
-            <van-picker
-              :columns="levels.map(l => ({ text: `${l.level_no}级 - ${l.level_name}`, value: l.level_no }))"
-              @confirm="(v:any) => buildForm.level_no = v.value"
-            />
-          </template>
-        </van-field>
+        <ZiwiSelect
+          v-model="buildForm.level_no"
+          field-name="level_no"
+          label="PPAP等级"
+          required
+          :clearable="false"
+          :options="levels.map(l => ({ label: `${l.level_no}级 - ${l.level_name}`, value: l.level_no }))"
+          object-name="PPAP等级"
+          placeholder="选择 PPAP 等级"
+        />
         <van-field v-model="buildForm.change_note" label="变更说明" type="textarea" rows="2" placeholder="选填" />
       </div>
     </van-dialog>

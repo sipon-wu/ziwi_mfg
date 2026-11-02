@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
+import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 
 interface FmeaAction {
   id: number
@@ -209,14 +210,16 @@ onMounted(fetchData)
         return true
       }">
       <div style="padding:16px">
-        <van-field name="item_id" label="关联FMEA项">
-          <template #input>
-            <van-picker
-              :columns="fmeaItems.map(i => ({ text: `${i.function_desc} (RPN=${i.rpn})`, value: i.id }))"
-              @confirm="(v:any) => form.item_id = v.value"
-            />
-          </template>
-        </van-field>
+        <ZiwiSelect
+          v-model="form.item_id"
+          field-name="item_id"
+          label="关联FMEA项"
+          required
+          :clearable="false"
+          :options="fmeaItems.map(i => ({ label: `${i.function_desc} (RPN=${i.rpn})`, value: i.id }))"
+          object-name="FMEA项"
+          placeholder="选择 FMEA 项"
+        />
         <van-field v-model="form.action_desc" label="措施描述" type="textarea" rows="2" placeholder="必填" :rules="[{ required: true }]" />
         <van-field v-model.number="form.responsible_id" label="责任人ID" type="digit" placeholder="选填" />
         <van-field v-model="form.target_date" label="目标完成日期" type="date" />
