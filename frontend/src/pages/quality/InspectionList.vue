@@ -97,14 +97,26 @@ async function onScan() {
       showToast('未匹配到检验单')
       return
     }
-    if (d.judged) showToast('该单已判定，仅供查看')
-    router.push('/quality/' + o.id)
+    // 未判定 → 直接进执行页（现场扫单就是为了开始检，不是为了看详情）；
+    // 已判定 → 只能看详情，执行页会拒绝录入
+    if (d.judged) {
+      showToast('该单已判定，仅供查看')
+      router.push('/quality/' + o.id)
+      return
+    }
+    scanCode.value = ''
+    router.push('/quality/' + o.id + '/execute')
   } catch (e: any) {
     // 后端 404 带人话（"可能扫的是物料条码"），直接透出让现场自己判断
     showToast(e?.response?.data?.detail?.message || '扫码定位失败')
   } finally {
     scanning.value = false
   }
+}
+
+/** 未判定的单可以直接进执行页（T04 检验执行） */
+function goExecute(id: number) {
+  router.push('/quality/' + id + '/execute')
 }
 
 onMounted(loadData)
@@ -164,6 +176,7 @@ onMounted(loadData)
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #right-icon>
+          <van-button v-if="!item.result" size="mini" type="primary" style="margin-left:4px" @click.stop="goExecute(item.id)">执行</van-button>
           <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain style="margin-left:4px" @click.stop="toggleExpand(item.id)" />
         </template>
       </van-cell>

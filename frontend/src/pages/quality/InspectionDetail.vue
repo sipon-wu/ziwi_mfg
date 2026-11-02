@@ -187,6 +187,16 @@ onMounted(async () => {
   await Promise.all([fetch(), fetchItems()])
   if (!judged.value) addRow()
 })
+
+/**
+ * T04 检验执行页入口。
+ *
+ * 详情页保留"随手改一行"的轻录入，但**成套录数必须走执行页**：
+ * 执行页按 `/checklist` 给本单应检项，不依赖"全站前 100 项"的下拉。
+ */
+function goExecute() {
+  router.push(`/quality/${route.params.id}/execute`)
+}
 </script>
 
 <template>
@@ -202,6 +212,17 @@ onMounted(async () => {
         <van-cell title="创建时间" :value="fmtTime(order.created_at)" />
         <van-cell v-if="order.remark" title="备注" :value="order.remark" />
       </van-cell-group>
+
+      <!-- T04：成套录数走执行页（按本单应检项逐项卡片，不用在下拉里翻 100 项） -->
+      <van-button
+        v-if="!judged"
+        type="primary"
+        block
+        style="margin-top:12px;min-height:var(--ziwi-touch-min);"
+        @click="goExecute"
+      >
+        {{ ORDER_TYPE_MAP[order.order_type] || '检验' }}执行（逐项录数）
+      </van-button>
 
       <!-- 已录明细：现场最常问"这项到底测了没、测的多少" -->
       <van-cell-group title="检验明细" style="margin-top:12px;">

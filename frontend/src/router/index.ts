@@ -62,6 +62,8 @@ const routes: RouteRecordRaw[] = [
       //   否则 /equipment/maintenance-tasks 会被 :id 吃掉，EquipmentDetail 拿到
       //   id='maintenance-tasks' → Number() 为 NaN → 空白页。
       { path: 'equipment/maintenance-tasks', name: 'MaintenanceTasks', component: () => import('@/pages/equipment/MaintenanceTasks.vue'), meta: { title: '保养任务', perm: 'M06:equipment:read' } },
+      // T04 点检执行：扫设备码 → 该设备待执行任务（0 条给空态 + 新建入口）
+      // ★ 随「点检执行」一并交付，本轮不注册（页面与路由同批提交，避免悬空引用）
       // Q5 术语：维护计划 → 保养计划
       { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '保养计划', perm: 'M06:equipment:read' } },
       { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', perm: 'M06:equipment:read' } },
@@ -73,7 +75,13 @@ const routes: RouteRecordRaw[] = [
       // M03 - 品质管理
       { path: 'quality', name: 'Quality', component: () => import('@/pages/quality/InspectionList.vue'), meta: { title: '品质管理', perm: 'M03:inspection_order:read' } },
       { path: 'quality/create', name: 'CreateInspection', component: () => import('@/pages/quality/InspectionCreate.vue'), meta: { title: '新建检验', perm: 'M03:inspection_order:read' } },
+      // T04 检验执行页的"扫单入场"：现场是拿手持机扫单号进来的，没有 id。
+      // ★ 静态段必须早于 'quality/:id'，否则 execute 会被当成 id。
+      { path: 'quality/execute', name: 'InspectionExecuteScan', component: () => import('@/pages/quality/InspectionExecute.vue'), meta: { title: '检验执行', perm: 'M03:inspection_order:read' } },
       { path: 'quality/:id', name: 'QualityDetail', component: () => import('@/pages/quality/InspectionDetail.vue'), meta: { title: '检验详情', perm: 'M03:inspection_order:read' } },
+      // T04 检验执行页（扫码直达 + 逐项卡片 + 底部固定提交）。
+      // 段数比 'quality/:id' 多，不会被动态段吃掉。
+      { path: 'quality/:id/execute', name: 'InspectionExecute', component: () => import('@/pages/quality/InspectionExecute.vue'), meta: { title: '检验执行', perm: 'M03:inspection_order:read' } },
       // NCR 是独立模块码 M30（列表页调 /ncr），拿 M03 的检验单只读码代替会让
       // "能看检验单但没 M30"的角色进去即 403（key_user 实测）。
       { path: 'quality/ncr', name: 'NcrList', component: () => import('@/pages/quality/NcrList.vue'), meta: { title: '不合格品评审', perm: 'M30:ncr:read' } },
@@ -110,6 +118,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'wms/receipt-orders/create', name: 'CreateReceiptOrder', component: () => import('@/pages/wms/ReceiptOrderCreate.vue'), meta: { perm: 'M04:wms_receipt_order:read', title: '新增入库单' } },
       { path: 'wms/receipt-orders/:id', name: 'ReceiptOrderDetail', component: () => import('@/pages/wms/ReceiptOrderDetail.vue'), meta: { perm: 'M04:wms_receipt_order:read', title: '入库单详情' } },
       { path: 'wms/issue-orders', name: 'IssueOrderList', component: () => import('@/pages/wms/IssueOrderList.vue'), meta: { perm: 'M04:wms_issue_order:read', title: '出库单管理' } },
+      // ★ T04a：先把 404 堵掉 —— `IssueOrderList.vue` 早就 link 到
+      //   `/wms/issue-orders/:id`，但路由一直没注册，点进去落 NotFound 兜底页。
+      //   `:id/execute`（发料执行）随下一批交付，与页面同批提交。
+      { path: 'wms/issue-orders/:id', name: 'IssueOrderDetail', component: () => import('@/pages/wms/IssueOrderDetail.vue'), meta: { perm: 'M04:wms_issue_order:read', title: '出库单详情' } },
       { path: 'wms/stock-query', name: 'StockQuery', component: () => import('@/pages/wms/StockQuery.vue'), meta: { perm: 'M04:wms_inventory:read', title: '库存查询' } },
       { path: 'wms/inventory', redirect: '/wms/stock-query' },
       { path: 'wms/stock-move', name: 'StockMove', component: () => import('@/pages/wms/StockMove.vue'), meta: { perm: 'M04:wms_inventory:read', title: '库存移动' } },

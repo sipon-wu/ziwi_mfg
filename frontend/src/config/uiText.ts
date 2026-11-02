@@ -163,6 +163,95 @@ export const txt = {
     refresh: '刷新',
   },
 
+  /**
+   * 执行页（T04 三条执行路径）专用文案。
+   *
+   * 集中在这里的原因：三条路径的"进度 / 差异 / 联动"措辞必须一致 ——
+   * 同一个意思在检验页叫"已录"、在出库页叫"已发"、在点检页叫"已点"是可以的
+   * （业务对象不同），但"还差几项""已生成安灯"这类**跨页复述**必须同口径，
+   * 否则现场在三张单之间来回时会对不上号。
+   */
+  execute: {
+    /** 扫码入口标题：说明"扫什么" */
+    scanTitle: (obj: string, codes: string): string => `扫${obj}（${codes}）`,
+    scanPlaceholder: (obj: string): string => `扫码或输入${obj}后回车`,
+    /** 扫到了但当前对象里没有这个码 */
+    scanNoMatch: (obj: string, code: string): string => `${obj}里没有「${code}」，请核对`,
+    /** 扫到的单已经判定过：判定是终态，不能再进录入页改数 */
+    alreadyJudged: (): string => '该单已判定，不能再录入（如需复检请新建检验单）',
+    /** 定位单据这一步的主按钮（H 形态底部条 / W 形态行内都用它） */
+    locateAction: (): string => '开始检验',
+
+    /** 本单未挂标准（degraded）时的顶部说明 —— 不能假装清单是准的 */
+    degradedBanner: (n: number): string =>
+      `本单未关联检验标准，请先勾选本单适用的检验项（共 ${n} 项可选）`,
+    degradedAction: (n: number): string => `确认适用项（已选 ${n} 项）`,
+    selectAll: (): string => '全选',
+    clearAll: (): string => '清空',
+    selectedCount: (n: number, total: number): string => `已选 ${n} / ${total} 项`,
+    needSelectAtLeastOne: (): string => '请至少勾选 1 个检验项才能开始录入',
+
+    /** 逐项录入的进度 */
+    progress: (done: number, total: number): string => `已录 ${done} / ${total} 项`,
+    /** 某项缺录 */
+    itemMissing: (name: string): string => `「${name}」还没录结论`,
+
+    /** 数值与规格的实时提示（给"按下限自动判定"一个可解释的说法） */
+    willPass: (): string => '按规格将判为合格',
+    willFail: (): string => '按规格将判为不合格',
+    specNone: (): string => '本项无上下限，需人工判合格/不合格',
+
+    /** Ac/Re 建议判定 */
+    verdictHint: (defect: number, ac: number, re: number, suggest: string): string =>
+      `不合格 ${defect} 项 · Ac ${ac} / Re ${re} · 建议判定 ${suggest}`,
+    verdictNoPlan: (): string => '本单未配置抽样方案，请人工判定',
+
+    /** 已转 NCR（回执 extra 用，必须可点） */
+    ncrRaised: (id: number): string => `已转 NCR #${id}`,
+    andonRaised: (id: number): string => `已生成安灯 #${id}`,
+
+    /** 出库：差额结案 */
+    shortageLine: (lineNo: number, qty: string, unit: string): string =>
+      `第 ${lineNo} 行欠 ${qty}${unit ? ' ' + unit : ''}`,
+    shortageConsequence: (lines: number, detail: string): string =>
+      `${lines} 行未发齐（${detail}），结案后不可补拣`,
+    shortCloseAction: (): string => '差额结案',
+    shortCloseOk: (): string => '结案',
+    shortReason: (): string => '现场差额结案',
+    /** 出库行状态 */
+    lineDone: (): string => '已发',
+    linePartial: (): string => '已发部分',
+    linePending: (): string => '未发',
+    /** 出库汇总 */
+    issueSummary: (done: number, total: number): string => `已发完 ${done} / ${total} 行`,
+
+    /** 点检 */
+    taskNeedStart: (): string => '任务还没开工，开工后才能提交点检',
+    taskStart: (): string => '开工',
+    taskStarted: (status: string): string => `已开工，设备状态 ${status}`,
+    checklistEmpty: (): string => '该任务还没有点检项',
+    checklistEmptyHint: (): string => '可以先用标准点检项模板生成，再按现场增删',
+    useTemplate: (): string => '使用标准点检项模板',
+    addItem: (): string => '添加点检项',
+    itemNamePlaceholder: (): string => '点检项目名，如「皮带张紧度」',
+    /** 项级三态（与状态字典 maintenance_item 同口径，此处只给动作词） */
+    verdictNormal: (): string => '正常',
+    verdictAbnormal: (): string => '异常',
+    verdictNa: (): string => '不适用',
+    abnormalDesc: (): string => '异常描述',
+    abnormalDescPlaceholder: (): string => '如：皮带打滑、有异响',
+    photo: (): string => '拍照',
+    photoCount: (n: number, max: number): string => `已拍 ${n} / ${max} 张`,
+    photoLocalOnly: (): string =>
+      '照片以压缩后的内联数据随单保存（后端暂无对象存储上传接口）',
+    /** 点检回执 */
+    checkedSummary: (checked: number, abnormal: number): string =>
+      `${checked} 项已点检，${abnormal} 项异常`,
+    submitConclude: (): string => '提交并完工',
+    submitOnly: (): string => '仅保存点检',
+    needVerdictAll: (): string => '还有点检项没有判定',
+  },
+
   /** 状态提示（轻量、不改变数据、不改动单号，用 toast 即可） */
   toast: {
     saved: (obj: string): string => `${obj}已保存`,
