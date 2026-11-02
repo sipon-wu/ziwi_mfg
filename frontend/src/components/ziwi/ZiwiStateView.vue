@@ -60,6 +60,14 @@ interface Props {
   objectName?: string
   /** 无数据范围时的范围描述，如「本班组」「本部门」 */
   scopeLabel?: string
+  /**
+   * 空态副文案（"下一步怎么做"）覆盖。
+   *
+   * 默认是「点右下角新建，或在扫码入口直接扫设备码」——这句只对**扫码入口的列表页**
+   * 成立。子列表场景（如任务下的点检项）里创建方式完全不同，沿用会把用户引到
+   * 一个不存在的入口上，所以必须能覆盖。
+   */
+  hint?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -73,6 +81,7 @@ const props = withDefaults(defineProps<Props>(), {
   minHeight: '',
   objectName: '数据',
   scopeLabel: '本班组',
+  hint: '',
 })
 
 const emit = defineEmits<{
@@ -150,7 +159,8 @@ const hintText = computed(() => {
     case 'offline':
       return txt.offline.queued(props.pendingCount)
     case 'empty-true':
-      return '点右下角新建，或在扫码入口直接扫设备码'
+      // 默认话术只对"扫码入口的列表页"成立；子列表场景由调用方用 hint 覆盖。
+      return props.hint || '点右下角新建，或在扫码入口直接扫设备码'
     default:
       return ''
   }

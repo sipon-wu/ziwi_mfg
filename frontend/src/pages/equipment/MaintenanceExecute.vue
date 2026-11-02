@@ -512,6 +512,7 @@ watch(
       :skeleton-count="3"
       :object-name="'点检项'"
       :primary-text="txt.execute.useTemplate()"
+      :hint="txt.execute.checklistEmpty()"
       :error="{ kind: loadErrorKind, message: loadErrorMessage }"
       min-height="36vh"
       @retry="load"
@@ -625,14 +626,19 @@ watch(
           </div>
         </li>
       </ul>
-
-      <div v-if="canSubmit" class="mex-add">
-        <button type="button" class="mex-add__btn" @click="addItem">＋ {{ txt.execute.addItem() }}</button>
-        <button v-if="items.length === 0" type="button" class="mex-add__btn" @click="useTemplate">
-          {{ txt.execute.useTemplate() }}
-        </button>
-      </div>
     </ZiwiStateView>
+
+    <!-- ★ 添加区必须留在 ZiwiStateView **外面**：
+         `items.length === 0` 时 `state` 恒为 `empty-true`，组件会用空态整块替换默认插槽，
+         写在插槽里的「＋ 添加点检项」就永远点不到 —— 只剩"用模板"一条路，
+         而模板内容是通用的三项，现场真正需要的往往是按设备增删。
+         放在插槽外由 `canSubmit` 单独门控，两条出路才都在。 -->
+    <div v-if="canSubmit" class="mex-add">
+      <button type="button" class="mex-add__btn" @click="addItem">＋ {{ txt.execute.addItem() }}</button>
+      <button v-if="items.length === 0" type="button" class="mex-add__btn" @click="useTemplate">
+        {{ txt.execute.useTemplate() }}
+      </button>
+    </div>
 
     <!-- 底部主操作条 -->
     <ZiwiActionBar
