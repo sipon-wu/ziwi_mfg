@@ -19,14 +19,14 @@
   --ziwi-info: #3b82f6;
 
   /* ── 中性色 ── */
-  --ziwi-bg: #f5f6fa;                /* 页面背景 */
+  --ziwi-bg: #f0f2f5;                /* 页面背景（对齐能碳 ECMS #f0f2f5） */
   --ziwi-bg-white: #ffffff;
   --ziwi-bg-light: #f8fafc;
   --ziwi-border: #e2e8f0;            /* 边框 */
   --ziwi-border-light: #f1f5f9;
 
   /* ── 文字色 ── */
-  --ziwi-text-primary: #1e293b;      /* 主文字 */
+  --ziwi-text-primary: #333333;      /* 主文字（对齐能碳 ECMS 正文 #333） */
   --ziwi-text-regular: #333333;      /* 常规文字 */
   --ziwi-text-secondary: #555555;    /* 次要文字 */
   --ziwi-text-muted: #999999;        /* 弱化文字 */
@@ -38,8 +38,11 @@
   --ziwi-sidebar-text: #adb5bd;      /* 侧边栏文字 */
   --ziwi-sidebar-active: #ffffff;    /* 侧边栏激活文字 */
   --ziwi-sidebar-hover-bg: #2b3035;  /* 侧边栏悬浮背景 */
-  --ziwi-sidebar-width: 220px;
-  --ziwi-sidebar-collapsed-width: 60px;
+  --ziwi-sidebar-width: 200px;
+  --ziwi-sidebar-collapsed-width: 50px;
+  /* 注：这两个令牌目前**无人引用**，侧栏真实宽度写死在 MainLayout.vue 里
+     （`.sidebar{width:200px}` / `.sidebar.collapsed{width:50px}`，与 ECMS 一致）。
+     这里同步成真实值，避免以后有人引用时拿到一个从未生效过的 220/60。 */
 
   /* ── 圆角 ── */
   --ziwi-radius-sm: 4px;
@@ -47,6 +50,10 @@
   --ziwi-radius-lg: 8px;
   --ziwi-radius-xl: 12px;
   --ziwi-radius-round: 50%;
+  /* 卡片：对齐 ECMS `.section`（10px 圆角 + 1px #e8eaed 边框 + 20px 内边距） */
+  --ziwi-radius-card: 10px;
+  --ziwi-border-card: #e8eaed;
+  --ziwi-padding-card: 20px;
 
   /* ── 阴影 ── */
   --ziwi-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);

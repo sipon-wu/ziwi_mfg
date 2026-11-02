@@ -13,6 +13,8 @@ import '@/styles/ziwi-motion.css'
 import '@/styles/ziwi-utilities.css'
 // 3. Vant 桥接必须最后：它读的是上面几层已声明的 --ziwi-* 变量
 import '@/styles/vant-overrides.css'
+// 4. 面板层（白卡）：在桥接之后，因为它要覆盖 cell-group 的默认外观
+import '@/styles/ziwi-surface.css'
 import App from './App.vue'
 import router from './router'
 import SelectField from '@/components/SelectField.vue'

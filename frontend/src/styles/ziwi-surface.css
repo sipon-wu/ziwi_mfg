@@ -1,0 +1,107 @@
+/* ============================================================
+   面板层 —— 视觉对齐能碳 ECMS（`ziwi_project_dna/frontend`）
+   ------------------------------------------------------------
+   ## 为什么单独一个文件
+   本文件只做「白卡」这一件事：把能碳 ECMS `.section` 的观感搬到本系统。
+   令牌层面（颜色/圆角/间距）在 `ziwi-variables.css` 里改；Vant 变量桥接在
+   `vant-overrides.css` 里改。面板属于**结构类样式**，放这里避免和变量文件混。
+
+   ## ECMS 的参照值（直接摘自它的 scoped style，不是估的）
+   ```css
+   .section { background:#fff; border:1px solid #e8eaed; border-radius:10px; padding:20px }
+   .section-header h3 { font-size:15px; color:#333 }
+   ```
+
+   ## 为什么用 `.van-cell-group` 而不是逐页换组件
+   全站 38 个页面拿 `van-cell-group` 当卡片用。逐页换成 `.ziwi-card` 要改 38 页
+   并全部回归；在组件的默认样式上兜一层，一次生效、零页面改动。
+   代价：`van-cell-group` 的通栏特性与"卡片"语义并不完全吻合，宽屏上仍会顶到
+   内容区边缘 —— 那属于自适应范畴，在后续批次按模块推进，不在这里硬扛。
+
+   ## 两个必须排除的情况
+   1. `.van-cell-group--inset`：Vant 的 inset 模式**本身就是卡片**，再套一层边框
+      会变成"卡中卡"。全站有 9 处用了 inset。
+   2. 浮层内的 cell-group：`ZiwiFormSheet` 的 W/T 档本身是白底浮层，里面再加
+      带边框的卡片会显得碎。用 `:where()` 把它排除掉，同时不影响特异性。
+   ============================================================ */
+
+:root:root {
+  /* 卡片标题：ECMS 是 `h3 15px #333`，而 Vant 默认 12px 灰字。
+     层级感差得最明显的就是这一条 —— 标题比内容还小，卡片就没有"块"的感觉。 */
+  --van-cell-group-title-font-size: 15px;
+  --van-cell-group-title-color: var(--ziwi-text-primary);
+  /* inset 档直接对齐同一套卡片令牌，两种写法观感一致 */
+  --van-cell-group-inset-radius: var(--ziwi-radius-card);
+}
+
+/* 普通 cell-group → ECMS 的白卡 */
+.van-cell-group:not(.van-cell-group--inset) {
+  border: 1px solid var(--ziwi-border-card);
+  border-radius: var(--ziwi-radius-card);
+  /* 圆角必须裁剪，否则首尾 cell 的白底会顶出圆角形成直角 */
+  overflow: hidden;
+}
+
+/* 浮层内部的 cell-group 不加边框：浮层已经是白底面板 */
+:where(.van-popup, .van-dialog) .van-cell-group:not(.van-cell-group--inset) {
+  border: none;
+  border-radius: 0;
+}
+
+/* ------------------------------------------------------------
+   关掉 Vant 的发丝线（只对已加真实边框的非 inset 分组）
+   ------------------------------------------------------------
+   Vant 的 CellGroup 默认带 `van-hairline--top-bottom`，用 `::after` 画上下
+   各 0.5px 的伪元素线。这段是"没有边框时代的唯一分隔手段"，而我们现在给非
+   inset 分组加了**真实 1px border** —— 于是上下边各多出一条 0.5px 的线：
+   - 底部：1px border 内侧再压一条，下边缘看起来比其他三边粗；
+   - 顶部：对"标题+分组"拼合的卡片来说，正好落在标题与正文的交界处，
+     凭空多出一条分隔线 —— 而 ECMS 的 `.section-header` 只有 12px 间距，
+     没有任何线（`.section-header{margin-bottom:12px}` / `h3{margin:0}`）。
+
+   行与行的分隔不受影响：那是每个 `.van-cell::after`（van-hairline--bottom）
+   画的，不是分组这一层。
+   ------------------------------------------------------------ */
+.van-cell-group:not(.van-cell-group--inset)::after {
+  border-width: 0;
+}
+
+
+/* ------------------------------------------------------------
+   分组标题并入卡片顶部
+   ------------------------------------------------------------
+   ## 为什么需要这一段
+   Vant 4.9 的 CellGroup 在有 title 时返回 `[renderTitle(), renderGroup()]`
+   的 Fragment（见 `vant/es/cell-group/CellGroup.mjs`）—— 标题是分组的
+   **兄弟节点**，位置在卡片之外。落到页面上就是：白卡上方悬着一行
+   灰底黑字「基本信息」，与卡片没有任何视觉连接。
+
+   ECMS 则是 `.section` 白卡内部放 `.section-header h3`，标题天然属于卡片。
+
+   ## 怎么兜
+   不改 DOM、不改页面（方案 §2.3 做法 A）：把标题画成卡片的"上半截"——
+   自带白底 + 上边框 + 上圆角，同时把它**紧邻的下一个分组**的上边框与上圆角去掉。
+   两个兄弟节点拼起来就是一张完整的卡。
+
+   ## 边界
+   - 只对 `__title` 的非 inset 档生效（inset 标题有自己的 padding 规则）；
+   - 用相邻兄弟选择器 `+`，所以只有"标题后紧跟普通分组"才会拼合。
+     标题后面不是分组（罕见）时，退化成一条独立的白色横条，不会破版。
+   - 横向内边距取 16px，与 cell 的 `--van-cell-horizontal-padding` 对齐，
+     否则标题左边缘会比下面的字段值缩进错位。
+   ------------------------------------------------------------ */
+.van-cell-group__title:not(.van-cell-group__title--inset) {
+  background: var(--ziwi-bg-white);
+  border: 1px solid var(--ziwi-border-card);
+  border-bottom: none;
+  border-radius: var(--ziwi-radius-card) var(--ziwi-radius-card) 0 0;
+  padding: var(--ziwi-gap-lg) var(--ziwi-gap-lg) var(--ziwi-gap-xs);
+  margin-top: var(--ziwi-gap-lg);
+}
+
+.van-cell-group__title:not(.van-cell-group__title--inset)
+  + .van-cell-group:not(.van-cell-group--inset) {
+  border-top: none;
+  border-radius: 0 0 var(--ziwi-radius-card) var(--ziwi-radius-card);
+}
+

@@ -1,0 +1,76 @@
+{
+  "base": "http://127.0.0.1:5173",
+  "ecmsReference": {
+    "pageBg": "rgb(240, 242, 245)",
+    "textColor": "rgb(51, 51, 51)",
+    "cardBorder": "rgb(232, 234, 237)",
+    "cardRadius": "10px",
+    "tagRadius": "10px",
+    "dialogRadius": "12px"
+  },
+  "pass": 12,
+  "total": 12,
+  "results": [
+    {
+      "name": "页面底色 = ECMS #f0f2f5",
+      "ok": true,
+      "detail": "rgb(240, 242, 245)"
+    },
+    {
+      "name": "存在普通 cell-group（非 inset）",
+      "ok": true,
+      "detail": "rgb(232, 234, 237)"
+    },
+    {
+      "name": "卡片边框 = ECMS 1px #e8eaed",
+      "ok": true,
+      "detail": "1px solid rgb(232, 234, 237)"
+    },
+    {
+      "name": "卡片圆角 = ECMS 10px",
+      "ok": true,
+      "detail": "10px"
+    },
+    {
+      "name": "卡片白底",
+      "ok": true,
+      "detail": "rgb(255, 255, 255)"
+    },
+    {
+      "name": "卡片标题 15px（ECMS h3）",
+      "ok": true,
+      "detail": "15px  「基本信息」"
+    },
+    {
+      "name": "卡片标题色 = #333",
+      "ok": true,
+      "detail": "rgb(51, 51, 51)"
+    },
+    {
+      "name": "分组标题已并入卡片（白底+上圆角+上边框）",
+      "ok": true,
+      "detail": "1px solid rgb(232, 234, 237)"
+    },
+    {
+      "name": "正文色 = ECMS #333",
+      "ok": true,
+      "detail": "rgb(51, 51, 51)"
+    },
+    {
+      "name": "标签圆角 = ECMS 10px 药丸",
+      "ok": true,
+      "detail": "10px"
+    },
+    {
+      "name": "弹窗圆角 = ECMS 12px",
+      "ok": true,
+      "detail": "12px"
+    },
+    {
+      "name": "无 JS 运行时错误",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "notes": []
+}

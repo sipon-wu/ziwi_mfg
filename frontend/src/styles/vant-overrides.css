@@ -61,7 +61,10 @@
   --van-button-default-height: var(--ziwi-touch-min);
   --van-button-default-font-size: var(--ziwi-font-size-lg);
   --van-button-normal-font-size: var(--ziwi-font-size-lg);
-  --van-button-border-radius: var(--ziwi-radius-sm);
+  /* ★ 变量名是 `--van-button-radius`，不是 `--van-button-border-radius`。
+     后者在 Vant 4 里根本不存在 —— 写错等于没覆盖（实测 Vant 默认 var(--van-radius-md)=4px，
+     恰好与本项目想要的 4px 相同，所以肉眼一直没发现）。 */
+  --van-button-radius: var(--ziwi-radius-sm);
   --van-button-danger-background: var(--ziwi-danger);
   --van-button-danger-border-color: var(--ziwi-danger);
   --van-button-success-background: var(--ziwi-success);
@@ -81,7 +84,11 @@
   --van-overlay-background: rgba(0, 0, 0, 0.45);
   --van-popup-round-radius: var(--ziwi-radius-xl);
   --van-popup-background: var(--ziwi-bg-white);
-  --van-dialog-border-radius: var(--ziwi-radius-lg);
+  /* ★ 变量名是 `--van-dialog-radius`，不是 `--van-dialog-border-radius`。
+     后者在 vant/lib/index.css 里**不存在**（grep 全量 --van-dialog* 只有 20 个，
+     没有一个叫 border-radius），写错等于没覆盖 —— 实测弹窗读到的是 Vant 默认
+     的 --van-dialog-radius:16px，而我们要的是 ECMS 的 12px。 */
+  --van-dialog-radius: var(--ziwi-radius-xl);
   --van-dialog-background: var(--ziwi-bg-white);
   --van-dialog-header-font-weight: 500;
   --van-dialog-confirm-button-text-color: var(--ziwi-primary);
@@ -95,10 +102,14 @@
   --van-nav-bar-icon-color: var(--ziwi-text-primary);
   --van-nav-bar-text-color: var(--ziwi-primary);
 
-  /* ── 标签 ── */
+  /* ── 标签 ──
+     ★ 圆角刻意取字面 10px（药丸），不取 --ziwi-radius-sm(4px)：
+       能碳 ECMS 的 `.tag` 就是 `padding:2px 9px; border-radius:10px`，
+       而 4px 是本系统自己的方正口径。视觉对齐以 ECMS 为准。
+       字号仍走 sm(12)，不跟 ECMS 的 12px 之外再放大 —— 标签不是正文。 */
   --van-tag-padding: 0 var(--ziwi-gap-sm);
   --van-tag-font-size: var(--ziwi-font-size-sm);
-  --van-tag-radius: var(--ziwi-radius-sm);
+  --van-tag-radius: 10px;
 
   /* ── 空态 / 加载 ── */
   --van-empty-description-color: var(--ziwi-text-secondary);

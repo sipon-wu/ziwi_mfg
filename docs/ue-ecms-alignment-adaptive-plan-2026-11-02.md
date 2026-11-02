@@ -216,3 +216,60 @@ W: [1024,+∞) 横屏
 2. **B1 是否连带把 38 页的 `van-cell-group` 换成真卡片**（§2.3 的做法 B）？还是先用 CSS 兜住、后续按模块推进？
 3. **列表 W 档表格化**：是否接受新增 `ZiwiDataList` 容器（页面要改列定义写法的迁移成本），还是只做"减列 + 行展开"不引入表格？
 4. **ECMS 侧是否配合抽令牌**？否则 R-D 无解，这次对齐只是快照。
+
+---
+
+## 7. B1 执行记录（2026-11-02）
+
+### 7.1 范围拍板
+
+开放问题 1 已拍板：**全站对齐（含底色与侧栏宽）**。开放问题 2 按 §2.3 推荐走 **做法 A（CSS 兜住）**，不逐页换组件。
+
+### 7.2 实际改动（5 个文件，0 个页面）
+
+| 文件 | 改了什么 |
+|---|---|
+| `frontend/src/styles/ziwi-variables.css` | `--ziwi-bg` → `#f0f2f5`；`--ziwi-text-primary` → `#333`；侧栏宽令牌同步成真实值 200/50 并注明无人引用；新增 `--ziwi-radius-card/-border-card/-padding-card` |
+| `frontend/src/styles/vant-overrides.css` | `--van-tag-radius: 10px`（药丸）；**修正两个写错名字的变量**（见 7.3） |
+| `frontend/src/styles/ziwi-surface.css`（新建） | `van-cell-group` 变 ECMS 白卡；分组标题并入卡片；关掉发丝线（见 7.3） |
+| `frontend/src/main.ts` | 样式导入顺序补一层 `ziwi-surface.css` |
+| `frontend/src/config/menu-permissions.ts` | 删 energy 的 `M11:energy_device:read`（配合 3100c8a 的跳转改造） |
+
+### 7.3 三个「改了但没生效」的坑（都是变量名/渲染结构造成的静默失败）
+
+1. **`--van-dialog-border-radius` 与 `--van-button-border-radius` 在 Vant 4 里不存在**。
+   真实名字是 `--van-dialog-radius` / `--van-button-radius`。
+   `vant/lib/index.css` 里 `--van-dialog*` 一共 20 条，没有一条叫 border-radius。
+   实测证据：弹窗圆角读到 **16px**（Vant 默认值）而不是我们要的 12px。
+   button 那条更隐蔽 —— Vant 默认 `var(--van-radius-md)` 恰好是 4px，与目标值相同，肉眼永远发现不了。
+
+2. **Vant 4.9 的分组标题是分组的兄弟节点，不是子节点**。
+   `vant/es/cell-group/CellGroup.mjs` 在有 title 时 `return [renderTitle(), renderGroup()]` 的 Fragment。
+   所以 `g.querySelector('.van-cell-group__title')` **恒为 null**。
+   这个坑差点让取证脚本产出一条"永远红但产品没坏"的假失败。
+
+3. **`van-hairline--top-bottom` 的 `::after` 会在 `border-top: none` 之上继续画线**。
+   给分组加了真实 1px 边框后，上下各多出一条 0.5px 伪元素线：底部让下边缘比其他三边粗，
+   顶部正好落在"标题/正文"交界处，凭空多出一条 ECMS 没有的分隔线
+   （ECMS `.section-header{margin-bottom:12px}`，无任何线）。
+   处理：非 inset 分组的 `::after` 全部 `border-width: 0` —— 行分隔由 `.van-cell::after` 负责，不受影响。
+
+### 7.4 验收证据
+
+| 项 | 结果 |
+|---|---|
+| `e2e/browser_test/t08_visual_align_e2e.js` | **12/12 PASS**（底色 / 卡片边框 / 圆角 / 白底 / 标题字号 / 标题色 / 标题并卡 / 正文色 / 标签圆角 / 弹窗圆角 / JS 无错） |
+| `e2e/browser_test/t09_card_model_audit.js`（新增） | **34/34 页结构审计通过**：孤立标题 0、标题未并卡 0、浮层内长出卡片 0、inset 被误伤 0、JS 运行时错误 0 |
+| `python scripts/check_ui_contract.py` | `inline_style` **316 = 基线**（未升），其余 7 项全 0，touch_target 运行时 24/24 |
+| `npx vue-tsc --noEmit` | 76 条存量错误；**改动文件命中 0 条** |
+| 观感抽检 | 工单详情 / 系统配置 / 库房树 / 工单列表 / 物料 逐页对照，标题并入卡片后无双线、无缝隙、圆角连续 |
+
+### 7.5 发现的、本轮**不修**的问题（已登记，未动手）
+
+| 编号 | 问题 | 归属 |
+|---|---|---|
+| **D1** | 52 个列表页的行是"通栏白块"，没有卡片承载。B1 之前页面底色浅、看不出来，改灰底后被放大 | B3 `ZiwiDataList` |
+| **D2** | 库房树三列卡片高度参差（左列 470px、右两列 233px）。卡片 UI 里属正常，但灰底下更显眼 | B3/B4 |
+| **D3** | `ZiwiSelect` 三档浮层几何完全相同，W 档用了 T/H 的形态（1440px 宽底部浮层盖表格） | B2 |
+| **D4** | 搜索框 placeholder「工作中心类型」被截成「工作中心类」 | B2/B4 |
+| **D5** | `Cockpit.vue` 的 M11 KPI 卡仍读 mfg 侧 `/energy/*`；`SolutionConfig.vue`「快速启用能碳」仍指 `/energy`；4 个占位页 + 4 条路由 + 后端 `app/api/energy.py`（16 端点）未删 | 能碳边界收尾（未授权，未动） |
