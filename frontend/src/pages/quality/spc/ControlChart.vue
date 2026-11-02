@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import { showToast } from 'vant'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface ChartPoint {
   subgroup_no: number
@@ -39,6 +40,16 @@ const limitInfo = ref<ChartLimits | null>(null)
 const anomalies = ref<string[]>([])
 const activeTab = ref<'xbar' | 'r'>('xbar')
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (chartData.value) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -66,6 +77,7 @@ async function fetchData() {
     await nextTick()
     drawChart()
   } catch (e) {
+    loadFailed.value = true
     showToast('加载控制图数据失败')
     console.warn('[ControlChart]', e)
   } finally {
@@ -267,6 +279,11 @@ onMounted(fetchData)
       </van-cell-group>
     </div>
 
-    <van-empty v-if="!loading && !chartData" description="暂无控制图数据" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="控制图数据"
+      @retry="fetchData"
+    />
   </div>
 </template>

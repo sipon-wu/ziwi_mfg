@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface PpapLevel {
   id: number
@@ -18,7 +19,7 @@ interface PpapLevel {
 }
 
 const list = ref<PpapLevel[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const showDialog_ = ref(false)
 const editingItem = ref<PpapLevel | null>(null)
 const form = ref({
@@ -29,6 +30,14 @@ const form = ref({
   remark: '',
 })
 const submitting = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadData() {
   const items = await fetchPage(async (p) => {
@@ -116,7 +125,12 @@ onMounted(loadData)
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && list.length === 0" description="暂无等级配置" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="等级配置"
+      @retry="loadData"
+    />
 
     <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑等级' : '新增等级'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">

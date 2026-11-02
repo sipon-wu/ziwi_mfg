@@ -1,11 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { get } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 // 能耗分析：基础骨架 + 图表占位，数据接已有 energy API
 const devices = ref<any[]>([])
 const loading = ref(true)
+
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (devices.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function load() {
   loading.value = true
@@ -13,6 +24,7 @@ async function load() {
     const r = await get<PaginatedResponse<any>>('/energy/devices', { page: 1, page_size: 50 })
     devices.value = r.items || []
   } catch {
+    loadFailed.value = true
     devices.value = []
   } finally {
     loading.value = false
@@ -37,7 +49,12 @@ onMounted(load)
         :value="d.status"
       />
     </van-cell-group>
-    <van-empty v-if="!loading && devices.length === 0" description="暂无设备数据" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="设备数据"
+      @retry="load"
+    />
     <van-loading v-if="loading" style="margin-top:24px;" />
   </div>
 </template>

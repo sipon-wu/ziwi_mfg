@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { get, put } from '@/api/client'
 import { showToast } from 'vant'
 import type { PaginatedResponse } from '@/types'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface ScheduleItem {
   id: number
@@ -19,6 +20,16 @@ const orders = ref<ScheduleItem[]>([])
 const loading = ref(false)
 const currentWeek = ref(0)
 const weekStart = ref<Date>(getWeekStart(new Date()))
+
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (orders.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 function getWeekStart(d: Date): Date {
   const day = d.getDay()
@@ -124,6 +135,7 @@ async function loadData() {
     })
     orders.value = res?.items || []
   } catch {
+    loadFailed.value = true
     // fallback: load without date filter
     const res = await get<any>('/work-orders', { page_size: 50 })
     orders.value = res?.items || []
@@ -183,7 +195,12 @@ onMounted(loadData)
       </div>
     </div>
 
-    <van-empty v-if="!loading && orders.length===0" description="本周无可排产工单" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="可排产工单"
+      @retry="loadData"
+    />
 
     <!-- 状态图例 -->
     <div style="display:flex; gap:16px; margin-top:16px; flex-wrap:wrap; font-size:12px;">

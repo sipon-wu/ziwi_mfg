@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 interface TreeNode {
   id: number | null
@@ -344,7 +345,11 @@ onMounted(fetchData)
               </div>
             </template>
           </div>
-          <van-empty v-else description="暂无结构树，请添加根节点" />
+          <ZiwiStateView
+      state="empty-true"
+      object-name="结构树"
+      hint="点下方按钮添加根节点"
+    />
         </van-tab>
 
         <van-tab title="FMEA项矩阵" name="matrix">
@@ -373,7 +378,11 @@ onMounted(fetchData)
               </template>
             </van-cell>
           </van-list>
-          <van-empty v-if="!fmeaItems.length" description="暂无FMEA项" />
+          <ZiwiStateView
+      v-if="!fmeaItems.length"
+      state="empty-true"
+      object-name="FMEA项"
+    />
         </van-tab>
       </van-tabs>
     </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { get } from '@/api/client'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface SummaryRow { warehouse_id: number; warehouse_name: string; material_id: number; material_code: string; material_name: string; spec: string; unit: string; total_qty: number; total_locked_qty: number; available_qty: number }
 interface LocationRow { location_id: number; location_code: string; location_type: string; material_code: string; material_name: string; batch_no: string; quantity: number; locked_qty: number; available_qty: number; unit: string }
@@ -12,6 +13,16 @@ const warehouses = ref<any[]>([])
 const warehouseId = ref<any>(null)
 const loading = ref(false)
 const showWhPicker = ref(false)
+
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (summaryData.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadWarehouses() { warehouses.value = await get<any[]>('/wms/warehouses/all/active') }
 async function loadReport() {
@@ -61,7 +72,12 @@ onMounted(() => { loadWarehouses(); loadReport() })
           </div>
         </template>
       </van-cell>
-      <van-empty v-if="!loading && summaryData.length === 0" description="暂无数据" />
+      <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="库存汇总"
+      @retry="loadData"
+    />
     </van-cell-group>
 
     <!-- 库位明细 -->
@@ -80,7 +96,11 @@ onMounted(() => { loadWarehouses(); loadReport() })
           </div>
         </template>
       </van-cell>
-      <van-empty v-if="!loading && locationData.length === 0" description="暂无数据" />
+      <ZiwiStateView
+      v-if="!loading && locationData.length === 0"
+      state="empty-true"
+      object-name="库位库存"
+    />
     </van-cell-group>
 
     <van-popup v-model:show="showWhPicker" position="bottom">

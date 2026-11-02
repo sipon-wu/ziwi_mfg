@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface ControlLimit {
   id: number
@@ -25,7 +26,7 @@ interface ControlLimit {
 
 const router = useRouter()
 const list = ref<ControlLimit[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const chartTypeFilter = ref('')
 const showDialog_ = ref(false)
 const editingItem = ref<ControlLimit | null>(null)
@@ -52,6 +53,14 @@ const modeOptions = [
   { value: 'manual', label: '手动' },
   { value: 'auto', label: '自动' },
 ]
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
@@ -181,7 +190,12 @@ onMounted(loadData)
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && list.length === 0" description="暂无控制限配置" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="控制限配置"
+      @retry="loadData"
+    />
 
     <!-- 创建/编辑弹窗 -->
     <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑控制限' : '新建控制限'" submit-text="保存" @submit="handleSave">

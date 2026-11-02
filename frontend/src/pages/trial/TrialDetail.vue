@@ -5,6 +5,7 @@ import { showConfirmDialog, showDialog, showToast, showLoadingToast, closeToast 
 import { getTrial, getTrialRoute, saveTrialRoute, getTrialBom, saveTrialBom, listReviews, submitReview, makeReviewDecision, advanceStage, convertToProduction, terminateTrial } from '@/api/trial'
 import type { TrialOrder, TrialRoute, TrialBom, TrialReview } from '@/api/trial'
 import { errMessage } from '@/utils/error'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,6 +46,16 @@ const skipInfo = computed(() => {
   return ''
 })
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (reviews.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 async function fetchAll() {
   loading.value = true
   try {
@@ -62,6 +73,9 @@ async function fetchAll() {
       bomText.value = typeof trialBom.value.bom_json === 'string'
         ? trialBom.value.bom_json : JSON.stringify(trialBom.value.bom_json, null, 2)
     }
+  } catch (e) {
+    loadFailed.value = true
+    throw e
   } finally { loading.value = false }
 }
 
@@ -286,7 +300,12 @@ async function handleTerminate() {
                 </van-space>
               </template>
             </van-cell>
-            <van-empty v-if="reviews.length === 0" description="暂无评审记录" />
+            <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="评审记录"
+      @retry="fetchAll"
+    />
           </div>
         </van-tab>
       </van-tabs>

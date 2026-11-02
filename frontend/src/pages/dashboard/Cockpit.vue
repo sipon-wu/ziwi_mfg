@@ -4,6 +4,7 @@ import { get } from '@/api/client'
 import type { PaginatedResponse, WorkOrder, WorkReport, Equipment, AndonCall } from '@/types'
 import type { KpiState } from '@/types/search'
 import KpiCard from '@/components/KpiCard.vue'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 interface KpiItem {
   label: string
@@ -115,7 +116,12 @@ onMounted(async () => {
 <template>
   <div style="padding:16px">
     <h2 style="margin-bottom:16px;color:var(--ziwi-text-primary)">驾驶舱 · 模块概览</h2>
-    <van-empty v-if="!hasData" description="暂无业务数据，请先创建工单和报工" />
+    <ZiwiStateView
+      v-if="!hasData"
+      state="empty-true"
+      object-name="业务数据"
+      hint="请先创建工单和报工"
+    />
 
     <van-row gutter="12">
       <van-col span="12" v-for="mod in modules" :key="mod.code" style="margin-bottom:12px">

@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { showToast } from 'vant'
 import { get, post, put } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import SearchBar from '@/components/SearchBar.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 // M30 不合格品评审（NCR）
 // 每次状态推进都会写入后端通用状态流水，轨迹可在「流转记录」中查看
 const items = ref<any[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const keyword = ref('')
 const statusFilter = ref('')
 
@@ -53,6 +54,14 @@ const NEXT_ACTIONS: Record<string, { to: string; label: string }[]> = {
   reviewing: [{ to: 'disposed', label: '处置' }, { to: 'closed', label: '关闭' }],
   disposed: [{ to: 'closed', label: '关闭' }],
 }
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (items.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return !!keyword.value ? 'empty-filtered' : 'empty-true'
+})
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
@@ -218,7 +227,12 @@ function fmtTime(t: string) {
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && items.length === 0" description="暂无不合格评审单" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="不合格评审单"
+      @retry="loadData"
+    />
 
     <!-- 新建 -->
     <van-popup v-model:show="showCreate" position="bottom" :style="{ height: '80%' }" round>
@@ -268,7 +282,11 @@ function fmtTime(t: string) {
     <van-popup v-model:show="showTrail" position="bottom" round :style="{ height: '60%' }">
       <div style="padding:16px">
         <h3 style="margin:0 0 12px">流转记录 · {{ trailTitle }}</h3>
-        <van-empty v-if="!trail.length" description="暂无记录" />
+        <ZiwiStateView
+      v-if="!trail.length"
+      state="empty-true"
+      object-name="流转记录"
+    />
         <van-cell v-for="(t, i) in trail" :key="i"
           :title="`${STATUS_MAP[t.to_status] || t.to_status}（${t.action || '-'}）`"
           :label="`${fmtTime(t.occurred_at)} · ${t.actor_name || '系统'}${t.reason ? ' · ' + t.reason : ''}`" />

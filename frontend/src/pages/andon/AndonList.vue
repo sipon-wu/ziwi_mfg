@@ -12,6 +12,7 @@ import ListRowDetail from '@/components/ListRowDetail.vue'
 import SearchBar from '@/components/SearchBar.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const router = useRouter()
 
@@ -35,7 +36,7 @@ const CALLTYPE_MAP: Record<string, string> = {
 }
 
 const rawCalls = ref<AndonCall[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 
 // 高级检索 + 行展开
 const cfg = getSearchConfig('andon/calls')
@@ -45,6 +46,14 @@ const calls = computed<AndonCall[]>(() =>
 )
 const showSearch = ref(false)
 const expandedId = ref<number | null>(null)
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (calls.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return !!keyword.value ? 'empty-filtered' : 'empty-true'
+})
+
 function toggleExpand(id: number) {
   expandedId.value = expandedId.value === id ? null : id
 }
@@ -195,7 +204,12 @@ onMounted(() => {
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && calls.length === 0" description="暂无安灯呼叫" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="安灯呼叫"
+      @retry="loadData"
+    />
 
     <AdvancedSearchPanel
       v-model:show="showSearch"

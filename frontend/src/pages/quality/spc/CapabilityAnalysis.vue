@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import { showToast } from 'vant'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface CapabilityData {
   mean: number | null
@@ -32,6 +33,16 @@ const gradeMap: Record<string, { label: string; color: string }> = {
   '未知': { label: '未知', color: '#999' },
 }
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (capData.value) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -52,6 +63,7 @@ async function fetchData() {
     await nextTick()
     drawHistogram()
   } catch (e) {
+    loadFailed.value = true
     showToast('加载能力分析数据失败')
     console.warn('[CapabilityAnalysis]', e)
   } finally {
@@ -250,6 +262,11 @@ onMounted(fetchData)
       </van-cell-group>
     </div>
 
-    <van-empty v-if="!loading && !capData" description="暂无能力分析数据" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="能力分析数据"
+      @retry="fetchData"
+    />
   </div>
 </template>

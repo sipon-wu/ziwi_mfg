@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { get } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const tasks = ref<any[]>([])
-const { page, pageSize, total, loading, fetchPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, loadFailed } = usePagination()
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (tasks.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadData() {
   const items = await fetchPage(async (p) => {
@@ -31,6 +40,11 @@ onMounted(loadData)
       />
     </van-list>
 
-    <van-empty v-if="!loading && tasks.length === 0" description="暂无采集任务" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="采集任务"
+      @retry="loadData"
+    />
   </div>
 </template>

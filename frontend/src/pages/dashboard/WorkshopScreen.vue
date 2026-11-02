@@ -6,6 +6,7 @@ import * as echarts from 'echarts'
 import type { PaginatedResponse, WorkOrder, WorkReport, Equipment } from '@/types'
 import type { KpiState } from '@/types/search'
 import KpiCard from '@/components/KpiCard.vue'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 const loading = ref(false)
 const refreshInterval = ref(30)
@@ -148,9 +149,11 @@ onUnmounted(() => { if (timer) clearInterval(timer); chart?.dispose() })
       </div>
       <div class="chart-card" style="padding:20px">
         <h3 style="margin-bottom:12px">异常告警</h3>
-        <van-empty
+        <ZiwiStateView
           v-if="stats.defectRate.state !== 'real' || (stats.defectRate.value ?? 0) < 5"
-          :description="stats.defectRate.state === 'real' ? '一切正常，无异常告警' : '不良率未接入'"
+          state="empty-true"
+          object-name="异常告警"
+          :hint="stats.defectRate.state === 'real' ? '一切正常，本班次无异常' : '不良率数据未接入，暂时无法判断'"
         />
       </div>
     </div>

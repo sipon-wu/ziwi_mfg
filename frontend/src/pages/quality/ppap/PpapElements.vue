@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface PpapElement {
   id: number
@@ -20,7 +21,7 @@ interface PpapElement {
 }
 
 const list = ref<PpapElement[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const levelFilter = ref('')
 const showDialog_ = ref(false)
 const editingItem = ref<PpapElement | null>(null)
@@ -37,6 +38,14 @@ const form = ref({
 })
 const submitting = ref(false)
 const customerIdStr = ref('')
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
@@ -159,7 +168,12 @@ onMounted(loadData)
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && list.length === 0" description="暂无要素模板" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="要素模板"
+      @retry="loadData"
+    />
 
     <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑要素' : '新增要素'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">

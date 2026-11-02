@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface FmeaDocument {
   id: number
@@ -29,7 +30,7 @@ interface FmeaDocument {
 
 const router = useRouter()
 const list = ref<FmeaDocument[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const statusFilter = ref('')
 const typeFilter = ref('')
 const showCreateDialog = ref(false)
@@ -69,6 +70,14 @@ const typeLabelMap: Record<string, string> = {
   pfmea: 'PFMEA',
   efmea: 'EFMEA',
 }
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
 
 async function loadData() {
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
@@ -211,7 +220,12 @@ onMounted(loadData)
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && list.length === 0" description="暂无FMEA文档" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="FMEA文档"
+      @retry="loadData"
+    />
 
     <!-- 新建弹窗 -->
     <ZiwiFormSheet v-model:show="showCreateDialog" title="新建FMEA文档" submit-text="保存" @submit="handleCreate">

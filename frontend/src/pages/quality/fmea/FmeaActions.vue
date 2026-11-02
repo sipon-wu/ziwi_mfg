@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface FmeaAction {
   id: number
@@ -63,6 +64,16 @@ const statusMap: Record<string, string> = {
   closed: '已关闭',
 }
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (actions.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -79,6 +90,7 @@ async function fetchData() {
           allActions.push(...itemActions.map(a => ({ ...a, _function_desc: item.function_desc, _failure_mode: item.failure_mode })))
         }
       } catch {
+        loadFailed.value = true
         // skip items without actions
       }
     }
@@ -201,7 +213,12 @@ onMounted(fetchData)
         </van-cell>
       </van-list>
 
-      <van-empty v-if="!actions.length" description="暂无整改措施" />
+      <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="整改措施"
+      @retry="fetchData"
+    />
     </div>
 
     <!-- 新建措施弹窗 -->

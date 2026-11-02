@@ -37,6 +37,7 @@ import type {
   RoleUser,
 } from '@/api/roles'
 import { errMessage } from '@/utils/error'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 const auth = useAuthStore()
 
@@ -478,7 +479,11 @@ loadAll()
             <span>{{ r.user_count ?? 0 }} 人</span>
           </div>
         </div>
-        <van-empty v-if="!roles.length" description="暂无角色" image-size="60" />
+        <ZiwiStateView
+      v-if="!roles.length"
+      state="empty-true"
+      object-name="角色"
+    />
       </aside>
 
       <!-- 右：权限 -->
@@ -597,7 +602,12 @@ loadAll()
               </div>
             </div>
 
-            <van-empty v-if="!filteredModules.length" description="没有匹配的权限" image-size="60" />
+            <ZiwiStateView
+      v-if="!filteredModules.length"
+      state="empty-true"
+      object-name="权限"
+      hint="换个关键字试试"
+    />
           </div>
 
           <!-- 成员 -->

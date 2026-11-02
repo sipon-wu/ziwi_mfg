@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface Material { id: number; code: string; name: string; spec: string; unit: string; material_type: string; material_category: string; is_batch_managed: boolean; is_active: boolean }
 
@@ -21,12 +22,25 @@ const submitting = ref(false)
 
 const typeOpts = [{ value: 'raw', label: '原材料' }, { value: 'semi', label: '半成品' }, { value: 'finished', label: '成品' }, { value: 'consumable', label: '消耗品' }, { value: 'package', label: '包装' }]
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return !!keyword.value ? 'empty-filtered' : 'empty-true'
+})
+
 async function loadData() {
   loading.value = true
   try {
     const res = await get<PaginatedResponse<Material>>('/wms/materials', { page: page.value, page_size: pageSize, keyword: keyword.value || undefined, material_type: materialType.value || undefined })
     list.value = res.items as Material[]
     total.value = res.total
+  } catch (e) {
+    loadFailed.value = true
+    throw e
   } finally { loading.value = false }
 }
 
@@ -82,7 +96,12 @@ onMounted(loadData)
         </template>
       </van-cell>
     </van-list>
-    <van-empty v-if="!loading && list.length === 0" description="暂无物料" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="物料"
+      @retry="loadData"
+    />
 
     <ZiwiFormSheet v-model:show="showForm" :title="editing ? '编辑物料' : '新增物料'" submit-text="保存" @submit="handleSave">
       <div style="padding:16px">

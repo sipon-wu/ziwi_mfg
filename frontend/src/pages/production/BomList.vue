@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { showToast, showConfirmDialog, showDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface BomItem {
   id: number
@@ -24,7 +25,7 @@ interface BomItem {
 }
 
 const list = ref<BomItem[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const productFilter = ref('')
 const showDialog_ = ref(false)
 const editingItem = ref<BomItem | null>(null)
@@ -50,6 +51,14 @@ const materialTypeOptions = [
 ]
 
 /** Map a material_type value to its display label; fall back to the raw value when unknown. */
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 function typeLabel(t: string): string {
   const found = materialTypeOptions.find((o) => o.value === t)
   return found ? found.label : t
@@ -189,7 +198,12 @@ onMounted(loadData)
       </div>
     </van-list>
 
-    <van-empty v-if="!loading && list.length === 0" description="暂无BOM记录" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="BOM记录"
+      @retry="loadData"
+    />
 
     <!-- 创建/编辑弹窗 -->
     <ZiwiFormSheet v-model:show="showDialog_" :title="editingItem ? '编辑物料' : '新增物料'" submit-text="保存" @submit="handleSave">

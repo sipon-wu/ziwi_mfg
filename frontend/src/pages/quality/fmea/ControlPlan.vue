@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { get, post, put } from '@/api/client'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface ControlPlanItem {
   id: number
@@ -52,6 +53,16 @@ const statusMap: Record<string, string> = {
   archived: '已归档',
 }
 
+const loadFailed = ref(false)
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (plans.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return 'empty-true'
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -62,6 +73,7 @@ async function fetchData() {
     })
     plans.value = res.items || []
   } catch (e) {
+    loadFailed.value = true
     showToast('加载控制计划失败')
     console.warn('[ControlPlan]', e)
   } finally {
@@ -155,7 +167,12 @@ onMounted(fetchData)
         </van-cell>
       </van-cell-group>
 
-      <van-empty v-if="!plans.length" description="暂无控制计划，点击右上角从FMEA生成" />
+      <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="控制计划"
+      @retry="fetchData"
+    />
     </div>
 
     <!-- 编辑控制计划弹窗 -->

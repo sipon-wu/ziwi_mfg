@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { get } from '@/api/client'
 import { showToast } from 'vant'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 interface SystemModule {
   code: string
@@ -86,7 +87,11 @@ onMounted(loadConfig)
           </router-link>
         </template>
       </van-cell>
-      <van-empty v-if="!loading && (!config.modules || config.modules.length === 0)" description="暂无模块数据" />
+      <ZiwiStateView
+      v-if="!loading && (!config.modules || config.modules.length === 0)"
+      state="empty-true"
+      object-name="模块"
+    />
     </van-cell-group>
 
     <van-loading v-if="loading" style="margin-top:40px;" />

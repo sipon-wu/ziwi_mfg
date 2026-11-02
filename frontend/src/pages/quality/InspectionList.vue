@@ -11,10 +11,11 @@ import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const router = useRouter()
 const rawOrders = ref<any[]>([])
-const { page, pageSize, total, loading, fetchPage, resetPage } = usePagination()
+const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const keyword = ref('')
 const statusFilter = ref('')
 
@@ -26,6 +27,14 @@ const orders = computed<any[]>(() =>
 )
 const showSearch = ref(false)
 const expandedId = ref<number | null>(null)
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
+const pageState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (orders.value?.length) return 'ready'
+  if (loading.value) return 'loading'
+  return !!keyword.value ? 'empty-filtered' : 'empty-true'
+})
+
 function toggleExpand(id: number) {
   expandedId.value = expandedId.value === id ? null : id
 }
@@ -182,7 +191,12 @@ onMounted(loadData)
       </van-cell>
     </van-list>
 
-    <van-empty v-if="!loading && orders.length === 0" description="暂无检验记录" />
+    <ZiwiStateView
+      v-if="pageState !== 'ready'"
+      :state="pageState"
+      object-name="检验记录"
+      @retry="loadData"
+    />
 
     <AdvancedSearchPanel
       v-model:show="showSearch"

@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 interface Warehouse { id: number; code: string; name: string; type: string; address: string; contact_person: string; contact_phone: string; is_active: boolean }
 interface Zone { id: number; warehouse_id: number; zone_code: string; zone_name: string; zone_type: string }
@@ -50,7 +51,11 @@ onMounted(loadWarehouses)
             :title="wh.name" :label="whTypeLabel[wh.type] || wh.type" @click="selectWarehouse(wh)">
             <template #icon><van-icon name="shop" style="margin-right:6px" /></template>
           </van-cell>
-          <van-empty v-if="!loading && warehouses.length === 0" description="暂无仓库" />
+          <ZiwiStateView
+      v-if="!loading && warehouses.length === 0"
+      state="empty-true"
+      object-name="仓库"
+    />
         </van-cell-group>
       </van-col>
       <van-col span="8" style="border-right:1px solid #eee;overflow-y:auto">
@@ -59,7 +64,12 @@ onMounted(loadWarehouses)
             :title="z.zone_name || z.zone_code" :label="zoneTypeLabel[z.zone_type] || z.zone_type" @click="selectZone(z)">
             <template #icon><van-icon name="fire-o" style="margin-right:6px" /></template>
           </van-cell>
-          <van-empty v-if="zones.length === 0" description="选择仓库查看库区" />
+          <ZiwiStateView
+      v-if="zones.length === 0"
+      state="empty-true"
+      object-name="库区"
+      hint="先选中左侧仓库"
+    />
         </van-cell-group>
       </van-col>
       <van-col span="8" style="overflow-y:auto">
@@ -68,7 +78,12 @@ onMounted(loadWarehouses)
             :label="`类型: ${loc.location_type} 容量: ${loc.current_qty}/${loc.max_capacity || '-'}`">
             <template #icon><van-icon name="location-o" style="margin-right:6px" /></template>
           </van-cell>
-          <van-empty v-if="locations.length === 0" description="选择库区查看库位" />
+          <ZiwiStateView
+      v-if="locations.length === 0"
+      state="empty-true"
+      object-name="库位"
+      hint="先选中左侧库区"
+    />
         </van-cell-group>
       </van-col>
     </van-row>
