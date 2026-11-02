@@ -1059,6 +1059,13 @@ class IssueOrderService:
         ★本方法**不碰库存**：过账已经在 ``issue_item`` 里逐行完成，这里只走状态。
         库存过账语义一行不改（出库数量记负值、多批分摊、行级 partial/picked、
         过期批拦截都在 ``issue_item`` 里）。
+
+        ⚠️ 已知缺口（R2，**故意未实现**，等产品拍板）：出库过账本身**没有幂等键**。
+        现场弱网重试时，``POST /issue-order-items/{id}/issue`` 与
+        ``POST /inspection-orders/{id}/results/batch`` 都可能重复扣账 / 重复记结果。
+        方案是给两者加可选 ``request_id`` + 服务端按 ``(tenant_id, request_id)``
+        去重 15 分钟，但这要加表/加列并改过账写路径 —— 属于"改别人的账"，
+        不在本次范围内，故**不加列、不改过账**，仅在此标注。
         """
         data = payload or {}
         allow_shortage = bool(data.get("allow_shortage"))
