@@ -1053,7 +1053,9 @@ onMounted(load)
   font-weight: 500;
   color: #495057;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing),
+              border-color var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing),
+              color var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .exec-verdict--pass.exec-verdict--on {
   background: var(--ziwi-state-success-bg);

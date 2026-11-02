@@ -41,7 +41,7 @@ const questions: string[] = [
   padding: 4px 10px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
+  transition: background var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .chip:hover {
   background: #d5ebe6;

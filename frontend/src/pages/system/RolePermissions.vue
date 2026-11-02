@@ -780,7 +780,7 @@ loadAll()
   border-radius: var(--ziwi-radius-md, 6px);
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background 0.15s;
+  transition: background var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .rp-role:hover {
   background: var(--ziwi-bg-light, #f8fafc);

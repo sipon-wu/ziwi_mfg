@@ -188,8 +188,8 @@ function onHover(index: number): void {
   padding: var(--ziwi-gap-sm) var(--ziwi-gap-lg);
   border-bottom: 1px solid var(--ziwi-border-light);
   cursor: pointer;
-  /* 触屏必须有按下反馈（A1：按下已注册） */
-  transition: background-color 60ms linear;
+  /* 触屏必须有按下反馈（A1：按下已注册）—— 用 tap 档，不是固定 60ms */
+  transition: background-color var(--ziwi-motion-tap-duration) var(--ziwi-motion-tap-easing);
 }
 
 .ziwi-select-list__row:active {

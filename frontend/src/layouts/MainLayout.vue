@@ -556,7 +556,8 @@ const breadcrumbs = computed(() => {
   width: 200px; min-width: 200px;
   background: #212529;
   display: flex; flex-direction: column;
-  transition: width 0.25s ease;
+  /* A3 层级关系：侧栏收起是"面板级"变化，用 layer 档时长 */
+  transition: width var(--ziwi-motion-layer-duration) var(--ziwi-motion-layer-easing);
   overflow: hidden;
 }
 .sidebar.collapsed { width: 50px; min-width: 50px; }
@@ -587,7 +588,9 @@ const breadcrumbs = computed(() => {
   font-size: 13px;
   line-height: 1.4;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  /* A2 操作已生效：悬停/选中是"结果"反馈，不是层级变化 */
+  transition: background var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing),
+              color var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
   white-space: nowrap;
   user-select: none;
   border: none;
@@ -622,7 +625,8 @@ const breadcrumbs = computed(() => {
 .nav-arrow {
   width: 14px; height: 14px; flex-shrink: 0;
   color: #6c757d; margin-left: auto;
-  transition: transform 0.2s;
+  /* A4 方向与进度：箭头翻转要"跟着手走"，出结果档即可 */
+  transition: transform var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .nav-item.parent.open .nav-arrow { transform: rotate(180deg); }
 .nav-submenu .nav-item.sub { animation: slideIn 0.2s ease; }
@@ -688,7 +692,8 @@ const breadcrumbs = computed(() => {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 22px 4px 12px; font-size: 12px; color: #888;
   background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 4px 4px 0 0;
-  cursor: pointer; white-space: nowrap; user-select: none; transition: all 0.15s;
+  cursor: pointer; white-space: nowrap; user-select: none;
+  transition: all var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .page-tab:hover { background: #e9ecef; color: #555; }
 .page-tab.active { background: #fff; color: #212529; font-weight: 500; border-bottom-color: #fff; }
@@ -728,7 +733,8 @@ const breadcrumbs = computed(() => {
   width: min(320px, 84vw);
   min-width: min(320px, 84vw);
   transform: translateX(-100%);
-  transition: transform 0.22s ease;
+  /* A3 层级关系：抽屉是"新层压上来"，用 layer 档 */
+  transition: transform var(--ziwi-motion-layer-duration) var(--ziwi-motion-layer-easing);
   box-shadow: 2px 0 16px rgba(0, 0, 0, 0.28);
   /* 抽屉内部自己滚，长菜单不会把 logo 与版权推走 */
   overflow-y: auto;

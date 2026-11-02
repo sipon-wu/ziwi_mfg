@@ -816,7 +816,9 @@ watch(
   font-size: 15px;
   color: #495057;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing),
+              border-color var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing),
+              color var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing);
 }
 .mex-verdict--normal.mex-verdict--on {
   background: var(--ziwi-state-success-bg);
