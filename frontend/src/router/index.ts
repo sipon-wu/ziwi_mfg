@@ -66,7 +66,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'equipment/tasks', name: 'EquipmentTasks', component: () => import('@/pages/equipment/EquipmentTasks.vue'), meta: { title: '设备任务', perm: 'M06:equipment:read' } },
       // T04 点检执行页：项级三态 + 异常联动安灯。段数比 'equipment/:id' 多，不会被遮蔽。
       { path: 'equipment/maintenance-tasks/:id/execute', name: 'MaintenanceTaskExecute', component: () => import('@/pages/equipment/MaintenanceExecute.vue'), meta: { title: '执行点检', perm: 'M06:equipment:read' } },
-      // Q5 术语：维护计划 → 保养计划
+      // Q5 术语：统一为「保养计划」
       { path: 'equipment/maintenance-plans', name: 'MaintenancePlans', component: () => import('@/pages/equipment/MaintenancePlans.vue'), meta: { title: '保养计划', perm: 'M06:equipment:read' } },
       { path: 'equipment/:id', name: 'EquipmentDetail', component: () => import('@/pages/equipment/EquipmentDetail.vue'), meta: { title: '设备详情', perm: 'M06:equipment:read' } },
       // M05 - 安灯管理

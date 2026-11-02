@@ -2,7 +2,7 @@
  * useCopilotStream —— SSE 消费 composable（组件内独立使用）。
  *
  * 与 store 共用同一底层 `askCopilotStream`；本 composable 适合在局部组件中
- * 维护独立的问答状态（不依赖 Pinia）。
+ * 自持问答状态（不依赖 Pinia）。
  */
 import { ref } from 'vue'
 import { askCopilotStream } from '@/api/copilot'

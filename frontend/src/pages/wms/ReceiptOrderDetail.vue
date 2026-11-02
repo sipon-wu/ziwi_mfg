@@ -5,6 +5,7 @@ import { showToast } from 'vant'
 import { get, post } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import { useStatusTag } from '@/composables/useStatusTag'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,14 +17,17 @@ const items = ref<any[]>([])
 const locations = ref<any[]>([])
 const busy = ref('')
 
-const statusMap: Record<string, string> = {
-  pending: '待收货', inspecting: '待检', partially_stored: '部分上架',
-  stored: '已完成', cancelled: '已取消',
+/** 状态标签：文案/图标/语义统一取自 config/statusDict.ts（UE §1.2 双编码） */
+const statusTagCache = new Map<string, ReturnType<typeof useStatusTag>>()
+function statusTagOf(code: string): ReturnType<typeof useStatusTag> {
+  let tag = statusTagCache.get(code)
+  if (!tag) {
+    tag = useStatusTag('wms_receipt', code)
+    statusTagCache.set(code, tag)
+  }
+  return tag
 }
-const statusColor: Record<string, string> = {
-  pending: 'warning', inspecting: 'primary', partially_stored: 'warning',
-  stored: 'success', cancelled: 'danger',
-}
+
 const typeMap: Record<string, string> = {
   purchase: '采购入库', '生产入库': '生产入库', '退货入库': '退货入库', transfer: '调拨入库',
 }
@@ -176,9 +180,10 @@ function canSubmitInspection(item: any) {
         <van-cell title="入库单号" :value="order.receipt_no" />
         <van-cell title="入库类型" :value="typeMap[order.receipt_type] || order.receipt_type" />
         <van-cell title="状态">
-          <van-tag :type="(statusColor[order.status] as any) || 'default'" size="medium">
-            {{ statusMap[order.status] || order.status }}
-          </van-tag>
+          <span class="ziwi-state" :class="`ziwi-state--${statusTagOf(order.status).semantic.value}`">
+            <van-icon :name="statusTagOf(order.status).icon.value" />
+            {{ statusTagOf(order.status).label.value }}
+          </span>
         </van-cell>
         <van-cell v-if="order.source_type" title="来源类型" :value="order.source_type" />
         <van-cell v-if="order.source_doc_no" title="来源单号" :value="order.source_doc_no" />

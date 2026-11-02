@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { get } from '@/api/client'
+import { get, errorText } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 interface InventoryItem { id: number; material_id: number; material_code: string; material_name: string; spec: string; warehouse_id: number; warehouse_name: string; location_id: number; location_code: string; batch_no: string; quantity: number; locked_qty: number; unit: string }
 
@@ -42,12 +43,30 @@ function condText(c: SearchCondition) {
 }
 
 async function loadWarehouses() { warehouses.value = await get<any[]>('/wms/warehouses/all/active') }
+const loadFailed = ref(false)
+const loadErrorMessage = ref('')
+const loadErrorKind = ref<'network' | 'business'>('business')
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成空态 */
+const listState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value.length > 0) return 'ready'
+  return !!(keyword.value || warehouseId.value || conditions.value.length) ? 'empty-filtered' : 'empty-true'
+})
+
 async function loadData() {
   loading.value = true
+  loadFailed.value = false
   try {
     const res = await get<PaginatedResponse<InventoryItem>>('/wms/inventory', { page: page.value, page_size: pageSize, warehouse_id: warehouseId.value || undefined })
     rawList.value = res.items as InventoryItem[]
     total.value = res.total
+  } catch (e) {
+    // 加载失败必须说出来：此前无 catch，网络断了页面显示「暂无数据」，
+    // 车间会以为真的没数据而重复建单
+    loadFailed.value = true
+    loadErrorMessage.value = errorText(e, '加载失败，请重试')
+    loadErrorKind.value = (e as { response?: unknown })?.response ? 'business' : 'network'
   } finally { loading.value = false }
 }
 function onSearch() { page.value = 1; loadData() }
@@ -99,7 +118,13 @@ onMounted(() => { loadWarehouses(); loadData() })
         </template>
       </van-cell>
     </van-list>
-    <van-empty v-if="!loading && list.length === 0" description="暂无库存记录" />
+    <ZiwiStateView
+      v-if="listState !== 'ready'"
+      :state="listState"
+      object-name="库存记录"
+      :error="{ kind: loadErrorKind, message: loadErrorMessage }"
+      @retry="loadData"
+    />
 
     <van-popup v-model:show="showWhPicker" position="bottom">
       <van-picker :columns="[{ text: '全部', value: null }, ...warehouses.map(w => ({ text: w.name, value: w.id }))]"

@@ -54,7 +54,7 @@ export const menuPermissions: MenuPermission[] = [
     menuId: 'equipment',
     perm: 'M06:equipment:read',
     // T02：设备模块三个子菜单显式登记（与 MainLayout 的 children id 一一对应）。
-    // 术语按 Q5 统一为「保养任务 / 保养计划」（原「维护任务 / 维护计划」）。
+    // 术语按 Q5 统一为「保养任务 / 保养计划」，与旧称彻底切开。
     // 三者当前共用 M06:equipment:read（后端未拆分更细的码）；显式写出是为了
     // 将来拆码时只改这里，不用回头翻 MainLayout。
     children: [

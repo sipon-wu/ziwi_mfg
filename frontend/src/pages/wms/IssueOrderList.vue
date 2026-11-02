@@ -1,15 +1,28 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
-import { get, post, put, del } from '@/api/client'
+import { get, post, put, del, errorText } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { useStatusTag } from '@/composables/useStatusTag'
 
 interface IssueOrder { id: number; issue_no: string; issue_type: string; status: string; warehouse_id: number; warehouse_name: string; total_qty: number; issued_qty: number; recipient: string; source_doc_no: string; created_at: string }
+
+/** 状态标签：文案/图标/语义统一取自 config/statusDict.ts（UE §1.2 双编码） */
+const statusTagCache = new Map<string, ReturnType<typeof useStatusTag>>()
+function statusTagOf(code: string): ReturnType<typeof useStatusTag> {
+  let tag = statusTagCache.get(code)
+  if (!tag) {
+    tag = useStatusTag('wms_issue', code)
+    statusTagCache.set(code, tag)
+  }
+  return tag
+}
 
 const rawList = ref<IssueOrder[]>([])
 const loading = ref(false)
@@ -43,15 +56,31 @@ function condText(c: SearchCondition) {
 const statusOpts = [{ value: 'pending', label: '待出库' }, { value: 'picking', label: '拣货中' }, { value: 'partially_issued', label: '部分出库' }, { value: 'issued', label: '已完成' }, { value: 'cancelled', label: '已取消' }]
 const typeOpts = [{ value: 'production', label: '生产出库' }, { value: 'sales', label: '销售出库' }, { value: 'scrap', label: '报废出库' }, { value: 'transfer', label: '调拨出库' }]
 
-const statusLabel: Record<string, string> = { pending: '待出库', picking: '拣货中', partially_issued: '部分出库', issued: '已完成', cancelled: '已取消' }
-const statusColor: Record<string, string> = { pending: 'warning', picking: 'primary', partially_issued: 'warning', issued: 'success', cancelled: 'danger' }
+
+const loadFailed = ref(false)
+const loadErrorMessage = ref('')
+const loadErrorKind = ref<'network' | 'business'>('business')
+
+/** 加载/空/失败三分（UE-09/12）：失败不再伪装成空态 */
+const listState = computed<StateKind>(() => {
+  if (loadFailed.value) return 'failed'
+  if (list.value.length > 0) return 'ready'
+  return !!(keyword.value || status.value || conditions.value.length) ? 'empty-filtered' : 'empty-true'
+})
 
 async function loadData() {
   loading.value = true
+  loadFailed.value = false
   try {
     const res = await get<PaginatedResponse<IssueOrder>>('/wms/issue-orders', { page: page.value, page_size: pageSize, keyword: keyword.value || undefined, status: status.value || undefined })
     rawList.value = res.items as IssueOrder[]
     total.value = res.total
+  } catch (e) {
+    // 加载失败必须说出来：此前无 catch，网络断了页面显示「暂无数据」，
+    // 车间会以为真的没数据而重复建单
+    loadFailed.value = true
+    loadErrorMessage.value = errorText(e, '加载失败，请重试')
+    loadErrorKind.value = (e as { response?: unknown })?.response ? 'business' : 'network'
   } finally { loading.value = false }
 }
 function onSearch() { page.value = 1; loadData() }
@@ -86,7 +115,10 @@ onMounted(loadData)
       <van-cell v-for="item in list" :key="item.id" is-link :to="`/wms/issue-orders/${item.id}`" @click="toggleExpand(item.id)">
         <template #title>
           {{ item.issue_no }}
-          <van-tag :type="(statusColor[item.status] as any) || 'default'" style="margin-left:6px">{{ statusLabel[item.status] || item.status }}</van-tag>
+          <span class="ziwi-state" :class="`ziwi-state--${statusTagOf(item.status).semantic.value}`" style="margin-right:6px">
+            <van-icon :name="statusTagOf(item.status).icon.value" />
+            {{ statusTagOf(item.status).label.value }}
+          </span>
         </template>
         <template #label>
           <div>类型: {{ typeOpts.find(t => t.value === item.issue_type)?.label || item.issue_type }} | 仓库: {{ item.warehouse_name }}</div>
@@ -101,7 +133,13 @@ onMounted(loadData)
         </template>
       </van-cell>
     </van-list>
-    <van-empty v-if="!loading && list.length === 0" description="暂无出库单" />
+    <ZiwiStateView
+      v-if="listState !== 'ready'"
+      :state="listState"
+      object-name="出库单"
+      :error="{ kind: loadErrorKind, message: loadErrorMessage }"
+      @retry="loadData"
+    />
 
     <AdvancedSearchPanel
       v-model:show="showSearch"

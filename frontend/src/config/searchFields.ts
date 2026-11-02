@@ -48,7 +48,7 @@ const ROUTE_TYPE = [
 ]
 const WO_TYPE = [
   { value: 'production', label: '生产' },
-  { value: 'maintenance', label: '维护' },
+  { value: 'maintenance', label: '维修' },
   { value: 'quality', label: '质量' },
 ]
 const WO_STATUS = [
@@ -140,7 +140,7 @@ const LAB_STATUS = [
 const EQUIPMENT_STATUS = [
   { value: 'running', label: '运行中' },
   { value: 'idle', label: '空闲' },
-  { value: 'maintenance', label: '维护中' },
+  { value: 'maintenance', label: '保养中' },
   { value: 'fault', label: '故障' },
   { value: 'scrapped', label: '已报废' },
 ]

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 保养计划（原「维护计划」，术语按 Q5 统一）
+ * 保养计划（术语按 Q5 统一，旧称已废弃）
  *
  * T02 的标杆页：它是 UE 实测塌陷最严重的页面（手持 412 视口下弹窗 320×658、
  * 弹窗内 4 组同语义确认按钮、内联 picker 高 308 把 4 个字段挤出屏）。
@@ -12,8 +12,8 @@
  * | 弹窗宽 320（被 picker 撑成 320 后又溢出） | 宽度由 `ZiwiFormSheet` 的形态策略决定 | R2 / UE-02 |
  * | picker 取消/确认 + dialog 取消/确认 = 4 个按钮 | 只有 footer 一组「取消/确认」 | R3 / UE-P0-04 |
  * | `showToast('请选择设备并填写计划名称')` | `ZiwiErrorSummary` + `ZiwiFieldError` + 自动滚到首个错误 | UE §5.1 / UE-10 |
- * | `showToast('维护计划已创建')` | `ZiwiReceipt`（计划名 + 周期 + 下次到期 + 时间） | UE §5.1 / UE-11 |
- * | `van-empty description="暂无维护计划"` | `ZiwiStateView`（加载/空/失败三分） | UE-09 / UE-12 |
+ * | `showToast('保养计划已创建')` | `ZiwiReceipt`（计划名 + 周期 + 下次到期 + 时间） | UE §5.1 / UE-11 |
+ * | `van-empty description="暂无保养计划"` | `ZiwiStateView`（加载/空/失败三分） | UE-09 / UE-12 |
  *
  * 依据：架构 §5.5-T02、§2 组件层契约；UE §3.2、§3.3 R1–R4、§5.1、§6.3。
  */

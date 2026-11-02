@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { get, post, put } from '@/api/client'
 import { showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
+import { useStatusTag } from '@/composables/useStatusTag'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,13 +23,18 @@ const ORDER_TYPE_MAP: Record<string, string> = {
   inspection: '过程检验',
   spot_check: '抽检',
 }
-const RESULT_MAP: Record<string, string> = {
-  pending: '待判定',
-  ACC: '合格',
-  REJ: '不合格',
-  UAI: '待判定',
-}
 // 录入通道：同一个数，手抄 / 手机录 / 量具直采的可信度完全不同
+/** 状态标签：文案/图标/语义统一取自 config/statusDict.ts（UE §1.2 双编码） */
+const statusTagCache = new Map<string, ReturnType<typeof useStatusTag>>()
+function statusTagOf(code: string): ReturnType<typeof useStatusTag> {
+  let tag = statusTagCache.get(code)
+  if (!tag) {
+    tag = useStatusTag('inspection_result', code)
+    statusTagCache.set(code, tag)
+  }
+  return tag
+}
+
 const SOURCE_MAP: Record<string, string> = {
   web: 'PC 录入',
   miniapp: '小程序',
@@ -206,7 +212,7 @@ function goExecute() {
       <van-cell-group title="检验单信息">
         <van-cell title="检验单号" :value="order.order_no || ('#' + order.id)" />
         <van-cell title="检验类型" :value="ORDER_TYPE_MAP[order.order_type] || order.order_type || '-'" />
-        <van-cell title="判定结果" :value="RESULT_MAP[order.result] || order.result || '未判定'" />
+        <van-cell title="判定结果" :value="statusTagOf(order.result).label.value" />
         <van-cell v-if="order.ac != null" title="抽样方案"
           :value="`样本 ${order.sample_qty ?? '-'} · Ac ${order.ac} / Re ${order.re}`" />
         <van-cell title="创建时间" :value="fmtTime(order.created_at)" />
@@ -251,7 +257,7 @@ function goExecute() {
       <!-- 结果录入 -->
       <van-cell-group title="结果录入" style="margin-top:12px;">
         <div v-if="judged" style="padding:12px;color:#969799;font-size:13px">
-          该单已判定（{{ RESULT_MAP[order.result] || order.result }}），明细不可再修改。
+          该单已判定（{{ statusTagOf(order.result).label.value }}），明细不可再修改。
           判定是终态结论，判完还能改数等于判定依据被篡改；如需复检请新建检验单。
         </div>
         <template v-else>
