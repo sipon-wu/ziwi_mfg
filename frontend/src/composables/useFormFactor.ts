@@ -8,6 +8,10 @@
  *
  * 不使用 `@vueuse/core`（架构 §6 明确不引入），只用原生 `matchMedia` + `resize`。
  * 监听只在首次 `installFormFactor()` 时注册一次；`app` 参数仅为签名对齐，未使用。
+ *
+ * ★ 输入能力与形态解耦：`hasHover` 只下发到 `<html data-hover="on|off">` 作悬停增强
+ *   （R5），**不参与** `data-form-factor` 的判定。纯触屏一体机（1920×1080 无悬停）
+ *   依然是 W。详见 `config/formFactor.ts` 文件头。
  */
 import { computed, readonly, ref, type App, type ComputedRef, type Ref } from 'vue'
 import {

@@ -23,7 +23,7 @@
      改动必须同步 config/formFactor.ts 的 BREAKPOINTS。 */
   --ziwi-bp-handheld: 600px;      /* H 上界（宽） */
   --ziwi-bp-portrait-max: 768px;  /* 竖屏 H 上界 */
-  --ziwi-bp-medium: 1024px;       /* T / W 分界 */
+  --ziwi-bp-medium: 1024px;       /* T / W 分界，★ 闭区间左端点：width===1024 属于 W */
 
   /* ── 触屏人因尺寸（UE §6.1，裸手档）──
      手套档见 ziwi-tokens.gloves.css */
