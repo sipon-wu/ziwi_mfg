@@ -1,6 +1,7 @@
 from app.repositories.base import MultiTenantRepository
 from typing import Optional, Dict, List
 from datetime import date, datetime, time, timedelta, timezone
+import json
 
 
 def _day_start(value, plus_days: int = 0) -> datetime:
@@ -359,3 +360,71 @@ class QualityReportRepository(MultiTenantRepository):
             "VALUES (:tenant_id, :report_type, :period, :report_data, :generated_at)",
             data,
         )
+
+    @staticmethod
+    def _period_range(period: str):
+        """把 ``2026`` / ``2026-11`` / ``2026-11-03`` 折成**左闭右开**区间。
+
+        参数一律给 naive ``datetime``（见 ``_day_start`` 的说明：asyncpg 对
+        TIMESTAMPTZ 严格拒收字符串，naive datetime 按 UTC 解释，与项目里
+        其它 TIMESTAMPTZ 绑定保持一致）。解析不出来返回 ``(None, None)``，
+        调用方据此退化成"不按时间过滤"，而不是抛 422 —— 报表差一个月边界
+        比"完全出不来"更容易被发现。
+        """
+        raw = str(period or "").strip()
+        try:
+            if len(raw) == 4:                      # YYYY
+                y = int(raw)
+                return datetime(y, 1, 1), datetime(y + 1, 1, 1)
+            if len(raw) == 7:                      # YYYY-MM
+                y, m = int(raw[:4]), int(raw[5:7])
+                nxt_y, nxt_m = (y + 1, 1) if m == 12 else (y, m + 1)
+                return datetime(y, m, 1), datetime(nxt_y, nxt_m, 1)
+            return _day_start(raw), _day_start(raw, plus_days=1)   # YYYY-MM-DD
+        except (ValueError, TypeError):
+            return None, None
+
+    async def build_report_payload(self, report_type: str, period: str) -> dict:
+        """算一份**有内容**的报表快照（按周期对三张事实表分组计数）。
+
+        ★改造前 ``POST /quality-reports/generate`` 100% 500：``create_report``
+        的 INSERT 要 ``:report_data`` 与 ``:generated_at`` 两个绑定，而
+        ``GenerateReportRequest`` 只有 ``report_type`` / ``period`` →
+        ``StatementError: A value is required for bind parameter 'report_data'``。
+        后果：整个品质报表模块（生成 / 详情 / 列表）**从来没有过一行数据**，
+        列表恒空、详情恒 404，而列表接口本身是 200，看着像"还没生成过"。
+
+        这里只做**可解释的计数**（按 result / status 分组），不做需要产品定义的
+        KPI（合格率口径、NCR 关闭时效、AQL 扣分）—— 那些要产品拍板，
+        不该由一个探针顺手编出来。分组用 ``GROUP BY`` 取值而不是写死枚举，
+        这样将来新增结果码不用回来改这里。
+        """
+        start, end = self._period_range(period)
+        where, params = "", {}
+        if start and end:
+            where = " AND created_at >= :start_date AND created_at < :end_date_excl"
+            params = {"start_date": start, "end_date_excl": end}
+
+        async def _bucket(table: str, col: str) -> Dict[str, int]:
+            rows = await self.query(
+                f"SELECT {col} AS k, COUNT(*) AS c FROM {table} "
+                f"WHERE 1=1{where} GROUP BY {col}",
+                dict(params),
+            )
+            # 分组键为 NULL 是真实存在的（检验单开了还没判定）——直接 str(None)
+            # 会在报表里变成 `"None": 419` 这种没人看得懂的东西。
+            return {(("pending" if r["k"] is None else str(r["k"]))): int(r["c"] or 0)
+                    for r in rows}
+
+        return {
+            "report_type": report_type,
+            "period": period,
+            "generated_at": datetime.now(timezone.utc),
+            "report_data": json.dumps({
+                "period": period,
+                "period_filtered": bool(start and end),
+                "inspection_order_by_result": await _bucket("inspection_order", "result"),
+                "inspection_result_by_result": await _bucket("inspection_result", "result"),
+                "ncr_by_status": await _bucket("ncr_records", "status"),
+            }, ensure_ascii=False),
+        }

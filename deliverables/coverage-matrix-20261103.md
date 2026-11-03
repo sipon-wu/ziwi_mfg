@@ -1,8 +1,8 @@
-# 功能覆盖矩阵（2026-11-03 23:00）
+# 功能覆盖矩阵（2026-11-03 23:08）
 
 - 业务路由总数：**458**
-- 探针源码中出现过的：**417**（91.0%，乐观口径）
-- 完全没出现过的：**41**
+- 探针源码中出现过的：**430**（93.9%，乐观口径）
+- 完全没出现过的：**28**
 
 > 口径：`被测到` = 探针源码里出现过该 URL 字面量。**不等于被断言** —— 断言强度要看探针本身；用变量拼路径的会被算作未覆盖（保守）。
 
@@ -12,7 +12,7 @@
 |---|---|---:|---:|---:|---:|
 | PLAT  | 平台底座 | 98 | 98 | 0 | 100% |
 | M04  | 仓储管理 | 81 | 81 | 0 | 100% |
-| M03  | 品质管理 | 47 | 34 | 13 | 72% |
+| M03  | 品质管理 | 47 | 47 | 0 | 100% |
 | M10  | 品质高阶（SPC/FMEA/PPAP） | 47 | 47 | 0 | 100% |
 | M00  | 基础数据 | 32 | 27 | 5 | 84% |
 | M06  | 设备管理 TPM | 29 | 24 | 5 | 83% |
@@ -26,22 +26,6 @@
 | M30  | 不合格评审 NCR | 5 | 5 | 0 | 100% |
 
 ## 未覆盖清单（按模块）
-
-### M03 品质管理 — 13 条
-
-- `PUT /api/v1/complaints/{complaint_id}/status`
-- `GET /api/v1/inspection-items/{item_id}`
-- `PUT /api/v1/inspection-items/{item_id}`
-- `DELETE /api/v1/inspection-items/{item_id}`
-- `GET /api/v1/inspection-standards/{std_id}`
-- `PUT /api/v1/inspection-standards/{std_id}`
-- `DELETE /api/v1/inspection-standards/{std_id}`
-- `GET /api/v1/qc-points/{qc_id}`
-- `PUT /api/v1/qc-points/{qc_id}`
-- `DELETE /api/v1/qc-points/{qc_id}`
-- `GET /api/v1/quality-reports`
-- `POST /api/v1/quality-reports/generate`
-- `GET /api/v1/quality-reports/{report_id}`
 
 ### M00 基础数据 — 5 条
 

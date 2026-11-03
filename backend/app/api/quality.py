@@ -46,6 +46,18 @@ from app.services.quality_service import InspectionChecklistService
 router = APIRouter(prefix="/api/v1", tags=["M03-Quality"])
 
 
+def _put_payload(req) -> dict:
+    """PUT 的「只改我给的字段」载荷。
+
+    ★空 body（或全是 null）时 ``exclude_unset`` 得到 ``{}``，
+    而 ``Repository._build_set_clause({})`` 会拼出 ``UPDATE t SET  WHERE id = :id``
+    —— 直接 SQL 语法错 → 500。主数据编辑页最常见的一种提交就是"什么都没改
+    点了保存"，所以这不是刁钻输入。与 ``/material-substitutes/{id}`` 的既有
+    约定保持一致：无变更回 200 ``无变更``，不报错也不写库。
+    """
+    return req.model_dump(exclude_unset=True)
+
+
 # ============================================================
 # 质控点配置
 # ============================================================
@@ -87,7 +99,10 @@ async def update_qc_point(
     req: UpdateQcPointConfigRequest,
     repo: QcPointRepository = Depends(get_tenant_repo(QcPointRepository)),
 ):
-    affected = await repo.update_qc_point(qc_id, req.model_dump(exclude_unset=True))
+    data = _put_payload(req)
+    if not data:
+        return {"code": 0, "message": "无变更"}
+    affected = await repo.update_qc_point(qc_id, data)
     if not affected:
         raise HTTPException(404, detail={"code": "404-0000", "message": "质控点不存在"})
     return {"code": 0, "message": "更新成功"}
@@ -155,7 +170,10 @@ async def update_standard(
     req: UpdateInspectionStandardRequest,
     repo: InspectionStandardRepository = Depends(get_tenant_repo(InspectionStandardRepository)),
 ):
-    affected = await repo.update_inspection_standard(std_id, req.model_dump(exclude_unset=True))
+    data = _put_payload(req)
+    if not data:
+        return {"code": 0, "message": "无变更"}
+    affected = await repo.update_inspection_standard(std_id, data)
     if not affected:
         raise HTTPException(404, detail={"code": "404-0000", "message": "检验标准不存在"})
     return {"code": 0, "message": "更新成功"}
@@ -212,7 +230,10 @@ async def update_item(
     req: UpdateInspectionItemRequest,
     repo: InspectionItemRepository = Depends(get_tenant_repo(InspectionItemRepository)),
 ):
-    affected = await repo.update_inspection_item(item_id, req.model_dump(exclude_unset=True))
+    data = _put_payload(req)
+    if not data:
+        return {"code": 0, "message": "无变更"}
+    affected = await repo.update_inspection_item(item_id, data)
     if not affected:
         raise HTTPException(404, detail={"code": "404-0000", "message": "检验项目不存在"})
     return {"code": 0, "message": "更新成功"}
@@ -891,5 +912,7 @@ async def generate_report(
     req: GenerateReportRequest,
     repo: QualityReportRepository = Depends(get_tenant_repo(QualityReportRepository)),
 ):
-    result = await repo.create_report({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
+    payload = await repo.build_report_payload(req.report_type, req.period)
+    payload["tenant_id"] = repo.tenant_id or "default"
+    result = await repo.create_report(payload)
     return {"code": 0, "message": "报表已生成", "data": {"id": result}}

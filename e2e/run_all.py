@@ -91,6 +91,12 @@ DEFAULT_PROBES = [
     # 「领料申请创建 100% 500」（SQL 要 :approved_by，schema 里没这个字段）
     # 与「IQC 冻结批次可被显式点名出库」（自动拣选拦了，显式路径没拦）。
     "wms_warehouse_e2e",
+    # M03 品质管理：质控点/检验标准/检验项的详情·改·删 → 客诉状态流转 →
+    # 品质报表生成与查询。补上后打出 2 条真缺陷：
+    # 「品质报表生成 100% 500」（SQL 要 :report_data/:generated_at，
+    # schema 只给 report_type/period → 报表模块从来没有过一行数据）
+    # 与「空 body 的 PUT 500」（主数据编辑页"什么都没改点保存"就报错）。
+    "quality_master_e2e",
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL
