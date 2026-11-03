@@ -76,6 +76,12 @@ DEFAULT_PROBES = [
     "query_param_sweep_e2e",   # 全端点查询参数扫描（专治参数一传就 500）
     "copilot_smoke",           # AI Copilot 只读问数四大边界（进程内 ASGI 烟测）
     "n5_posting_spec",         # N5 过账语义 + 红冲三态（收+100/发-10/出-5）
+    # ── 2026-11-03 纳入：覆盖矩阵里最空的两格 ─────────────────────
+    # 这两个模块此前不是"没问题"，而是"没人跑"——M12 只被碰过 3/23，
+    # M10 只被碰过 14/47。补上之后两者各打出 3 条真缺陷（列名写错、
+    # JSON 列不序列化、更新端点复用创建 schema、控制计划缺必填绑定）。
+    "collect_iot_e2e",         # M12 数据采集：网关→数据源→设备→任务→推数→查数
+    "quality_advanced_e2e",    # M10 品质高阶：PFMEA→控制计划→PPAP→SPC
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL

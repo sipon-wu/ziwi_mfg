@@ -54,6 +54,18 @@ class ControlPlanService:
                 "frequency": "每批次",
                 "responsible": "",
                 "specification": item.get("failure_mode", ""),
+                # ★ source / status 必须显式给值，不能指望模型默认。
+                #   `ControlPlan.source` 上写的是 `default="auto"`，那是 **ORM 层**
+                #   的 Python 默认，只在 "Python 侧 INSERT 且没给该列" 时才生效；
+                #   而 ControlPlanRepository.create_control_plan 走的是
+                #   `INSERT ... VALUES (:source, :status)` 原生 SQL，两个占位符
+                #   在编译时就被要求绑定 → 少一个直接
+                #   `StatementError: A value is required for bind parameter 'source'`。
+                #   后果：`POST /fmea/control-plans/generate` 与
+                #   `POST /fmea/documents/{id}/publish`（发布会顺带生成控制计划）
+                #   100% 500 —— PFMEA 发不出去，控制计划一条也生成不出来。
+                "source": "auto",
+                "status": "draft",
             }
             cp_data["tenant_id"] = tenant
             await self.repo.create_control_plan(cp_data)

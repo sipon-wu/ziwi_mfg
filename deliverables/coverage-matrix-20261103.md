@@ -1,8 +1,8 @@
-# 功能覆盖矩阵（2026-11-03 22:30）
+# 功能覆盖矩阵（2026-11-03 22:37）
 
 - 业务路由总数：**458**
-- 探针源码中出现过的：**307**（67.0%，乐观口径）
-- 完全没出现过的：**151**
+- 探针源码中出现过的：**340**（74.2%，乐观口径）
+- 完全没出现过的：**118**
 
 > 口径：`被测到` = 探针源码里出现过该 URL 字面量。**不等于被断言** —— 断言强度要看探针本身；用变量拼路径的会被算作未覆盖（保守）。
 
@@ -13,7 +13,7 @@
 | PLAT ⚠️ | 平台底座 | 98 | 43 | 55 | 44% |
 | M04  | 仓储管理 | 81 | 59 | 22 | 73% |
 | M03  | 品质管理 | 47 | 34 | 13 | 72% |
-| M10 ❌ | 品质高阶（SPC/FMEA/PPAP） | 47 | 14 | 33 | 30% |
+| M10  | 品质高阶（SPC/FMEA/PPAP） | 47 | 47 | 0 | 100% |
 | M00  | 基础数据 | 32 | 27 | 5 | 84% |
 | M06  | 设备管理 TPM | 29 | 24 | 5 | 83% |
 | M01  | 生产管理 | 24 | 22 | 2 | 92% |
@@ -125,42 +125,6 @@
 - `GET /api/v1/quality-reports`
 - `POST /api/v1/quality-reports/generate`
 - `GET /api/v1/quality-reports/{report_id}`
-
-### M10 品质高阶（SPC/FMEA/PPAP） — 33 条
-
-- `PUT /api/v1/fmea/actions/{action_id}/complete`
-- `GET /api/v1/fmea/control-plans`
-- `POST /api/v1/fmea/control-plans/generate`
-- `PUT /api/v1/fmea/control-plans/{plan_id}`
-- `GET /api/v1/fmea/documents`
-- `POST /api/v1/fmea/documents`
-- `GET /api/v1/fmea/documents/{doc_id}`
-- `PUT /api/v1/fmea/documents/{doc_id}`
-- `DELETE /api/v1/fmea/documents/{doc_id}`
-- `POST /api/v1/fmea/documents/{doc_id}/publish`
-- `POST /api/v1/fmea/documents/{doc_id}/revise`
-- `GET /api/v1/fmea/documents/{doc_id}/tree`
-- `POST /api/v1/fmea/documents/{doc_id}/tree`
-- `GET /api/v1/fmea/high-risk`
-- `GET /api/v1/fmea/items`
-- `POST /api/v1/fmea/items`
-- `PUT /api/v1/fmea/items/{item_id}`
-- `GET /api/v1/fmea/items/{item_id}/actions`
-- `POST /api/v1/fmea/items/{item_id}/actions`
-- `PUT /api/v1/fmea/items/{item_id}/recalc-rpn`
-- `PUT /api/v1/ppap/elements/{element_id}`
-- `DELETE /api/v1/ppap/elements/{element_id}`
-- `PUT /api/v1/ppap/levels/{level_id}`
-- `DELETE /api/v1/ppap/levels/{level_id}`
-- `GET /api/v1/ppap/submissions`
-- `PUT /api/v1/ppap/submissions/{submission_id}/approve`
-- `GET /api/v1/ppap/submissions/{submission_id}/completeness`
-- `PUT /api/v1/ppap/submissions/{submission_id}/items/{item_id}`
-- `PUT /api/v1/spc/alerts/{alert_id}/read`
-- `GET /api/v1/spc/capability-analysis`
-- `GET /api/v1/spc/chart/{chart_type}/points`
-- `POST /api/v1/spc/chart/{chart_type}/recalc`
-- `PUT /api/v1/spc/data-points/{point_id}/exclude`
 
 ### M00 基础数据 — 5 条
 
