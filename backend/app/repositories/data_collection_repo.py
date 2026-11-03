@@ -1,11 +1,67 @@
 # M12 数据采集模块 — Repository 层
-from typing import Optional, Dict, List
+import json
+from typing import Any, Optional, Dict, List
 from datetime import datetime, time, timezone
 from app.repositories.base import MultiTenantRepository
 
 
+# 本模块各表的 JSON 列清单。
+#
+# ★ 为什么必须手工维护一张表：本仓储全部走 `text()` 原生 SQL，SQLAlchemy 的
+#   `Column(JSON)` 绑定处理器只在 ORM / Core 表达式路径生效，原生 SQL 下它
+#   **不介入**。于是把 Python dict/list 直接当参数绑下去：
+#     - SQLite → `sqlite3.ProgrammingError: type 'dict' is not supported`
+#     - PostgreSQL(asyncpg) → json 列要求参数是 str，同样报 DataError
+#   实测症状：`POST /collect/data-sources` 只要带 `connection_info` 就 500，
+#   数据源建不出来 → 采集任务（source_id 必填）连带 422 → M12 整条链路建不起来。
+#
+#   故写入前统一 `json.dumps`，读出后统一 `json.loads`（SQLite 出来是字符串，
+#   PG 出来已是对象，两端对齐后才谈得上"同一份 API 契约"）。
+_TABLE_JSON_COLS: Dict[str, tuple] = {
+    "data_source_config": ("connection_info",),
+    "collect_task": ("collect_fields",),
+    "collect_data_record": ("raw_data", "tags"),
+    "link_monitor": ("alert_recipients",),
+}
+
+
 class DataCollectionRepository(MultiTenantRepository):
     """数据采集 Repository — 统一管理数据源、采集任务、采集记录、IoT设备/网关、链路监控"""
+
+    @staticmethod
+    def _norm_json(data: dict, table: str) -> dict:
+        """写入前把 JSON 列的 dict/list 序列化成字符串（已是 str 的原样保留）。"""
+        for col in _TABLE_JSON_COLS.get(table, ()):
+            v = data.get(col)
+            if isinstance(v, (dict, list)):
+                data = {**data, col: json.dumps(v, ensure_ascii=False, default=str)}
+        return data
+
+    @staticmethod
+    def _decode_json(row: Optional[Dict], table: str) -> Optional[Dict]:
+        """读出后把 JSON 列还原成 Python 对象。
+
+        SQLite 的 JSON 列经原生 SQL 出来是**字符串**，PG 出来是对象。不解析的话，
+        同一份代码在本地与 staging 上返回的响应结构不一致（前端拿到的
+        `connection_info` 一会儿是对象一会儿是字符串）。
+        """
+        if not row:
+            return row
+        for col in _TABLE_JSON_COLS.get(table, ()):
+            v = row.get(col)
+            if isinstance(v, (str, bytes)):
+                try:
+                    row[col] = json.loads(v)
+                except (ValueError, TypeError):
+                    pass
+        return row
+
+    @classmethod
+    def _decode_page(cls, page: dict, table: str) -> dict:
+        if not page:
+            return page
+        page["items"] = [cls._decode_json(dict(i), table) for i in page.get("items") or []]
+        return page
 
     # ==================== 数据源配置 ====================
 
@@ -20,12 +76,16 @@ class DataCollectionRepository(MultiTenantRepository):
             sql += " AND is_active = :is_active"
             params["is_active"] = is_active
         sql += " ORDER BY created_at DESC"
-        return await self.query_page(sql, params, page, page_size)
+        return self._decode_page(await self.query_page(sql, params, page, page_size),
+                                 "data_source_config")
 
     async def get_data_source(self, id: int) -> Optional[Dict]:
-        return await self.query_one("SELECT * FROM data_source_config WHERE id = :id", {"id": id})
+        return self._decode_json(
+            await self.query_one("SELECT * FROM data_source_config WHERE id = :id", {"id": id}),
+            "data_source_config")
 
     async def create_data_source(self, data: dict) -> int:
+        data = self._norm_json(data, "data_source_config")
         return await self.execute(
             "INSERT INTO data_source_config (tenant_id, source_name, source_type, source_code, "
             "protocol, connection_info, gateway_id, factory_id, is_active, remark) "
@@ -35,6 +95,7 @@ class DataCollectionRepository(MultiTenantRepository):
         )
 
     async def update_data_source(self, id: int, data: dict) -> int:
+        data = self._norm_json(data, "data_source_config")
         sets = self._build_set_clause(data)
         return await self.execute(f"UPDATE data_source_config SET {sets} WHERE id = :id", {**data, "id": id})
 
@@ -58,12 +119,16 @@ class DataCollectionRepository(MultiTenantRepository):
             sql += " AND is_active = :is_active"
             params["is_active"] = is_active
         sql += " ORDER BY created_at DESC"
-        return await self.query_page(sql, params, page, page_size)
+        return self._decode_page(await self.query_page(sql, params, page, page_size),
+                                 "collect_task")
 
     async def get_collect_task(self, id: int) -> Optional[Dict]:
-        return await self.query_one("SELECT * FROM collect_task WHERE id = :id", {"id": id})
+        return self._decode_json(
+            await self.query_one("SELECT * FROM collect_task WHERE id = :id", {"id": id}),
+            "collect_task")
 
     async def create_collect_task(self, data: dict) -> int:
+        data = self._norm_json(data, "collect_task")
         return await self.execute(
             "INSERT INTO collect_task (tenant_id, task_no, task_name, source_id, "
             "collect_interval_seconds, collect_fields, device_id, factory_id, is_active, remark) "
@@ -73,6 +138,7 @@ class DataCollectionRepository(MultiTenantRepository):
         )
 
     async def update_collect_task(self, id: int, data: dict) -> int:
+        data = self._norm_json(data, "collect_task")
         sets = self._build_set_clause(data)
         return await self.execute(f"UPDATE collect_task SET {sets} WHERE id = :id", {**data, "id": id})
 
@@ -112,7 +178,8 @@ class DataCollectionRepository(MultiTenantRepository):
             sql += " AND quality = :quality"
             params["quality"] = quality
         sql += " ORDER BY data_time DESC"
-        return await self.query_page(sql, params, page, page_size)
+        return self._decode_page(await self.query_page(sql, params, page, page_size),
+                                 "collect_data_record")
 
     @staticmethod
     def _norm_numeric(rec: dict) -> dict:
@@ -130,7 +197,7 @@ class DataCollectionRepository(MultiTenantRepository):
         return rec
 
     async def create_collect_record(self, data: dict) -> int:
-        data = self._norm_numeric(data)
+        data = self._norm_json(self._norm_numeric(data), "collect_data_record")
         return await self.execute(
             "INSERT INTO collect_data_record (tenant_id, task_id, device_id, gateway_id, "
             "data_time, point_name, value_numeric, value_text, value_boolean, quality, "
@@ -145,7 +212,8 @@ class DataCollectionRepository(MultiTenantRepository):
         """批量写入采集数据 — 高频IoT数据入口（批量INSERT语法，单次DB交互）"""
         if not records:
             return 0
-        records = [self._norm_numeric(r) for r in records]
+        records = [self._norm_json(self._norm_numeric(r), "collect_data_record")
+                   for r in records]
         from sqlalchemy import text
         columns = list(records[0].keys())
         placeholders = ", ".join([
@@ -286,12 +354,16 @@ class DataCollectionRepository(MultiTenantRepository):
             sql += " AND is_active = :is_active"
             params["is_active"] = is_active
         sql += " ORDER BY created_at DESC"
-        return await self.query_page(sql, params, page, page_size)
+        return self._decode_page(await self.query_page(sql, params, page, page_size),
+                                 "link_monitor")
 
     async def get_link_monitor(self, id: int) -> Optional[Dict]:
-        return await self.query_one("SELECT * FROM link_monitor WHERE id = :id", {"id": id})
+        return self._decode_json(
+            await self.query_one("SELECT * FROM link_monitor WHERE id = :id", {"id": id}),
+            "link_monitor")
 
     async def create_link_monitor(self, data: dict) -> int:
+        data = self._norm_json(data, "link_monitor")
         return await self.execute(
             "INSERT INTO link_monitor (tenant_id, monitor_name, monitor_type, "
             "target_url, target_host, target_port, check_interval_seconds, timeout_seconds, "

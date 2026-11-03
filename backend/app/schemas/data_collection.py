@@ -36,6 +36,26 @@ class CreateDataSourceConfigRequest(BaseModel):
     remark: Optional[str] = None
 
 
+class UpdateDataSourceConfigRequest(BaseModel):
+    """数据源部分更新。
+
+    ★ 为什么不能复用 Create：PUT 语义是"只改我给的字段"，而 Create 里
+    source_name/source_type/source_code 都是必填 —— 直接复用会让
+    ``{"is_active": false}`` 这种最常见的单字段更新在校验阶段就 422，
+    后面的 ``model_dump(exclude_unset=True)`` 根本没机会执行。
+    实测症状：数据源/采集任务「停用」按钮永远失败。
+    """
+    source_name: Optional[str] = None
+    source_type: Optional[str] = None
+    source_code: Optional[str] = None
+    protocol: Optional[str] = None
+    connection_info: Optional[Any] = None
+    gateway_id: Optional[int] = None
+    factory_id: Optional[str] = None
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None
+
+
 # ==================== 采集任务 ====================
 
 class CollectTaskResponse(BaseModel):
@@ -69,6 +89,19 @@ class CreateCollectTaskRequest(BaseModel):
     device_id: Optional[int] = None
     factory_id: Optional[str] = None
     is_active: bool = True
+    remark: Optional[str] = None
+
+
+class UpdateCollectTaskRequest(BaseModel):
+    """采集任务部分更新 — 与 UpdateDataSourceConfigRequest 同理，不可复用 Create。"""
+    task_no: Optional[str] = None
+    task_name: Optional[str] = None
+    source_id: Optional[int] = None
+    collect_interval_seconds: Optional[int] = None
+    collect_fields: Optional[Any] = None
+    device_id: Optional[int] = None
+    factory_id: Optional[str] = None
+    is_active: Optional[bool] = None
     remark: Optional[str] = None
 
 

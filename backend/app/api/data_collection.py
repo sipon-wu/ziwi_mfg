@@ -4,7 +4,9 @@ from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.data_collection_repo import DataCollectionRepository
 from app.schemas.data_collection import (
     CreateDataSourceConfigRequest,
+    UpdateDataSourceConfigRequest,
     CreateCollectTaskRequest,
+    UpdateCollectTaskRequest,
     CreateCollectDataRecordRequest,
     BatchCreateCollectDataRecordRequest,
     CreateIoTGatewayRequest,
@@ -64,11 +66,14 @@ async def get_data_source(
 @router.put("/data-sources/{source_id}")
 async def update_data_source(
     source_id: int,
-    req: CreateDataSourceConfigRequest,
+    req: UpdateDataSourceConfigRequest,
     repo: DataCollectionRepository = Depends(get_tenant_repo(DataCollectionRepository)),
 ):
-    """更新数据源"""
-    affected = await repo.update_data_source(source_id, req.model_dump(exclude_unset=True))
+    """更新数据源（部分字段）"""
+    payload = req.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(400, detail={"code": "400-0000", "message": "没有需要更新的字段"})
+    affected = await repo.update_data_source(source_id, payload)
     if affected == 0:
         raise HTTPException(404, detail={"code": "404-0000", "message": "数据源不存在"})
     return {"code": 0, "message": "更新成功"}
@@ -130,11 +135,14 @@ async def get_collect_task(
 @router.put("/tasks/{task_id}")
 async def update_collect_task(
     task_id: int,
-    req: CreateCollectTaskRequest,
+    req: UpdateCollectTaskRequest,
     repo: DataCollectionRepository = Depends(get_tenant_repo(DataCollectionRepository)),
 ):
-    """更新采集任务"""
-    affected = await repo.update_collect_task(task_id, req.model_dump(exclude_unset=True))
+    """更新采集任务（部分字段）"""
+    payload = req.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(400, detail={"code": "400-0000", "message": "没有需要更新的字段"})
+    affected = await repo.update_collect_task(task_id, payload)
     if affected == 0:
         raise HTTPException(404, detail={"code": "404-0000", "message": "采集任务不存在"})
     return {"code": 0, "message": "更新成功"}
@@ -359,8 +367,11 @@ async def iot_ingest(
     """IoT 数据接入接口 — 外部系统通过此接口推送单条数据"""
     from app.iot.protocol_handler import IoTProtocolHandler
     handler = IoTProtocolHandler(repo._session, gateway_id, current_user.get("tenant_id", "default"))
-    value_num = float(value) if value.replace(".", "").replace("-", "").isdigit() else None
-    count = await handler.ingest(device_code, point_name, value_num or value, quality)
+    # 值归一交给 handler 统一做（它要区分数值/文本/布尔三列）。
+    # 原来这里已做一次 half-baked 的 float 判断，两处口径不一致时会出现
+    # 「接口判成数值、handler 写成文本」这类难查的错位。
+    count = await handler.ingest(device_code=device_code, point_name=point_name,
+                                 value=value, quality=quality)
     return {"code": 0, "message": "success", "data": {"received": count}}
 
 
