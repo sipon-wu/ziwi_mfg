@@ -15,10 +15,13 @@
 """
 
 import hashlib
+import json
+from datetime import datetime
+from decimal import Decimal
 
 import pytest
 
-from app.services.print_service import _canonical_hash, decide_version
+from app.services.print_service import _canonical_hash, _jsonable, decide_version
 from app.services.print.renderer import (
     PrintDoc,
     RenderMeta,
@@ -98,6 +101,62 @@ class TestCanonicalHash:
         assert len(h) == 64
         assert h == h.lower()
         int(h, 16)  # 能按十六进制解析
+
+
+class TestJsonable:
+    """快照归一化 —— 打印在 staging 上真的炸过的那一类。
+
+    2026-11-03 实测：单据构建器直接取 ORM 字段，`planned_qty` / `lot_qty` 这类
+    Numeric 列取出来是 `Decimal`，`json.dumps` 抛 TypeError：
+    - `POST /print/work_order/{id}` → 500
+    - `POST /print/inspection_order/{id}` → 400
+      「单据标识不合法：3（Object of type Decimal is not JSON serializable）」
+
+    第二条尤其恶劣：文案把「序列化炸了」说成「单号传错了」，排查方向直接带偏。
+    所以这组用例盯的是**归一化发生在边界上**，而不是散落在各处。
+    """
+
+    def test_decimal_becomes_float(self):
+        """Decimal → float，不是 str。
+
+        统一成 float 是为了与 `repositories/base.py::_row_to_dict` 对齐：
+        同一个数量在不同出口一半是 10.5、一半是 "10.5"，前端排序就废了。
+        """
+        assert _jsonable(Decimal("10.50")) == 10.5
+        assert isinstance(_jsonable(Decimal("10.50")), float)
+
+    def test_datetime_becomes_isoformat(self):
+        assert _jsonable(datetime(2026, 11, 3, 8, 30)) == "2026-11-03T08:30:00"
+
+    def test_nested_structures_are_walked(self):
+        """dict / list / tuple 要递归，不能只处理顶层。
+
+        builder 把明细放进 `sections[].rows[][]`，只处理顶层等于没处理。
+        """
+        out = _jsonable({
+            "qty": Decimal("2.5"),
+            "rows": [[Decimal("1"), "a"], (Decimal("3"), {"x": Decimal("4")})],
+        })
+        assert out == {"qty": 2.5, "rows": [[1.0, "a"], [3.0, {"x": 4.0}]]}
+
+    def test_snapshot_with_decimal_can_be_hashed_and_stored(self):
+        """归一化后的快照必须能算哈希、也能进 JSON 列（两条路共用一个值）。"""
+        doc = PrintDoc(
+            doc_type="work_order", title="生产工单流转卡", doc_no="WO-1",
+            meta=[("计划数量", Decimal("15.00")), ("单位", "台")],
+            sections=[Section(title="明细", columns=[("数量", 1.0)],
+                              rows=[[Decimal("7.5")], [Decimal("7.5")]])],
+            signs=["编制"], doc_status="in_progress", note="",
+        )
+        snap = _jsonable(doc.to_snapshot())
+        h = _canonical_hash(snap)              # 原实现这里 TypeError
+        json.dumps(snap, ensure_ascii=False)   # JSON 列落库走同一份值
+        assert len(h) == 64
+
+    def test_jsonable_is_idempotent(self):
+        """已经是原生类型的值再走一遍不变 —— 否则重打同一张单会算出不同哈希。"""
+        snap = {"a": 1, "b": "x", "c": [1.0, None, True]}
+        assert _jsonable(_jsonable(snap)) == snap
 
 
 # ── 渲染 ────────────────────────────────────────────────────

@@ -112,6 +112,17 @@ async def render_print(
             "message": f"不支持的纸型：{paper}（可选：{'/'.join(PAPERS)}）",
         })
 
+    # ★ 单号合法性在这里单独判，不要靠下面的兜底 except：
+    #   实测踩过 —— 构建器把 Decimal 塞进快照、json.dumps 抛 TypeError，
+    #   被兜底 except 翻译成「单据标识不合法：3（Object of type Decimal is
+    #   not JSON serializable）」。单号明明是对的，文案却指着单号，
+    #   排查方向被带偏半天。入参校验与渲染失败必须分开报。
+    try:
+        int(doc_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail={
+            "code": "PRINT_BAD_DOC_ID", "message": f"单据标识不合法：{doc_id}（应为数字主键）"})
+
     svc = _svc(current_user, db)
     source, hint = _guess_source(request)
     actor_name = current_user.get("real_name") or current_user.get("username") or ""
@@ -129,10 +140,11 @@ async def render_print(
     except PrintDocNotFound as e:
         raise HTTPException(status_code=404, detail={"code": "PRINT_DOC_NOT_FOUND", "message": str(e)})
     except (ValueError, TypeError) as e:
-        # builder 里 int(doc_id) 失败 → 前端传了非法主键。给 400 而不是 500：
-        # 这是入参问题，不该出现在错误率告警里。
-        raise HTTPException(status_code=400, detail={
-            "code": "PRINT_BAD_DOC_ID", "message": f"单据标识不合法：{doc_id}（{e}）"})
+        # 走到这里说明单号已经校验过（上面 int(doc_id) 已过），
+        # 所以问题出在构建器 / 渲染阶段，不该再说是"单号不合法"。
+        raise HTTPException(status_code=500, detail={
+            "code": "PRINT_RENDER_FAILED",
+            "message": f"打印渲染失败：{type(e).__name__}: {e}"})
 
     pdf, _name, _pages = await svc.get_pdf(info["id"])
     # 文件名带纸型：同一单打出的 A4 与贴标落进同一个下载目录时不会互相覆盖，

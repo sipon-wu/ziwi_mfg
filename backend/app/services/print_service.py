@@ -32,7 +32,8 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import select, update
@@ -75,6 +76,32 @@ def _now_local() -> datetime:
     """车间当地时间（容器默认 UTC，纸面时间不能用 UTC）。"""
     offset = get_settings().PRINT_TZ_OFFSET_HOURS
     return datetime.now(timezone(timedelta(hours=offset)))
+
+
+def _jsonable(value: Any) -> Any:
+    """把快照里的非 JSON 原生类型压成可序列化的值。
+
+    ★ 为什么必须有这一步：单据构建器（`services/print/registry.py`）直接取 ORM
+    字段放进快照，而 `planned_qty` / `lot_qty` / `completed_qty` 这类 Numeric 列
+    取出来是 `Decimal`。`json.dumps` 遇到 Decimal 抛 TypeError，写 JSON 列同样炸。
+
+    实测表现（2026-11-03 staging）：
+    - `POST /print/work_order/{id}` → **500**
+    - `POST /print/inspection_order/{id}` → 400
+      「单据标识不合法：3（Object of type Decimal is not JSON serializable）」
+
+    Decimal 统一转 float —— 与 `repositories/base.py::_row_to_dict` 的口径一致，
+    避免同一个数量在不同出口一半是 10.5、一半是 "10.5"。
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def _canonical_hash(snapshot: dict) -> str:
@@ -219,7 +246,9 @@ class PrintService:
             )
 
         pdoc = await self._call_builder(builder, doc_type, doc_id)
-        snapshot = pdoc.to_snapshot()
+        # 必须先归一化再算哈希：哈希与落库用的是同一份快照，
+        # 一处炸两处都炸（Decimal 就是这个原因）。
+        snapshot = _jsonable(pdoc.to_snapshot())
         content_hash = _canonical_hash(snapshot)
 
         latest = await self._latest(doc_type, doc_id)

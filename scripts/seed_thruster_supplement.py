@@ -1,0 +1,444 @@
+"""A推进器厂（艾华）· staging 场景补数脚本（第二批）
+
+只补**有 API 入口**的要素。上一批（`seed_thruster_staging.py`）建的是主数据与
+业务单据，本批补的是"有关系但没填"的那一层：
+
+    1. 工作中心产能与班次配置（capacity_per_shift / shift_config / labor_count）
+    2. 工作中心班组（wc_teams）
+    3. 员工（employees，挂到班组）
+    4. 工作日历 2026（factory_calendars）+ 法定节假日
+    5. Andon 升级规则（方案书 §12.1 的 5/10/15/10 分钟时限）
+    6. 检验结果补全（把已录 3 项/7 项补齐到全项，再重新判定）
+    7. 打印留痕（print_artifacts，工单与检验单各打一次）
+
+**不补的三项**（会打印成 BLOCKED，原因不是偷懒）：
+    - 供应商：`GET /suppliers` 只有读，没有写入口（方案书 G2：主数据靠 ERP 同步）
+    - `wc_equipments`：表在模型里，但全库无任何代码引用 —— 死表，不是造数缺口
+    - `work_reports.org_id`：`CreateWorkReportRequest` 没有 org_id 字段，服务端也不填
+
+跑法（必须在仓库根，且带 NO_PROXY）：
+    NO_PROXY='*' no_proxy='*' backend/.venv/Scripts/python.exe scripts/seed_thruster_supplement.py
+"""
+from __future__ import annotations
+
+import os
+import statistics
+import sys
+
+
+import httpx
+
+API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
+TENANT_CODE = "AH-THR"
+ADMIN_USER = "ah_admin"
+ADMIN_PWD = os.environ.get("AH_PWD", "Ah@2026seed")
+
+OK: list[str] = []
+ERR: list[str] = []
+SKIP: list[str] = []
+BLOCKED: list[str] = []
+
+
+def ok(name: str, detail: str = "") -> None:
+    OK.append(f"{name} · {detail}" if detail else name)
+    print(f"  [OK  ] {name}" + (f" · {detail}" if detail else ""))
+
+
+def err(name: str, detail: str = "") -> None:
+    ERR.append(f"{name} · {detail}" if detail else name)
+    print(f"  [ERR ] {name}" + (f" · {detail}" if detail else ""))
+
+
+def skip(name: str, detail: str = "") -> None:
+    SKIP.append(f"{name} · {detail}" if detail else name)
+    print(f"  [SKIP] {name}" + (f" · {detail}" if detail else ""))
+
+
+def unwrap(resp: httpx.Response):
+    j = resp.json()
+    if isinstance(j, dict) and "data" in j:
+        return j["data"]
+    return j
+
+
+def items(resp: httpx.Response) -> list[dict]:
+    d = unwrap(resp)
+    if isinstance(d, dict):
+        return d.get("items") or []
+    return d or []
+
+
+def paged(c: httpx.Client, path: str, params: dict | None = None) -> list[dict]:
+    out: list[dict] = []
+    page = 1
+    while True:
+        p = dict(params or {})
+        p.update({"page": page, "page_size": 100})
+        r = c.get(f"{API}{path}", params=p)
+        if r.status_code != 200:
+            return out
+        batch = items(r)
+        out.extend(batch)
+        if len(batch) < 100:
+            return out
+        page += 1
+        if page > 20:
+            return out
+
+
+# ────────────────────────── S1 工作中心产能与班次 ──────────────────────────
+
+
+def s1_work_centers(c: httpx.Client) -> None:
+    print("\nS1 工作中心产能 / 班次")
+    routes = paged(c, "/routes")
+    unit_by_wc: dict[int, list[float]] = {}
+    for rt in routes:
+        steps = items(c.get(f"{API}/routes/{rt['id']}/steps"))
+        for s in steps:
+            wc = s.get("wc_id")
+            ut = s.get("unit_time_override") or s.get("unit_time") or 0
+            if wc and ut and ut > 0:
+                unit_by_wc.setdefault(wc, []).append(float(ut))
+
+    labor_by_type = {"production_line": 4, "work_cell": 2, "workstation": 1}
+    touched = 0
+    for wc in paged(c, "/work-centers"):
+        if wc.get("capacity_per_shift"):
+            skip(f"工作中心 {wc['code']} 产能", "已有值")
+            continue
+        uts = unit_by_wc.get(wc["id"], [])
+        # 产能 = 一个班次 480 分钟 ÷ 该工位单件时间均值（工时本身是估算，见报告 §1）
+        cap = round(480 / statistics.mean(uts), 1) if uts else None
+        payload = {
+            "shift_config": "白班 08:00-20:00；夜班 20:00-08:00",
+            "labor_count": labor_by_type.get(wc.get("wc_type") or "", 1),
+        }
+        if cap:
+            payload["capacity_per_shift"] = cap
+        r = c.put(f"{API}/work-centers/{wc['id']}", json=payload)
+        if r.status_code in (200, 204):
+            touched += 1
+        else:
+            err(f"工作中心 {wc['code']}", f"HTTP {r.status_code} {r.text[:120]}")
+    if touched:
+        ok("工作中心产能与班次", f"{touched} 个已配置（班次 2 档，产能按 480÷单件时间）")
+
+
+# ────────────────────────── S2 班组 ──────────────────────────
+
+
+TEAM_PLAN = [
+    ("定子线白班", "assembly"),
+    ("转子线白班", "assembly"),
+    ("总装线白班", "assembly"),
+    ("总装线夜班", "assembly"),
+    ("检测组", "quality"),
+    ("机加组", "machining"),
+]
+
+
+def s2_teams(c: httpx.Client) -> None:
+    print("\nS2 工作中心班组")
+    # ★ 工作中心的 wc_type 实际取值是 assembly / machining / quality ——
+    #   前端 WC_TYPE_OPTIONS 写的却是 production_line / work_cell / workstation。
+    #   两套枚举对不上：页面上按「产线」筛选查不到任何数据（见闭环报告）。
+    #   这里按**库里的真值**建班组。
+    wcs = paged(c, "/work-centers")
+    existing = {t.get("team_name") for t in paged(c, "/teams")}
+
+    for idx, (name, wtype) in enumerate(TEAM_PLAN):
+        if name in existing:
+            skip(f"班组 {name}", "已存在")
+            continue
+        cand = [w for w in wcs if (w.get("wc_type") or "") == wtype]
+        if not cand:
+            err(f"班组 {name}", f"找不到 wc_type={wtype} 的工作中心")
+            continue
+        wc = cand[idx % len(cand)]
+        r = c.post(f"{API}/teams", json={
+            "wc_id": wc["id"], "team_name": name, "team_type": "regular", "is_active": True,
+        })
+        if r.status_code in (200, 201):
+            ok(f"班组 {name}", f"挂 {wc['code']}")
+        else:
+            err(f"班组 {name}", f"HTTP {r.status_code} {r.text[:120]}")
+
+
+# ────────────────────────── S3 员工 ──────────────────────────
+
+
+def s3_employees(c: httpx.Client) -> None:
+    print("\nS3 员工（挂班组）")
+    users = paged(c, "/users")
+    teams = paged(c, "/teams")
+    if not teams:
+        err("员工", "没有班组可挂，S2 未成功")
+        return
+    existing = {e.get("employee_no") for e in paged(c, "/employees")}
+    positions = ["操作工", "操作工", "操作工", "质检员", "仓管员", "设备维修", "班组长", "工艺工程师"]
+
+    created = 0
+    for i, u in enumerate(users):
+        no = f"AH-E{i + 1:03d}"
+        if no in existing:
+            skip(f"员工 {no}", "已存在")
+            continue
+        team = teams[i % len(teams)]
+        r = c.post(f"{API}/employees", json={
+            "user_id": u["id"],
+            "employee_no": no,
+            "team_id": team["id"],
+            "position": positions[i % len(positions)],
+        })
+        if r.status_code in (200, 201):
+            created += 1
+        else:
+            err(f"员工 {u.get('username')}", f"HTTP {r.status_code} {r.text[:120]}")
+    if created:
+        ok("员工档案", f"{created} 人，已挂班组与岗位")
+
+
+# ────────────────────────── S4 工作日历 ──────────────────────────
+
+
+HOLIDAY_2026 = [
+    ("2026-01-01", "元旦"),
+    ("2026-02-16", "春节"),
+    ("2026-02-17", "春节"),
+    ("2026-02-18", "春节"),
+    ("2026-04-05", "清明"),
+    ("2026-05-01", "劳动节"),
+    ("2026-06-19", "端午"),
+    ("2026-09-25", "中秋"),
+    ("2026-10-01", "国庆"),
+    ("2026-10-02", "国庆"),
+    ("2026-10-03", "国庆"),
+]
+
+
+def s4_calendar(c: httpx.Client) -> None:
+    print("\nS4 工作日历 2026")
+    r = c.get(f"{API}/calendars/2026")
+    if r.status_code == 200 and items(r):
+        skip("2026 日历", "已存在")
+        return
+    payload = {
+        "work_weekends": False,
+        "holidays": [{"date": d, "day_type": "holiday", "name": n} for d, n in HOLIDAY_2026],
+    }
+    r = c.post(f"{API}/calendars/2026/init", json=payload)
+    if r.status_code in (200, 201):
+        d = unwrap(r)
+        cnt = d.get("created") or d.get("count") or "?"
+        ok("2026 日历", f"初始化完成，节假日 {len(HOLIDAY_2026)} 天（created={cnt}）")
+    else:
+        err("2026 日历", f"HTTP {r.status_code} {r.text[:150]}")
+
+
+# ────────────────────────── S5 Andon 升级规则 ──────────────────────────
+
+
+# 方案书 §12.1：设备 5min→维修工程师 / 质量 10min→质量工程师 / 物料 15min→物料员 / 人员 10min→班组长
+ESCALATION_PLAN = [
+    ("设备异常-5分钟升级", "equipment", 1, 5, "设备维修"),
+    ("设备异常-15分钟主管升级", "equipment", 2, 15, "生产主管"),
+    ("质量异常-10分钟升级", "quality", 1, 10, "质量工程师"),
+    ("物料异常-15分钟升级", "material", 1, 15, "物料员"),
+    ("人员异常-10分钟升级", "personnel", 1, 10, "班组长"),
+]
+
+
+def s5_escalation(c: httpx.Client) -> None:
+    print("\nS5 Andon 升级规则（方案书 §12.1）")
+    existing = {x.get("rule_name") for x in paged(c, "/andon/escalation-rules")}
+    created = 0
+    for name, ctype, level, minutes, role in ESCALATION_PLAN:
+        if name in existing:
+            skip(f"升级规则 {name}", "已存在")
+            continue
+        r = c.post(f"{API}/andon/escalation-rules", json={
+            "rule_name": name,
+            "call_type": ctype,
+            "priority": "all",
+            "level": level,
+            "timeout_minutes": minutes,
+            "notify_role": role,
+            "is_active": True,
+        })
+        if r.status_code in (200, 201):
+            created += 1
+        else:
+            err(f"升级规则 {name}", f"HTTP {r.status_code} {r.text[:120]}")
+    if created:
+        ok("Andon 升级规则", f"{created} 条：设备 5/15、质量 10、物料 15、人员 10 分钟")
+
+
+# ────────────────────────── S6 检验结果补全 ──────────────────────────
+
+
+def _pick_value(lo: float | None, up: float | None) -> float:
+    """在规格内取一个值。单点规格（lo==up）直接取该点。"""
+    if lo is not None and up is not None:
+        return round((float(lo) + float(up)) / 2, 2)
+    if lo is not None:
+        return round(float(lo) * 1.1, 2)
+    if up is not None:
+        return round(float(up) * 0.9, 2)
+    return 1.0
+
+
+def s6_inspection(c: httpx.Client) -> None:
+    """补一张**完整**的检验单，而不是去改已判定的那几张。
+
+    ★ 第一版想"把已录 3 项补到 7 项"，被平台挡住：
+      `400「检验单已判定（不合格），不能再改明细：判定是终态结论，
+       判完还能改数等于判定依据被篡改」`
+      这条规则是对的 —— 判定后还能改数，留痕就没有意义。所以补数据的正确
+      姿势是**新建一张录满的检验单**，让"检验执行能闭环到判定"有正面样本。
+    """
+    print("\nS6 检验执行闭环（新建完整单）")
+    standards = paged(c, "/inspection-standards")
+    if not standards:
+        err("检验执行", "没有检验标准，无法建单")
+        return
+    # 挑项数最少的那个标准，录满它 → 走自动判定
+    std = min(standards, key=lambda s: s.get("item_count") or 99)
+    sid, items_cnt = std["id"], std.get("item_count") or 0
+
+    existing = [o for o in paged(c, "/inspection-orders")
+                if o.get("standard_id") == sid and o.get("order_type") == "ipqc"
+                and o.get("result") in ("ACC", "REJ")]
+    if existing:
+        skip("检验执行闭环", f"标准 {std.get('name')} 已有判定完成的单 {existing[0].get('order_no')}")
+        return
+
+    wos = [w for w in paged(c, "/work-orders") if w.get("wo_status") == "in_progress"]
+    if not wos:
+        err("检验执行", "没有在制工单可挂")
+        return
+
+    r = c.post(f"{API}/inspection-orders", json={
+        "order_type": "ipqc",
+        "work_order_id": wos[0]["id"],
+        "standard_id": sid,
+    })
+    if r.status_code not in (200, 201):
+        err("新建检验单", f"HTTP {r.status_code} {r.text[:150]}")
+        return
+    order = unwrap(r)
+    oid = order.get("id")
+
+    ck = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
+    todo = ck.get("items", [])
+    if not todo:
+        err("检验单 checklist", f"空（degraded={ck.get('degraded')}）")
+        return
+
+    payload = {"source": "web", "results": [
+        {
+            "item_id": it["id"],
+            "measured_value": _pick_value(it.get("spec_lower_limit"), it.get("spec_upper_limit")),
+            "unit": it.get("unit"),
+        }
+        for it in todo
+    ]}
+    r = c.post(f"{API}/inspection-orders/{oid}/results/batch", json=payload)
+    if r.status_code not in (200, 201):
+        err("检验结果录入", f"HTTP {r.status_code} {r.text[:150]}")
+        return
+
+    j = c.put(f"{API}/inspection-orders/{oid}/judge", json={})
+    result = unwrap(j).get("result") if j.status_code in (200, 201) else None
+    ck2 = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
+    detail = f"{order.get('order_no')} 标准「{std.get('name')}」{ck2.get('recorded_count')}/{items_cnt} 项，判定 {result}"
+    if result == "ACC":
+        ok("检验执行闭环", detail)
+    else:
+        err("检验执行闭环", f"{detail}（期望 ACC）")
+
+
+# ────────────────────────── S7 打印留痕 ──────────────────────────
+
+
+def s7_print(c: httpx.Client) -> None:
+    print("\nS7 打印留痕")
+    done = 0
+    wos = paged(c, "/work-orders")
+    for wo in wos[:2]:
+        # 打印端点返回 application/pdf 字节流，不吃 JSON body；纸型走 query
+        r = c.post(f"{API}/print/work_order/{wo['id']}", params={"paper": "a4"})
+        if r.status_code == 200 and r.content[:4] == b"%PDF":
+            done += 1
+        else:
+            err(f"打印工单 {wo.get('wo_no')}", f"HTTP {r.status_code} {r.text[:120]}")
+    orders = paged(c, "/inspection-orders")
+    if orders:
+        r = c.post(f"{API}/print/inspection_order/{orders[0]['id']}", params={"paper": "a4"})
+        if r.status_code == 200 and r.content[:4] == b"%PDF":
+            done += 1
+        else:
+            err("打印检验单", f"HTTP {r.status_code} {r.text[:120]}")
+    if done:
+        ok("打印留痕", f"{done} 张 PDF（含留痕码与核验入口）")
+
+
+def main() -> int:
+    print("=" * 64)
+    print("A推进器厂 · 场景补数（第二批）")
+    print("=" * 64)
+
+    c = httpx.Client(timeout=40)
+    r = c.post(f"{API}/auth/login", json={
+        "username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": TENANT_CODE.lower()})
+    if r.status_code != 200:
+        # tenant_id 用内部 id 才能登录：先由平台账号查一次
+        pc = httpx.Client(timeout=40)
+        pr = pc.post(f"{API}/auth/login", json={"username": "mfg_admin", "password": "admin123", "tenant_id": "mfg_demo"})
+        if pr.status_code != 200:
+            print("平台账号登录失败，无法解析租户 id：", pr.status_code, pr.text[:200])
+            return 2
+        ptok = pr.json().get("access_token")
+        pc.headers["Authorization"] = f"Bearer {ptok}"
+        tid = None
+        for t in items(pc.get(f"{API}/tenants", params={"page_size": 100})):
+            if t.get("code") == TENANT_CODE:
+                tid = t.get("tenant_id") or t.get("id")
+        if not tid:
+            print("找不到租户", TENANT_CODE)
+            return 2
+        r = c.post(f"{API}/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": tid})
+        if r.status_code != 200:
+            print("AH 管理员登录失败：", r.status_code, r.text[:200])
+            return 2
+    c.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
+    print(f"登录成功 · 租户 {TENANT_CODE}")
+
+    s1_work_centers(c)
+    s2_teams(c)
+    s3_employees(c)
+    s4_calendar(c)
+    s5_escalation(c)
+    s6_inspection(c)
+    s7_print(c)
+
+    print("\nBLOCKED（无 API 入口，补不了）：")
+    BLOCKED.extend([
+        "供应商主数据 —— 只有 GET /suppliers，无写入口（方案书 G2：靠 ERP 同步）",
+        "wc_equipments（工作中心×设备）—— 表在模型里但全库无代码引用，死表",
+        "work_reports.org_id —— CreateWorkReportRequest 无该字段，服务端也不填",
+    ])
+    for b in BLOCKED:
+        print("  -", b)
+
+    print("\n" + "=" * 64)
+    print(f"OK {len(OK)} / ERR {len(ERR)} / SKIP {len(SKIP)}")
+    if ERR:
+        print("\n失败项：")
+        for e in ERR:
+            print("  -", e)
+    return 0 if not ERR else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
