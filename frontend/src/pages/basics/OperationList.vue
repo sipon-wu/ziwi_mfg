@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { showToast, showDialog } from 'vant'
 import { get, post, put, del, errorText } from '@/api/client'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
+import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
@@ -56,6 +58,19 @@ const { conditions, applyFilter, removeCondition } = useAdvancedSearch<Operation
 const list = computed<Operation[]>(() =>
   conditions.value.length ? applyFilter(rawList.value) : rawList.value,
 )
+/* 空态必须区分两类（UE-12）：条件没命中 vs 本来就没有。
+   混成一句「暂无数据」会让用户以为数据丢了，也不知道下一步该清条件还是该新建。 */
+const activeFilterTexts = computed<string[]>(() => {
+  const out: string[] = []
+  if (keyword.value) out.push(`关键词「${keyword.value}」`)
+  if (opTypeFilter.value) {
+    const hit = OP_TYPE_OPTIONS.find((o) => o.value === opTypeFilter.value)
+    out.push(`类型「${hit?.label ?? opTypeFilter.value}」`)
+  }
+  conditions.value.forEach((c) => out.push(condText(c)))
+  return out
+})
+const isEmptyFiltered = computed(() => activeFilterTexts.value.length > 0)
 const showSearch = ref(false)
 const expandedId = ref<number | null>(null)
 function toggleExpand(id: number) {
@@ -95,6 +110,7 @@ function onSearch() {
 function onReset() {
   keyword.value = ''
   opTypeFilter.value = ''
+  conditions.value = []
   onSearch()
 }
 
@@ -178,26 +194,25 @@ onMounted(() => {
 
 <template>
   <div class="ziwi-page">
-    <!-- 搜索栏 -->
-    <div class="ziwi-filter-bar ziwi-gap-3 ziwi-mb-4">
-      <div class="ziwi-flex-1 ziwi-min-w-field">
-        <van-field
-          v-model="keyword"
-          placeholder="搜索工序编码/名称"
-          clearable
-          @keyup.enter="onSearch"
-        />
-      </div>
-      <div class="ziwi-w-40">
-        <SelectField v-model="opTypeFilter" :options="OP_TYPE_OPTIONS" placeholder="工序类型" clearable />
-      </div>
-      <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
-        <van-button type="primary" size="small" @click="onSearch">搜索</van-button>
-        <van-button plain size="small" @click="onReset">重置</van-button>
-        <van-button type="success" size="small" @click="openCreate">新增工序</van-button>
-        <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
-      </div>
-    </div>
+    <!-- 搜索栏：条件 → 输入 → 提交 → 清空 → 查询延伸 | 创建靠右 -->
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索工序编码/名称"
+      :loading="loading"
+      class="ziwi-mb-4"
+      @search="onSearch"
+      @reset="onReset"
+      @advanced="showSearch = true"
+    >
+      <template #filters>
+        <div class="ziwi-w-40">
+          <SelectField v-model="opTypeFilter" :options="OP_TYPE_OPTIONS" placeholder="工序类型" clearable />
+        </div>
+      </template>
+      <template #actions>
+        <van-button type="success" @click="openCreate">新增工序</van-button>
+      </template>
+    </ZiwiListToolbar>
 
     <!-- 高级检索条件 chips -->
     <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mb-3 ziwi-px-1">
@@ -213,8 +228,21 @@ onMounted(() => {
     </div>
 
     <!-- 列表 -->
-    <div v-if="loading" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">加载中...</div>
-    <div v-else-if="list.length === 0" class="ziwi-text-center ziwi-py-10 ziwi-text-muted">暂无数据</div>
+    <ZiwiStateView
+      v-if="loading"
+      state="loading"
+      skeleton="rows"
+      :skeleton-count="5"
+    />
+    <ZiwiStateView
+      v-else-if="list.length === 0"
+      :state="isEmptyFiltered ? 'empty-filtered' : 'empty-true'"
+      object-name="工序"
+      :conditions="activeFilterTexts"
+      primary-text="新增工序"
+      @create="openCreate"
+      @clear-filter="onReset"
+    />
     <div v-else class="op-table-wrap ziwi-table-scroll">
       <table class="op-table">
         <thead>

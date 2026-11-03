@@ -138,10 +138,24 @@ def main():
     report("M2-1 可建阈值配置", bool(th_id),
            f"HTTP {r.status_code} {detail_msg(r) if r.status_code != 200 else ''}")
 
-    r = c.get(f"{API}/energy/thresholds", params={"page_size": 50})
-    items = data(r).get("items") or []
-    report("M2-2 阈值可列表", r.status_code == 200 and any(
-        i.get("threshold_code") == code_up for i in items), f"{len(items)} 条")
+    # 列表断言必须翻全量再找本条：该端点没有 keyword 过滤，而历次探针自建的
+    # 阈值已经攒到 50+ 条，新建的那条不会落在第一页 —— 只看 page 1 会假红。
+    found = False
+    seen = 0
+    status_ok = False
+    for pno in range(1, 21):
+        r = c.get(f"{API}/energy/thresholds", params={"page": pno, "page_size": 50})
+        if r.status_code != 200:
+            break
+        status_ok = True
+        items = data(r).get("items") or []
+        seen += len(items)
+        if any(i.get("threshold_code") == code_up for i in items):
+            found = True
+            break
+        if len(items) < 50:
+            break
+    report("M2-2 阈值可列表", status_ok and found, f"翻 {seen} 条")
 
     r = c.get(f"{API}/energy/thresholds/{th_id}")
     report("M2-3 阈值可查详情", r.status_code == 200 and data(r).get("threshold_code") == code_up)

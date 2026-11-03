@@ -4,7 +4,7 @@ import { showToast } from 'vant'
 import { get, post, put } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
-import SearchBar from '@/components/SearchBar.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 // M30 不合格品评审（NCR）
@@ -76,6 +76,13 @@ function onStatusChange() {
   items.value = []
   resetPage()
   loadData()
+}
+
+/** 工具栏「重置」= 清关键词 + 状态筛选 + 回第一页 */
+function onReset() {
+  keyword.value = ''
+  statusFilter.value = ''
+  onStatusChange()
 }
 
 onMounted(() => {
@@ -184,7 +191,17 @@ function fmtTime(t: string) {
       <van-cell title="单据总数" :value="total" />
     </van-cell-group>
 
-    <SearchBar v-model:keyword="keyword" @search="onStatusChange" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索 NCR 单号/来源单号"
+      :loading="loading"
+      @search="onStatusChange"
+      @reset="onReset"
+    >
+      <template #actions>
+        <van-button v-perm="'M30:ncr:create'" type="success" @click="openCreate">新建 NCR</van-button>
+      </template>
+    </ZiwiListToolbar>
 
     <div style="display:flex; gap:8px; margin:12px 16px; flex-wrap:wrap;">
       <van-tag v-for="opt in statusOptions" :key="opt.value"
@@ -192,7 +209,6 @@ function fmtTime(t: string) {
         :style="{ cursor: 'pointer', padding: '4px 12px' }"
         @click="statusFilter = opt.value; onStatusChange()"
       >{{ opt.label }}</van-tag>
-      <van-button v-perm="'M30:ncr:create'" size="small" type="primary" icon="plus" style="margin-left:auto" @click="openCreate">新建</van-button>
     </div>
 
     <van-list v-model:loading="loading" :finished="!total || items.length >= total" finished-text="没有更多了" @load="loadData">

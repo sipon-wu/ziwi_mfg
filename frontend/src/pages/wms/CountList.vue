@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del, errorText } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
 
 interface Count { id: number; count_no: string; count_type: string; status: string; warehouse_id: number; warehouse_name: string; count_date: string; total_items: number; counted_items: number; diff_items: number; created_at: string }
@@ -54,14 +55,27 @@ async function loadData() {
   } finally { loading.value = false }
 }
 function onSearch() { page.value = 1; loadData() }
+/** 重置：清空关键词与状态筛选后回到第一页 */
+function onReset() { keyword.value = ''; status.value = ''; onSearch() }
 
 onMounted(loadData)
 </script>
 
 <template>
   <div>
-    <van-nav-bar title="盘点管理" right-text="新增盘点" @click-right="$router.push('/wms/inventory-counts/create')" />
-    <van-search v-model="keyword" placeholder="搜索盘点单号" @search="onSearch" />
+    <van-nav-bar title="盘点管理" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索盘点单号"
+      :loading="loading"
+      :show-advanced="false"
+      @search="onSearch"
+      @reset="onReset"
+    >
+      <template #actions>
+        <van-button type="success" @click="$router.push('/wms/inventory-counts/create')">新增盘点</van-button>
+      </template>
+    </ZiwiListToolbar>
     <van-cell-group inset style="margin:8px">
       <van-tabs v-model:active="status" @change="onSearch" animated>
         <van-tab title="全部" name="" />

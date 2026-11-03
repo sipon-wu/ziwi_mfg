@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { get, errorText } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
 
 interface Batch { id: number; batch_no: string; material_id: number; material_code: string; material_name: string; supplier_batch_no: string; manufacture_date: string; expiry_date: string; status: string; is_locked: boolean }
@@ -53,6 +54,8 @@ async function loadData() {
   } finally { loading.value = false }
 }
 function onSearch() { page.value = 1; loadData() }
+/** 重置：清空关键词与条件后回到第一页（工具栏「重置」不是只清输入框） */
+function onReset() { keyword.value = ''; status.value = ''; materialId.value = undefined; onSearch() }
 
 onMounted(loadData)
 </script>
@@ -60,7 +63,14 @@ onMounted(loadData)
 <template>
   <div>
     <van-nav-bar title="批次管理" />
-    <van-search v-model="keyword" placeholder="搜索批次号/供应商批号" @search="onSearch" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索批次号/供应商批号"
+      :loading="loading"
+      :show-advanced="false"
+      @search="onSearch"
+      @reset="onReset"
+    />
 
     <van-list v-model:loading="loading" :finished="list.length >= total" @load="loadData" finished-text="没有更多了">
       <van-cell v-for="item in list" :key="item.id">

@@ -9,6 +9,7 @@ import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
 
 interface ReceiptOrder { id: number; receipt_no: string; receipt_type: string; status: string; warehouse_id: number; warehouse_name: string; total_qty: number; received_qty: number; stored_qty: number; source_doc_no: string; created_at: string }
@@ -46,8 +47,11 @@ function onSearchSubmit(c: SearchCondition[]) {
   showSearch.value = false
 }
 function onResetSubmit() {
+  // 工具栏「重置」= 清全部条件（关键词 + 高级检索），并重新取第一页
   conditions.value = []
+  keyword.value = ''
   showSearch.value = false
+  onSearch()
 }
 function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
@@ -90,8 +94,19 @@ onMounted(loadData)
 
 <template>
   <div>
-    <van-nav-bar title="入库单管理" right-text="新增入库" @click-right="$router.push('/wms/receipt-orders/create')" />
-    <van-search v-model="keyword" placeholder="搜索入库单号/来源单号" @search="onSearch" />
+    <van-nav-bar title="入库单管理" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索入库单号/来源单号"
+      :loading="loading"
+      @search="onSearch"
+      @reset="onResetSubmit"
+      @advanced="showSearch = true"
+    >
+      <template #actions>
+        <van-button type="success" @click="$router.push('/wms/receipt-orders/create')">新增入库</van-button>
+      </template>
+    </ZiwiListToolbar>
     <van-cell-group inset style="margin:8px">
       <van-tabs v-model:active="status" @change="onSearch" animated>
         <van-tab title="全部" name="" />
@@ -99,8 +114,7 @@ onMounted(loadData)
       </van-tabs>
     </van-cell-group>
 
-    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
-      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+    <div v-if="conditions.length" class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -109,7 +123,7 @@ onMounted(loadData)
         size="medium"
         @close="removeCondition(c.uid)"
       >{{ condText(c) }}</van-tag>
-      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
     <van-list v-model:loading="loading" :finished="list.length >= total" @load="loadData" finished-text="没有更多了">
       <van-cell v-for="item in list" :key="item.id" is-link :to="`/wms/receipt-orders/${item.id}`" @click="toggleExpand(item.id)">

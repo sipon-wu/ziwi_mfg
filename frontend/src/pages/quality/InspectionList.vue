@@ -5,7 +5,7 @@ import { get } from '@/api/client'
 import { showToast } from 'vant'
 import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
-import SearchBar from '@/components/SearchBar.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
@@ -43,8 +43,12 @@ function onSearchSubmit(c: SearchCondition[]) {
   showSearch.value = false
 }
 function onResetSubmit() {
+  // 「重置」= 清全部条件（关键词 + 高级检索）并重新取第一页
   conditions.value = []
+  keyword.value = ''
   showSearch.value = false
+  resetPage()
+  loadData()
 }
 function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
@@ -75,12 +79,10 @@ async function loadData() {
   rawOrders.value = items as any[]
 }
 
-function onSearch(val: string) {
-  keyword.value = val
-  resetPage()
-  loadData()
-}
-
+/**
+ * 工具栏只 emit 无参的 search —— 关键词已由 v-model:keyword 同步，
+ * 这里不能再收 val 参数（否则 keyword 被覆盖成 undefined，搜索框清空但结果没变）。
+ */
 function onStatusChange() {
   resetPage()
   loadData()
@@ -137,7 +139,14 @@ onMounted(loadData)
       <van-cell title="待检验" :value="total" />
     </van-cell-group>
 
-    <SearchBar v-model:keyword="keyword" @search="onSearch" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索检验单号/工单号"
+      :loading="loading"
+      @search="onStatusChange"
+      @reset="onResetSubmit"
+      @advanced="showSearch = true"
+    />
 
     <!-- 扫码定位：扫检验单号或流转卡工单号直接跳到该单（现场在货架前用） -->
     <van-field
@@ -162,8 +171,7 @@ onMounted(loadData)
       >{{ opt.label }}</van-tag>
     </div>
 
-    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
-      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -172,7 +180,7 @@ onMounted(loadData)
         size="medium"
         @close="removeCondition(c.uid)"
       >{{ condText(c) }}</van-tag>
-      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
     <van-list v-model:loading="loading" :finished="!total || orders.length >= total" finished-text="没有更多了" @load="loadData">
       <van-cell v-for="item in orders" :key="item.id"

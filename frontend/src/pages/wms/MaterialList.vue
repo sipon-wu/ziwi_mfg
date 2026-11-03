@@ -5,6 +5,7 @@ import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 
 interface Material { id: number; code: string; name: string; spec: string; unit: string; material_type: string; material_category: string; is_batch_managed: boolean; is_active: boolean }
 
@@ -45,6 +46,8 @@ async function loadData() {
 }
 
 function onSearch() { page.value = 1; loadData() }
+/** 重置：清空关键词与类型筛选后回到第一页 */
+function onReset() { keyword.value = ''; materialType.value = ''; onSearch() }
 function openCreate() { editing.value = null; form.value = { code: '', name: '', spec: '', unit: '个', material_type: 'raw', material_category: '', is_batch_managed: false, is_active: true, min_stock_qty: 0, max_stock_qty: 0, safety_stock_qty: 0 }; showForm.value = true }
 function openEdit(item: Material) {
   editing.value = item
@@ -71,8 +74,19 @@ onMounted(loadData)
 
 <template>
   <div>
-    <van-nav-bar title="物料主数据" right-text="新增物料" @click-right="openCreate" />
-    <van-search v-model="keyword" placeholder="搜索编码/名称/规格" @search="onSearch" />
+    <van-nav-bar title="物料主数据" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索编码/名称/规格"
+      :loading="loading"
+      :show-advanced="false"
+      @search="onSearch"
+      @reset="onReset"
+    >
+      <template #actions>
+        <van-button type="success" @click="openCreate">新增物料</van-button>
+      </template>
+    </ZiwiListToolbar>
     <van-cell-group inset style="margin:8px">
       <van-radio-group v-model="materialType" direction="horizontal" @change="onSearch">
         <van-radio name="" style="margin-right:8px">全部</van-radio>

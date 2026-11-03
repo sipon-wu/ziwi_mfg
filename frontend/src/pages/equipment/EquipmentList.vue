@@ -19,6 +19,7 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import { TERM } from '@/config/term'
@@ -185,18 +186,23 @@ onMounted(fetchData)
 
 <template>
   <div class="equipment-list">
-    <van-nav-bar
-      :title="TERM.equipment"
-      right-text="新建"
-      @click-right="goCreate"
-    />
+    <van-nav-bar :title="TERM.equipment" />
 
-    <van-search
-      v-model="keyword"
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
       placeholder="搜索设备编码/名称"
+      :loading="loading"
       @search="onSearch"
-      @clear="onClearFilter"
-    />
+      @reset="onClearFilter"
+      @advanced="showSearch = true"
+    >
+      <template #actions>
+        <van-button icon="setting-o" @click="goMaintenanceTasks">
+          {{ TERM.maintenanceTask }}
+        </van-button>
+        <van-button type="success" @click="goCreate">新建设备</van-button>
+      </template>
+    </ZiwiListToolbar>
 
     <van-tabs
       :model-value="activeStatus"
@@ -211,13 +217,8 @@ onMounted(fetchData)
       />
     </van-tabs>
 
-    <div class="equipment-list__toolbar">
-      <van-button class="equipment-list__tool-btn" icon="filter-o" @click="showSearch = true">
-        高级检索
-      </van-button>
-      <van-button class="equipment-list__tool-btn" icon="setting-o" @click="goMaintenanceTasks">
-        {{ TERM.maintenanceTask }}
-      </van-button>
+    <!-- 高级检索条件回显：工具栏的「高级检索」入口在 ZiwiListToolbar 里 -->
+    <div v-if="conditions.length" class="equipment-list__conds">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -312,18 +313,12 @@ onMounted(fetchData)
   z-index: var(--ziwi-z-sticky);
 }
 
-.equipment-list__toolbar {
+.equipment-list__conds {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--ziwi-gap-sm);
-  padding: var(--ziwi-gap-sm) var(--ziwi-gap-lg);
-}
-
-.equipment-list__tool-btn {
-  /* 工具栏按钮不是行内小按钮，热区按令牌给满（UE-P0-02） */
-  min-height: var(--ziwi-touch-min);
-  font-size: var(--ziwi-font-size-lg);
+  padding: var(--ziwi-gap-sm) var(--ziwi-gap-lg) 0;
 }
 
 .equipment-list__meta {

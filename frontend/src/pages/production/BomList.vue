@@ -6,6 +6,7 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 
 interface BomItem {
   id: number
@@ -153,11 +154,29 @@ onMounted(loadData)
 
 <template>
   <div>
-    <van-nav-bar title="BOM管理" right-text="新增物料" @click-right="openCreate" />
+    <van-nav-bar title="BOM管理" />
 
-    <van-search v-model="productFilter" placeholder="搜索产品ID" @search="onSearch" />
+    <ZiwiListToolbar
+      v-model:keyword="productFilter"
+      placeholder="搜索产品ID"
+      :loading="loading"
+      :show-advanced="false"
+      @search="onSearch(productFilter)"
+      @reset="onSearch('')"
+    >
+      <template #actions>
+        <van-button type="success" @click="openCreate">新增物料</van-button>
+      </template>
+    </ZiwiListToolbar>
 
-    <van-list v-model:loading="loading" :finished="!total || list.length >= total" finished-text="没有更多了" @load="loadData">
+    <!--
+      这里不能用 van-list 驱动取数：本页是「一页表格」，没有分页控件，
+      loadData 每次拉的都是 page=1 并整体替换 list，list.length 永远不增长。
+      而 van-list 的 finished 判据是 list.length >= total —— total 大于 20 时
+      永远为 false，于是它每次渲染完就再 emit 一次 load，形成无限请求
+      （实测 6 秒 51 次 /boms）。三态交给 pageState + ZiwiStateView。
+    -->
+    <div>
       <div v-if="list.length" class="bom-table-wrap">
         <table class="bom-table">
           <thead>
@@ -196,7 +215,7 @@ onMounted(loadData)
           </tbody>
         </table>
       </div>
-    </van-list>
+    </div>
 
     <ZiwiStateView
       v-if="pageState !== 'ready'"

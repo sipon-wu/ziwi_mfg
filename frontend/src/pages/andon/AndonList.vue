@@ -9,7 +9,7 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import KpiCard from '@/components/KpiCard.vue'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
-import SearchBar from '@/components/SearchBar.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
@@ -62,8 +62,13 @@ function onSearchSubmit(c: SearchCondition[]) {
   showSearch.value = false
 }
 function onResetSubmit() {
+  // 「重置」= 清全部条件（关键词 + 高级检索）并重新取第一页。
+  // 只清 conditions 不清 keyword，会让输入框留着字但结果已变，读起来像没生效。
   conditions.value = []
+  keyword.value = ''
   showSearch.value = false
+  resetPage()
+  loadData()
 }
 function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
@@ -131,12 +136,6 @@ async function loadData() {
   rawCalls.value = items as AndonCall[]
 }
 
-function onSearch(val: string) {
-  keyword.value = val
-  resetPage()
-  loadData()
-}
-
 function onStatusChange() {
   resetPage()
   loadData()
@@ -160,10 +159,16 @@ onMounted(() => {
       <KpiCard title="今日已解决" :value="kpi.resolvedToday" color="#1D9E75" />
     </div>
 
-    <SearchBar v-model:keyword="keyword" @search="onSearch" />
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索安灯单号/设备/发起人"
+      :loading="loading"
+      @search="onStatusChange"
+      @reset="onResetSubmit"
+      @advanced="showSearch = true"
+    />
 
-    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
-      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -172,7 +177,7 @@ onMounted(() => {
         size="medium"
         @close="removeCondition(c.uid)"
       >{{ condText(c) }}</van-tag>
-      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
 
     <div style="display:flex; gap:8px; margin:12px 0; flex-wrap:wrap;">

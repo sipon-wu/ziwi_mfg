@@ -5,6 +5,7 @@ import { get } from '@/api/client'
 import type { WorkOrder, PaginatedResponse } from '@/types'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
+import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
@@ -32,8 +33,11 @@ function onSearchSubmit(c: SearchCondition[]) {
   showSearch.value = false
 }
 function onResetSubmit() {
+  // 「重置」= 清全部条件（关键词 + 高级检索）并重新取第一页
   conditions.value = []
+  keyword.value = ''
   showSearch.value = false
+  void fetch()
 }
 function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
@@ -69,10 +73,21 @@ function goCreate() { router.push('/work-orders/create') }
 
 <template>
   <div>
-    <van-nav-bar title="工单管理" right-text="新建" @click-right="goCreate" />
-    <van-search v-model="keyword" placeholder="搜索工单号/产品" @search="fetch" />
-    <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">
-      <van-button size="small" icon="filter-o" @click="showSearch = true">高级检索</van-button>
+    <van-nav-bar title="工单管理" />
+    <!-- 搜索栏：条件 → 输入 → 提交 → 清空 → 查询延伸 | 创建靠右 -->
+    <ZiwiListToolbar
+      v-model:keyword="keyword"
+      placeholder="搜索工单号/产品"
+      :loading="loading"
+      @search="fetch"
+      @reset="onResetSubmit"
+      @advanced="showSearch = true"
+    >
+      <template #actions>
+        <van-button type="success" @click="goCreate">新建工单</van-button>
+      </template>
+    </ZiwiListToolbar>
+    <div v-if="conditions.length" class="ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-py-2 ziwi-px-4">
       <van-tag
         v-for="c in conditions"
         :key="c.uid"
@@ -81,7 +96,7 @@ function goCreate() { router.push('/work-orders/create') }
         size="medium"
         @close="removeCondition(c.uid)"
       >{{ condText(c) }}</van-tag>
-      <van-button v-if="conditions.length" size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
+      <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
     <van-list v-model:loading="loading" :finished="orders.length >= total" @load="fetch">
       <van-cell v-for="item in orders" :key="item.id" @click="viewDetail(item.id)" is-link>

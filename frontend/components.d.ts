@@ -61,6 +61,7 @@ declare module 'vue' {
     ZiwiErrorSummary: typeof import('./src/components/ziwi/ZiwiErrorSummary.vue')['default']
     ZiwiFieldError: typeof import('./src/components/ziwi/ZiwiFieldError.vue')['default']
     ZiwiFormSheet: typeof import('./src/components/ziwi/ZiwiFormSheet.vue')['default']
+    ZiwiListToolbar: typeof import('./src/components/ziwi/ZiwiListToolbar.vue')['default']
     ZiwiPrintButton: typeof import('./src/components/ziwi/ZiwiPrintButton.vue')['default']
     ZiwiQtyField: typeof import('./src/components/ziwi/ZiwiQtyField.vue')['default']
     ZiwiReceipt: typeof import('./src/components/ziwi/ZiwiReceipt.vue')['default']
