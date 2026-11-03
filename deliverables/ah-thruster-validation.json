@@ -1,10 +1,10 @@
 {
   "api": "https://mfg1.ziwi.cn/api/v1",
-  "tenant_id": "t_5436c733aa1e",
+  "tenant_id": "t_af6dfe17d206",
   "date": "2026-11-03",
   "summary": {
     "PASS": 13,
-    "BOUNDARY": 3,
+    "BOUNDARY": 1,
     "GAP": 1
   },
   "assertions": [
@@ -13,13 +13,13 @@
       "name": "组织树 3 层且父子正确",
       "status": "PASS",
       "detail": "节点 12 个，最大层级 3，AH-MFG-ST.parent=AH-MFG ✓",
-      "evidence": "{\"AH\": 1, \"AH-MFG\": 2, \"AH-MFG-AS\": 3, \"AH-MFG-PK\": 3, \"AH-MFG-ST\": 3, \"AH-MFG-RT\": 3, \"AH-QA\": 2, \"AH-QA-IQC\": 3, \"AH-QA-IPQC\": 3, \"AH-EQP\": 2, \"AH-EQP-MT\": 3, \"AH-WH\": 2}"
+      "evidence": "{\"AH\": 1, \"AH-MFG\": 2, \"AH-MFG-ST\": 3, \"AH-MFG-RT\": 3, \"AH-MFG-AS\": 3, \"AH-MFG-PK\": 3, \"AH-QA\": 2, \"AH-QA-IQC\": 3, \"AH-QA-IPQC\": 3, \"AH-EQP\": 2, \"AH-EQP-MT\": 3, \"AH-WH\": 2}"
     },
     {
       "code": "V2",
       "name": "路线 RTE-AH-STATOR 步骤与工艺表一致",
       "status": "PASS",
-      "detail": "13/13 步，seq 连续✓，状态 published",
+      "detail": "14/14 步，seq 连续✓，状态 published",
       "evidence": ""
     },
     {
@@ -33,56 +33,42 @@
       "code": "V2",
       "name": "路线 RTE-AH-UNIT 步骤与工艺表一致",
       "status": "PASS",
-      "detail": "19/19 步，seq 连续✓，状态 published",
+      "detail": "21/21 步，seq 连续✓，状态 published",
       "evidence": ""
     },
     {
       "code": "V3",
       "name": "新建工单能绑定工艺路线且与产品匹配",
       "status": "PASS",
-      "detail": "10 张工单：带路线 3 张，路线错配 0 张，路线为空 7 张",
+      "detail": "10 张工单：带路线 10 张，路线错配 0 张，路线为空 0 张",
       "evidence": ""
-    },
-    {
-      "code": "B-4",
-      "name": "改单接口能否补挂工艺路线",
-      "status": "PASS",
-      "detail": "PUT work-orders/{id} route_id=168 → HTTP 200，回读 route_id=168",
-      "evidence": "修复已验证：UpdateWorkOrderRequest 原先缺 route_id → 字段被 Pydantic 丢弃 → data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500；补字段 + 空 payload 返回 400 后已部署 staging，存量工单可在线补挂路线"
-    },
-    {
-      "code": "V3-note",
-      "name": "存量工单路线空缺的来源",
-      "status": "BOUNDARY",
-      "detail": "7 张工单 route_id 为空：['WO-AH-1103-UN1', 'WO-AH-1103-RT3', 'WO-AH-1103-RT2', 'WO-AH-1103-RT1']",
-      "evidence": "断点续跑（--from p4，id 表为空）时建单，route_id 传了 None；历史空值不随改单接口修复自动补齐，仍需逐张 PUT 回填"
     },
     {
       "code": "V4",
       "name": "收货按「收货→上架」两条腿过账且库存不翻倍",
       "status": "PASS",
-      "detail": "7 行 → receipt 7 / transfer 7；库存 4448.25 == 收货 4570 - 发料 121.75 = 4448.25（✓ 未翻倍）；方向 NULL→待检 ✓ / 待检→库位 ✓",
+      "detail": "7 行 → receipt 7 / transfer 7；库存 4468.25 == 收货 4570 - 发料 101.75 = 4468.25（✓ 未翻倍）；方向 NULL→待检 ✓ / 待检→库位 ✓",
       "evidence": ""
     },
     {
       "code": "V5",
       "name": "发料出库为负向净变动",
       "status": "PASS",
-      "detail": "4 张发料单 / 42 条 issue 流水，负数 42 条，正数 0 条",
+      "detail": "4 张发料单 / 30 条 issue 流水，负数 30 条，正数 0 条",
       "evidence": ""
     },
     {
       "code": "V6",
       "name": "Σ 报工产出 == 工单完成量",
       "status": "PASS",
-      "detail": "396 条报工覆盖 7 张工单，不一致 0 张",
+      "detail": "61 条报工覆盖 7 张工单，不一致 0 张",
       "evidence": ""
     },
     {
       "code": "B-1",
       "name": "工单完成量按「所有工序产出」累加",
       "status": "BOUNDARY",
-      "detail": "7 张在制工单 completed_qty > 计划量：['WO-AH-1103-UN2 915/15', 'WO-AH-1103-UN1 30/15', 'WO-AH-1103-RT2 1080/30']",
+      "detail": "4 张在制工单 completed_qty > 计划量：['WO-AH-1103-UN2 150/15', 'WO-AH-1103-RT2 150/30', 'WO-AH-1103-ST3 180/30']",
       "evidence": "completed_qty += output_qty 是累计口径，平台没有「工序级产出」与「工单级产出」的区分；30 工序场景下工单完成量会变成 n×计划量，完工判定与超产告警失真"
     },
     {
@@ -90,14 +76,14 @@
       "name": "检验判 NG 能触发 NCR 且挂回来源",
       "status": "PASS",
       "detail": "2 张 NCR，有来源 2 张，挂工单 1 张",
-      "evidence": "[{\"ncr_no\": \"NCR-AH-2-1103\", \"source_type\": \"ipqc\", \"source_no\": \"WO-AH-1103-UN1\", \"work_order_id\": 1060, \"defect_qty\": 2.0}, {\"ncr_no\": \"NCR-AH-1-1103\", \"source_type\": \"iqc\", \"source_no\": \"RO-AH-3-1103\", \"work_order_id\": null, \"defect_qty\": 16.0}]"
+      "evidence": "[{\"ncr_no\": \"NCR-AH-2-1103\", \"source_type\": \"ipqc\", \"source_no\": \"WO-AH-1103-UN1\", \"work_order_id\": 7, \"defect_qty\": 2.0}, {\"ncr_no\": \"NCR-AH-1-1103\", \"source_type\": \"iqc\", \"source_no\": \"RO-AH-3-1103\", \"work_order_id\": null, \"defect_qty\": 16.0}]"
     },
     {
       "code": "B-2",
-      "name": "检验判 REJ 是否自动开 NCR",
-      "status": "BOUNDARY",
-      "detail": "本次 NCR 由造数显式创建并与检验单/工单对齐；平台未见「judge=REJ → 自动建 NCR」的联动端点",
-      "evidence": "需要现场确认：不合格单是由检验员手工开，还是系统自动开"
+      "name": "检验判 NG / 报工报废 是否自动开 NCR",
+      "status": "PASS",
+      "detail": "系统自动生成 2 张：检验来源 1 张（NC-QC-20261103-0002）、报工报废来源 1 张（NC-WR2）；全部挂回来源单号",
+      "evidence": "[{\"ncr_no\": \"NC-QC-20261103-0002\", \"source_type\": \"ipqc\", \"source_no\": \"QC-20261103-0002\", \"work_order_id\": 7, \"defect_desc\": \"检验单 QC-20261103-0002 判定不合格（REJ），自动发起不合格评审\"}, {\"ncr_no\": \"NC-WR2\", \"source_type\": \"process\", \"source_no\": \"WO-AH-1103-ST2\", \"work_order_id\": 2, \"defect_desc\": \"工单 WO-AH-1103-ST2 报工报废 2 件；原因：漆包线绝缘层划伤\"}]"
     },
     {
       "code": "V8",
@@ -124,7 +110,7 @@
       "code": "V10",
       "name": "保养计划能生成到期任务且幂等",
       "status": "PASS",
-      "detail": "3 个计划 / 5 张任务 / 已完成 3 张；重跑 generate-due → created=0（0 即幂等）",
+      "detail": "3 个计划 / 4 张任务 / 已完成 2 张；重跑 generate-due → created=0（0 即幂等）",
       "evidence": "HTTP 200"
     }
   ],
@@ -153,7 +139,7 @@
     },
     {
       "system": "WMS 仓储",
-      "count": 83,
+      "count": 71,
       "note": "收货两腿 / 发料负向 / 盘点差异均通",
       "verdict": "PASS",
       "codes": [
@@ -163,7 +149,7 @@
     },
     {
       "system": "TPM 设备保养",
-      "count": 5,
+      "count": 4,
       "note": "计划→到期任务→点检→完工通",
       "verdict": "PASS",
       "codes": [

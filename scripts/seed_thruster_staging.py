@@ -418,6 +418,13 @@ OPERATIONS = [
     ("CW010", "槽绝缘插入", "machining", 5, 3, "WC-AH-CW010"),
     ("CW020", "定子绕线", "machining", 10, 20, "WC-AH-CW020"),
     ("CW030", "定子打磨", "machining", 5, 8, "WC-AH-CW030"),
+    # ★补齐源表 §3.3 序号 4「定子电检（第一次）」：方案书明确它是独立工序
+    #   （PLC+电检设备，采绝缘/耐压/匝间/电阻/平衡），工艺表里 5b 写的是
+    #   「定子电检（二次）」—— 有"二次"就必然有一次。原造数只建了二次，
+    #   于是定子线少一道关键 QC，且 4.1% 的标准回填率里又少一个可以挂标准的点。
+    #   码取 CW035：介于 CW030 打磨与 CW040 灌胶之间，不占用已分配给
+    #   「刮铜线绝缘层」的 CW050-1。
+    ("CW035", "定子电检（第一次）", "process_qc", 5, 25, "WC-AH-CW035"),
     ("CW040", "定子灌胶", "heat_treat", 10, 60, "WC-AH-CW040"),
     ("CW040-1", "胶水预热", "heat_treat", 5, 40, "WC-AH-CW040"),
     ("CW040-2", "胶水混合抽真空", "heat_treat", 5, 20, "WC-AH-CW040"),
@@ -446,6 +453,9 @@ OPERATIONS = [
     ("FA040", "接插件装配", "assembly", 5, 8, "WC-AH-FA040"),
     ("FA020", "PCB锁附及接引出线", "assembly", 5, 12, "WC-AH-FA020"),
     ("FA030", "下载PCB程序", "assembly", 0, 5, "WC-AH-FA030"),
+    # ★补齐源表 §3.3 序号 22a「程序测试」：测试工装，API 接口读取测试数据包。
+    #   原造数漏建 —— 下载完程序不测就装整机，等于把烧录错误留到最后一道 EOL 才发现。
+    ("FA035", "程序测试", "process_qc", 0, 8, "WC-AH-FA035"),
     ("FA070", "PCB灌胶", "heat_treat", 5, 45, "WC-AH-FA070"),
     ("FA080", "堵头安装", "assembly", 0, 5, "WC-AH-FA080"),
     ("MA080", "线外测试-壳体气密", "process_qc", 5, 10, "WC-AH-MA080"),
@@ -454,6 +464,9 @@ OPERATIONS = [
     ("FA1000", "固定架组装", "assembly", 5, 10, "WC-AH-FA1000"),
     ("EL010", "EOL电性能测试", "final_qc", 10, 20, "WC-AH-EL010"),
     ("EL020", "跑合/振动噪声测试", "final_qc", 5, 30, "WC-AH-EL020"),
+    # ★补齐源表 §3.3 序号 29「老化测试」：高低温箱，采循环次数与温度曲线。
+    #   原造数漏建 —— 这是入库前最后一道可靠性筛，漏掉它 EL 段只有 2 道。
+    ("EL030", "老化测试", "final_qc", 10, 240, "WC-AH-EL030"),
     ("CW190", "入库终检与包装", "final_qc", 0, 10, "WC-AH-CW190"),
 ]
 
@@ -487,6 +500,9 @@ WORK_CENTERS = [
     ("WC-AH-FA1000", "固定架组装工位", "assembly"),
     ("WC-AH-EL010", "EOL台架", "quality"),
     ("WC-AH-EL020", "跑合/振动噪声台架", "quality"),
+    ("WC-AH-CW035", "定子一次电检工位", "quality"),
+    ("WC-AH-FA035", "程序测试工位", "quality"),
+    ("WC-AH-EL030", "老化测试工位", "quality"),
     ("WC-AH-CW190", "终检包装工位", "quality"),
 ]
 
@@ -495,9 +511,76 @@ ROUTES = [
     ("RTE-AH-ROTOR", "转子生产路线", [c for c, *_ in OPERATIONS if c.startswith("RT")]),
     ("RTE-AH-UNIT", "推进器整机总装路线",
      ["MA020", "MA030", "MA035", "MA040", "MA050", "MA060", "MA070",
-      "FA040", "FA020", "FA030", "FA070", "FA080",
-      "MA080", "MA090", "FA090", "FA1000", "EL010", "EL020", "CW190"]),
+      "FA040", "FA020", "FA030", "FA035", "FA070", "FA080",
+      "MA080", "MA090", "FA090", "FA1000", "EL010", "EL020", "EL030", "CW190"]),
 ]
+
+# ── 工序采集要求：逐行照抄方案书 §3.3「工序与采集设备对照总表」──────────
+# 结构：code -> (采集设备, 核心采集数据, 采集方式)
+#
+# ★这张表是补齐项。原来的造数只写了工序名与工时，`equip_req`/`sop_refs`
+#   两个 JSON 字段一个都没填 —— 于是平台上的工序等于只有"名字 + 时长"，
+#   既不知道这道工序该采什么参数，也不知道是人填还是设备自动传。
+#   源表里这一列恰恰是艾华最在意的部分（他们要的是参数级追溯，不是打卡）。
+#   `CW040` 是合成的父码（挂 4a–4f 六个子步），源表无对应行，故不在此表内。
+COLLECT_SPEC = {
+    "CW010":   ("槽绝缘折纸机", "完成标志", "人工确认"),
+    "CW020":   ("人工", "拉力数据", "人工录入"),
+    "CW030":   ("人工", "完成标志", "人工确认"),
+    "CW035":   ("PLC+电检设备", "绝缘/耐压/匝间/电阻/平衡", "PLC自动采集"),
+    "CW040-1": ("1号烤箱", "预热温度、时间", "手工记录+计时器"),
+    "CW040-2": ("真空机1", "真空度、时间", "设备自动"),
+    "CW040-3": ("人工+量杯", "灌胶量", "人工录入"),
+    "CW040-4": ("真空机2", "真空度、时间", "设备自动"),
+    "CW040-5": ("2号烤箱", "固化温度曲线、时间", "设备自动"),
+    "CW040-6": ("人工", "冷却时间", "人工录入"),
+    "CW050-1": ("打磨机（1号）", "完成标志", "人工确认"),
+    "CW050-2": ("2号电检设备", "绝缘/耐压/匝间/电阻/平衡", "设备自动"),
+    "CW060":   ("高周波加热设备", "加热温度、保温时间", "设备自动"),
+    "RT010":   ("伺服压机", "力-位移全程曲线", "设备自动"),
+    "RT020":   ("点胶机+高斯计", "点胶量、高斯值", "设备自动"),
+    "RT030":   ("伺服压机", "力-位移全程曲线", "设备自动"),
+    "RT040-1": ("动平衡测量机", "不平衡量(g·mm)", "设备自动"),
+    "RT040-2": ("台钻", "修正次数、修正量", "人工录入"),
+    "RT050-1": ("伺服压机（上轴承工位）", "力-位移全程曲线", "设备自动"),
+    "RT050-2": ("伺服压机（下轴承工位）", "力-位移全程曲线", "设备自动"),
+    "RT060":   ("塞规+高度计", "位置度、高度值", "人工录入"),
+    "MA020":   ("伺服压机", "力-位移全程曲线", "设备自动"),
+    "MA030":   ("伺服压机", "力-位移全程曲线", "设备自动"),
+    "MA035":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "MA040":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "MA050":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "MA060":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "MA070":   ("电阻焊机", "焊接电流、时间", "设备自动"),
+    "FA040":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "FA020":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "FA030":   ("程序下载器", "程序版本号", "人工录入"),
+    "FA035":   ("测试工装", "测试数据包", "API接口读取"),
+    "FA070":   ("量杯+3号烤箱", "灌胶量、固化曲线", "人工录入+设备自动"),
+    "FA080":   ("定扭螺丝枪", "扭矩+角度曲线", "设备自动"),
+    "MA080":   ("气密检测仪", "泄漏量(ml/min)、压力降", "设备自动"),
+    "MA090":   ("气密检测仪", "泄漏量(ml/min)、压力降", "设备自动"),
+    "FA090":   ("注油机+秤", "注油量(g/ml)", "设备自动"),
+    "FA1000":  ("定扭螺丝枪+人工", "扭矩曲线、贴标完成", "设备自动+人工确认"),
+    "EL010":   ("EOL台架", "电压/电流/功率/扭矩/霍尔/转向", "设备自动"),
+    "EL020":   ("测试台架", "振动值(m/s²)、噪声值(dB(A))", "设备自动"),
+    "EL030":   ("高低温箱", "循环次数、温度曲线", "设备自动"),
+    "CW190":   ("人工", "终检结果、入库时间", "人工确认"),
+}
+
+# ── 赋码节点：方案书 §2 追溯层级表 ────────────────────────────────
+# 三级码：定子 TD / 转子 TZ / 成品 TC，各自在第一道相关工序赋码并开始绑定。
+#
+# ★平台现状：没有序列号实体表，`operations` 也没有赋码字段。
+#   所以这三个节点只能写进工序 `remark` 作为可查的业务约定，
+#   **不能**真的产出可扫描、可绑定的码 —— 这是 G1 缺口的直接体现，
+#   不是造数偷懒。要真正落地需要新增序列号模型 + 赋码/绑定端点。
+MARKING_NODES = {
+    "CW010": "赋码节点：定子码 TD-YYYYMMDD-流水号，粘贴后扫码绑定该定子开始生产",
+    "RT010": "赋码节点：转子码 TZ-YYYYMMDD-流水号，粘贴后扫码绑定该转子开始生产",
+    "MA020": "赋码节点：成品码 TC-YYYYMMDD-流水号；扫定子码 + 扫转子码 + 贴成品码，完成三码绑定",
+}
+
 
 PRODUCTS = [
     ("SP-AH-STATOR", "定子总成", "PRO-120 定子", "件", "semi"),
@@ -573,12 +656,26 @@ def phase_p2(ctx: Ctx):
     ok("工作中心", f"{len(ctx.ids.get('wc', {}))} 个")
 
     for code, name, op_type, st, ut, wc in OPERATIONS:
-        oid = ensure(ctx, "op", code, f"{API}/operations", f"{API}/operations",
-                     {"code": code, "name": name, "op_type": op_type,
-                      "setup_time": st, "unit_time": ut, "is_active": True})
+        # 采集要求必须落库：equip_req 是 JSON 列，按方案书 §3.3 的原话填，
+        # 不加工、不改写。capability 放「核心采集数据」，collect_method 放
+        # 「采集方式」——多出的这个键是刻意保留的原始维度，别合并进 capability，
+        # 否则"采什么"和"怎么采"混成一团，前端没法分列展示。
+        spec = COLLECT_SPEC.get(code)
+        equip_req = json.dumps(
+            [{"equip_type": spec[0], "capability": spec[1],
+              "count": 1, "collect_method": spec[2]}],
+            ensure_ascii=False) if spec else None
+        remark = MARKING_NODES.get(code)
+        payload = {"code": code, "name": name, "op_type": op_type,
+                   "setup_time": st, "unit_time": ut, "is_active": True}
+        if equip_req:
+            payload["equip_req"] = equip_req
+        if remark:
+            payload["remark"] = remark
+        oid = ensure(ctx, "op", code, f"{API}/operations", f"{API}/operations", payload)
         if oid:
             ctx.note("op", code, oid)
-    ok("工序", f"{len(ctx.ids.get('op', {}))} 个（含子工序）")
+    ok("工序", f"{len(ctx.ids.get('op', {}))} 个（含子工序，含采集要求）")
 
     for code, name, spec, unit, ptype in PRODUCTS:
         pid = ensure(ctx, "product", code, f"{API}/products", f"{API}/products",
@@ -1396,11 +1493,21 @@ def p4e_inspections(ctx):
         items, _ = list_pages(ctx.c, f"{API}/inspection-items", {"standard_id": sid})
         entries = []
         for k, it in enumerate(items[:3]):
+            lo = it.get("spec_lower_limit")
             up = it.get("spec_upper_limit")
             if res == "REJ" and k == 0 and up is not None:
                 val = float(up) * 1.6           # 超上限 → 自动判 FAIL
+            elif lo is not None and up is not None:
+                # ★必须取区间中点。原写法一律 ``upper * 0.8``，遇到「耐压时间
+                #   lower=60 upper=60」这种单点规格时算出 48 —— 比下限还低，
+                #   直接被判不合格，接着 AQL 的 Ac=0 拒绝判合格，报
+                #   「已录入 3 条检验结果，其中不合格 1 项，超过允收数」。
+                #   看着像判定接口的缺陷，其实是造数自己把检验单做成了 NG。
+                val = (float(lo) + float(up)) / 2
             elif up is not None:
                 val = float(up) * 0.8
+            elif lo is not None:
+                val = float(lo) * 1.2
             else:
                 val = None
             entries.append({"item_id": it.get("id"), "item_name": it.get("item_name"),

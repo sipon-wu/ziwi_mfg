@@ -33,7 +33,26 @@ OUT_JSON = ROOT / "deliverables" / "ah-thruster-validation.json"
 OUT_MD = ROOT / "deliverables" / ("A推进器厂-staging场景验证-%s.md" % date.today().isoformat())
 
 API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
-TID = os.environ.get("TENANT_ID", "t_5436c733aa1e")
+
+
+def _resolve_tid() -> str:
+    """租户 id 优先取环境变量，其次取造数脚本落盘的上下文。
+
+    ★不能写死。staging 清库重建后租户 id 由服务端重新生成
+      （t_5436c733aa1e → t_5d64a833d4bc），写死会拿着旧 id 去打一套空数据，
+      每条断言都"查无此项"，看起来像场景全崩。
+    """
+    tid = os.environ.get("TENANT_ID")
+    if tid:
+        return tid
+    try:
+        with open(CTX_FILE, encoding="utf-8") as f:
+            return json.load(f).get("tenant_id") or "t_5436c733aa1e"
+    except Exception:
+        return "t_5436c733aa1e"
+
+
+TID = _resolve_tid()
 ADMIN_USER = os.environ.get("ADMIN_USER", "ah_admin")
 ADMIN_PWD = os.environ.get("ADMIN_PWD", "Ah@2026seed")
 
@@ -149,7 +168,72 @@ def v1_orgs(c):
 # ── V2 路线步骤 ─────────────────────────────────────────────────
 
 
-ROUTE_EXPECT = {"RTE-AH-STATOR": 13, "RTE-AH-ROTOR": 8, "RTE-AH-UNIT": 19}
+# ── 期望步数：由「方案书 §3.3 工序与采集设备对照总表」逐行数出来 ──────
+# 42 行，逐行抄录（序号 + 工序名 + 归属路线）。
+#
+# ★原先是 `{"STATOR": 13, "ROTOR": 8, "UNIT": 19}` 三个写死的数字。
+#   本轮按源表补齐 3 道漏建工序（定子电检第一次 / 程序测试 / 老化测试）后，
+#   实际变成 14/8/21，而常量没跟着变 —— V2 立刻报红，且报的是
+#   「14/13 步，seq 连续✗」，看起来像路线建错了或步骤跳号，
+#   实际数据完全正确。这正是"把结论当常量写进产物"的第三例：
+#   断言不测量事实，只测量"我以为的事实"。
+#   改为从这张清单数：漏建一道、多建一道，步数自然对不上，且能一眼看出差在哪。
+SOURCE_OPS = [
+    ("1",   "CW010 槽绝缘插入", "STATOR"),
+    ("2",   "CW020 定子绕线", "STATOR"),
+    ("3",   "定子打磨", "STATOR"),
+    ("4",   "定子电检（第一次）", "STATOR"),
+    ("4a",  "胶水预热", "STATOR"),
+    ("4b",  "胶水混合抽真空", "STATOR"),
+    ("4c",  "定子灌胶", "STATOR"),
+    ("4d",  "定子抽真空", "STATOR"),
+    ("4e",  "固化", "STATOR"),
+    ("4f",  "冷却拆治具", "STATOR"),
+    ("5a",  "刮铜线绝缘层", "STATOR"),
+    ("5b",  "定子电检（第二次）", "STATOR"),
+    ("6",   "定子热套", "STATOR"),
+    ("7",   "RT010 保持架压装", "ROTOR"),
+    ("8",   "RT020 磁钢贴装", "ROTOR"),
+    ("9",   "RT030 平衡端板压装", "ROTOR"),
+    ("10a", "动平衡测量", "ROTOR"),
+    ("10b", "动平衡修正", "ROTOR"),
+    ("11a", "上轴承压入", "ROTOR"),
+    ("11b", "下轴承压入", "ROTOR"),
+    ("12",  "轴承端盖插入", "ROTOR"),
+    ("13",  "MA020 合装", "UNIT"),
+    ("14",  "MA030 油封安装", "UNIT"),
+    ("15",  "MA035 支架组装", "UNIT"),
+    ("16",  "MA040 静叶组件组装", "UNIT"),
+    ("17",  "MA050 桨叶组装", "UNIT"),
+    ("18",  "MA060 静叶组装", "UNIT"),
+    ("19",  "三相段子焊接", "UNIT"),
+    ("20",  "接插件装配", "UNIT"),
+    ("21",  "PCB锁附", "UNIT"),
+    ("22",  "下载PCB程序", "UNIT"),
+    ("22a", "程序测试", "UNIT"),
+    ("23a", "PCB灌胶", "UNIT"),
+    ("24",  "堵头安装", "UNIT"),
+    ("25a", "壳体气密", "UNIT"),
+    ("25b", "冷却回路气密", "UNIT"),
+    ("26a", "注油", "UNIT"),
+    ("27",  "固定架组装+贴标", "UNIT"),
+    ("28a", "EOL测试", "UNIT"),
+    ("28b", "跑合/振动噪声", "UNIT"),
+    ("29",  "老化测试", "UNIT"),
+    ("30",  "入库", "UNIT"),
+]
+
+# 平台在定子线多挂一个合成父码 CW040「定子灌胶」，用来把 4a–4f 六个子步收在
+# 同一道工序下；源表没有这一行。所以定子线真值 = 源表 13 行 + 1 个合成码。
+SYNTHETIC_STEPS = {"STATOR": 1}
+
+
+def _route_expect() -> dict:
+    cnt = Counter(b for _, _, b in SOURCE_OPS)
+    return {f"RTE-AH-{k}": cnt[k] + SYNTHETIC_STEPS.get(k, 0) for k in cnt}
+
+
+ROUTE_EXPECT = _route_expect()
 
 
 def v2_routes(c):
@@ -163,10 +247,13 @@ def v2_routes(c):
         steps = pages(c, f"{API}/routes/{rt['id']}/steps")
         seqs = sorted(int(s.get("step_seq") or 0) for s in steps)
         got[code] = (len(steps), rt.get("status"))
-        ok = (len(steps) == want and seqs == list(range(1, want + 1))
-              and rt.get("status") == "published")
+        # seq 连续只跟「步骤自身编号」有关，必须与期望步数解耦。
+        # 原先把 want 当上界，结果是"步数不符"和"编号跳号"两种完全不同的
+        # 故障报同一句话，看日志的人分不清该查哪边。
+        seq_ok = seqs == list(range(1, len(steps) + 1))
+        ok = len(steps) == want and seq_ok and rt.get("status") == "published"
         add("V2", f"路线 {code} 步骤与工艺表一致", "PASS" if ok else "FAIL",
-            f"{len(steps)}/{want} 步，seq 连续{'✓' if seqs == list(range(1, want + 1)) else '✗'}，"
+            f"{len(steps)}/{want} 步，seq 连续{'✓' if seq_ok else f'✗ {seqs}'}，"
             f"状态 {rt.get('status')}")
     return got
 
@@ -384,11 +471,31 @@ def v7_ncr(c):
                                            "work_order_id", "defect_qty")}
                     for n in ncrs], ensure_ascii=False, default=str))
 
-    # 自动开单能力：判定 REJ 是否真的会自动建 NCR（本次造数是手动开的，必须说清）
-    add("B-2", "检验判 REJ 是否自动开 NCR", "BOUNDARY",
-        "本次 NCR 由造数显式创建并与检验单/工单对齐；"
-        "平台未见「judge=REJ → 自动建 NCR」的联动端点",
-        "需要现场确认：不合格单是由检验员手工开，还是系统自动开")
+    # ── 联动能力：判定 REJ / 报工报废 是否真的会自动建 NCR ──
+    # ★这条断言上一版判错了。旧造数先手工建了两张 NCR-AH-*，把系统自动生成
+    #   的 NC-QC-* / NC-WR* 盖住了，于是当时得出"平台未见 judge=REJ → 自动建
+    #   NCR 的联动端点"。清库重建、数据干净之后才看见：
+    #     NC-QC-20261103-0002  source_type=ipqc  source_no=检验单号
+    #                          defect_desc="…判定不合格（REJ），自动发起不合格评审"
+    #     NC-WR2               source_type=process source_no=工单号
+    #                          defect_desc="…报工报废 2 件；原因：…"
+    #   即「检验判 NG」与「报工报废」两条都会自动开 NCR。原先的结论是
+    #   **造数遮住了被测能力**造成的假缺口，比假绿更难发现：它让团队去开发
+    #   一个已经存在的功能。断言改为按单号前缀识别系统自动生成的那一类。
+    auto = [n for n in pages(c, f"{API}/ncr")
+            if str(n.get("ncr_no") or "").startswith(("NC-QC", "NC-WR"))]
+    auto_from_qc = [n for n in auto if n.get("source_type") in ("iqc", "ipqc", "fqc")]
+    auto_from_wr = [n for n in auto if n.get("source_type") == "process"]
+    ok_auto = bool(auto_from_qc) and all(n.get("source_no") for n in auto)
+    add("B-2", "检验判 NG / 报工报废 是否自动开 NCR", "PASS" if ok_auto else "BOUNDARY",
+        f"系统自动生成 {len(auto)} 张：检验来源 {len(auto_from_qc)} 张"
+        f"（{', '.join(str(n.get('ncr_no')) for n in auto_from_qc) or '无'}）、"
+        f"报工报废来源 {len(auto_from_wr)} 张"
+        f"（{', '.join(str(n.get('ncr_no')) for n in auto_from_wr) or '无'}）；"
+        f"全部挂回来源单号",
+        json.dumps([{k: n.get(k) for k in ("ncr_no", "source_type", "source_no",
+                                           "work_order_id", "defect_desc")}
+                    for n in auto], ensure_ascii=False, default=str))
 
 
 # ── V8 Andon ────────────────────────────────────────────────────
