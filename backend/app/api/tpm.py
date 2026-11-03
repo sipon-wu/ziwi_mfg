@@ -13,6 +13,7 @@ from app.schemas.tpm import (
     CreateMaintenanceTaskRequest,
     CreateMaintenancePlanRequest,
     CreateSparePartRequest,
+    UpdateSparePartRequest,
     ConsumeSparePartRequest,
     UpdateDowntimeRequest,
     SubmitChecklistRequest,
@@ -391,11 +392,16 @@ async def create_spare_part(
 
 @router.put("/spare-parts/{part_id}")
 async def update_spare_part(
-    part_id: int, req: CreateSparePartRequest,
+    part_id: int, req: UpdateSparePartRequest,
     repo: TpmRepository = Depends(get_tenant_repo(TpmRepository, require_auth=True)),
 ):
     svc = TpmService(repo)
-    result = await svc.update_spare_part(part_id, req.model_dump(exclude_unset=True))
+    data = req.model_dump(exclude_unset=True)
+    if not data:
+        # 空载荷 → `_build_set_clause({})` 会拼出 `SET  WHERE` → 500。
+        # 与 /material-substitutes/{id} 的既有约定一致：无变更回 200。
+        return {"code": 0, "message": "无变更"}
+    result = await svc.update_spare_part(part_id, data)
     return {"code": 0, "message": "更新成功", "data": result}
 
 

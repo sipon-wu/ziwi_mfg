@@ -158,6 +158,25 @@ class CreateSparePartRequest(BaseModel):
     location: Optional[str] = None
 
 
+class UpdateSparePartRequest(BaseModel):
+    """备件部分更新。
+
+    ★不能复用 Create：``PUT /spare-parts/{id}`` 原先直接拿 ``CreateSparePartRequest``
+    当请求体，而它的 ``part_code`` / ``part_name`` 是必填 —— 备件台账页上
+    「只把安全库存从 5 改成 8」的提交会被 Pydantic 挡成 422
+    （``missing part_code``），也就是**改一个字段必须把整条记录回传**，
+    前端只要少拼一个字段就改不动，还看不出为什么。
+    """
+
+    part_code: Optional[str] = None
+    part_name: Optional[str] = None
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    current_stock: Optional[int] = None
+    min_stock: Optional[int] = None
+    location: Optional[str] = None
+
+
 class ConsumeSparePartRequest(BaseModel):
     """备件领用（场景 F-S5）。
 

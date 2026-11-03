@@ -97,6 +97,15 @@ DEFAULT_PROBES = [
     # schema 只给 report_type/period → 报表模块从来没有过一行数据）
     # 与「空 body 的 PUT 500」（主数据编辑页"什么都没改点保存"就报错）。
     "quality_master_e2e",
+    # M15 实验室：检验标准库 CRUD / 校准记录 / 委托状态回退（assigned → received）。
+    # 这一格**没有打出缺陷**——不是没查，是确实通。委托主流程早有探针覆盖，
+    # 缺的只是"退回去"和"量具台账"这两块。
+    "lab_master_e2e",
+    # 各模块主数据尾巴（M00 产品/日历/路线归档 · M01 日报+工单动作 ·
+    # M05 安灯升级 · M06 分类/扫码/任务状态/备件 · M11 能源设备）。
+    # 打出 3 条真缺陷，全是"改不动"：仓储层缺方法导致 500、
+    # 两处 PUT 复用 Create schema 导致"只改一个字段"被 422 挡掉。
+    "module_tails_e2e",
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL

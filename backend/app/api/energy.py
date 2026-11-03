@@ -3,6 +3,7 @@ from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.energy_repo import EnergyRepository
 from app.schemas.energy import (
     CreateEnergyDeviceRequest,
+    UpdateEnergyDeviceRequest,
     CreateEnergyAlertRequest,
     UpdateAlertStatusRequest,
     CreateEnergyThresholdRequest,
@@ -54,10 +55,13 @@ async def get_device(
 
 @router.put("/devices/{device_id}")
 async def update_device(
-    device_id: int, req: CreateEnergyDeviceRequest,
+    device_id: int, req: UpdateEnergyDeviceRequest,
     repo: EnergyRepository = Depends(get_tenant_repo(EnergyRepository)),
 ):
-    affected = await repo.update_device(device_id, req.model_dump(exclude_unset=True))
+    data = req.model_dump(exclude_unset=True)
+    if not data:
+        return {"code": 0, "message": "无变更"}
+    affected = await repo.update_device(device_id, data)
     if affected == 0:
         raise HTTPException(404, detail={"code": "404-0000", "message": "能源设备不存在"})
     return {"code": 0, "message": "更新成功"}

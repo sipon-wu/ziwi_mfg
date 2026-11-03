@@ -34,6 +34,25 @@ class CreateEnergyDeviceRequest(BaseModel):
     remark: Optional[str] = None
 
 
+class UpdateEnergyDeviceRequest(BaseModel):
+    """能源设备部分更新。
+
+    ★不能复用 Create：``PUT /energy/devices/{id}`` 原先把 ``CreateEnergyDeviceRequest``
+    当请求体，四个字段必填 —— 台账里「把这台电表换个安装位置」的提交会被挡成
+    422（``missing device_code``）。前端要么把整条记录回传（容易把没加载到的
+    字段写成 null），要么干脆不提供编辑入口。
+    """
+
+    device_code: Optional[str] = None
+    device_name: Optional[str] = None
+    device_type: Optional[str] = None
+    energy_type: Optional[str] = None
+    equipment_id: Optional[int] = None
+    location: Optional[str] = None
+    factory_id: Optional[str] = None
+    remark: Optional[str] = None
+
+
 # ==================== 碳排放 ====================
 
 class CarbonEmissionResponse(BaseModel):

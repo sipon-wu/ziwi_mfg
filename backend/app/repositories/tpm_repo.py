@@ -196,6 +196,19 @@ class TpmRepository(MultiTenantRepository):
     async def delete_task(self, id: int) -> int:
         return await self.execute("DELETE FROM maintenance_tasks WHERE id = :id", {"id": id})
 
+    async def update_task_status(self, id: int, status: str) -> int:
+        """只改状态，不碰任何联动字段（停机时长 / 计划的下次到期日 / 设备台账）。
+
+        ★改造前 ``TpmService.update_task_status`` 调的是 ``self.repo.update_task_status``，
+        而仓储层**根本没有这个方法** → ``AttributeError`` → 接口 500。
+        之所以长期没人发现：正常执行走的是 ``PUT /{id}/start`` 与 ``PUT /{id}/complete``
+        两条有联动逻辑的路径，只有"取消 / 驳回 / 退回"这类非联动状态才会落到这里，
+        而这几条路径既没有页面入口，也没有探针覆盖。
+        """
+        return await self.execute(
+            "UPDATE maintenance_tasks SET status = :status WHERE id = :id",
+            {"status": status, "id": id})
+
     # === 保养计划 ===
     async def list_plans(self, page: int = 1, page_size: int = 20, equipment_id: int = None) -> dict:
         # 与 TpmService.list_plans(page, page_size) 对齐：返回分页 dict（此前签名是
