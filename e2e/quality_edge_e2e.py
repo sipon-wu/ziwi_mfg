@@ -146,15 +146,34 @@ def main():
 
     # ── D-B2：同一检验单多个检验员 → 明细归属可追溯 ──
     # 无角色用户会被权限闸 403 → 给检验员乙挂角色（优先管理员角色）
-    roles_data = c.get(f"{API}/roles", params={"page": 1, "page_size": 50}).json().get("data") or {}
-    role_list = roles_data.get("list") or roles_data.get("items") or []
-    role_id = None
-    for rl in role_list:
-        if "admin" in str(rl.get("code", "")).lower() or "管理" in str(rl.get("name", "")):
-            role_id = rl["id"]
+    #
+    # ★ 必须翻**全量**、且优先按 code 精确命中 —— 不能用"第一页第一个"。
+    #   实测：`mfg_demo` 里历次探针自建的 `role_empty_*` / `role_ro_*` 攒到 50+ 个，
+    #   把内置的 `admin` 挤出了第一页（page_size=50），于是 `role_list[0]` 落到
+    #   **空权限角色**上，新账号登录成功但 `M03:inspection_result:create` 403 ——
+    #   表面看是"平台不给录明细"，实际是探针给自己挂了一个没权限的角色。
+    role_list = []
+    page = 1
+    while True:
+        d = c.get(f"{API}/roles", params={"page": page, "page_size": 100}).json().get("data") or {}
+        batch = d.get("list") or d.get("items") or []
+        role_list.extend(batch)
+        if len(batch) < 100 or page >= 10:
             break
-    if role_id is None and role_list:
-        role_id = role_list[0]["id"]
+        page += 1
+
+    role_id = None
+    for want in ("admin", "inspector", "quality"):
+        hit = next((r for r in role_list
+                    if str(r.get("code", "")).lower() == want), None)
+        if hit:
+            role_id = hit["id"]
+            break
+    if role_id is None:
+        # 退一步按名称找（内置角色名的中文写法）
+        hit = next((r for r in role_list
+                    if "管理员" in str(r.get("name", ""))), None)
+        role_id = hit["id"] if hit else None
     insp2_name = f"inspector_{tag}"
     r = c.post(f"{API}/users", json={
         "username": insp2_name, "password": "test12345",

@@ -50,7 +50,7 @@ from app.models.copilot import (  # noqa: E402
 )
 from app.models.production import WorkOrder, WorkReport  # noqa: E402
 from app.models.role import Role  # noqa: E402
-from app.models.user import UserRole  # noqa: E402
+from app.models.user import UserOrganization, UserRole  # noqa: E402
 from app.models.andon import AndonCall  # noqa: E402
 from app.models.tpm import Equipment, MaintenancePlan, MaintenanceTask  # noqa: E402
 
@@ -95,6 +95,10 @@ async def main() -> int:
         #   logger.exception 之后，堆栈打上 stderr，run_all 的 ERROR 探测把它判成
         #   探针失败。**静默兜底会掩盖环境缺陷，日志会把它翻出来** —— 这次是好事。
         UserRole.__table__,
+        # 同理 `user_organizations`：数据范围解析要按它取"我属于哪些组织"，
+        # 缺表 → 每个请求一条 no such table。**建表清单要跟着鉴权链路走**，
+        # 只列业务表是不够的。
+        UserOrganization.__table__,
         AndonCall.__table__, Equipment.__table__, MaintenancePlan.__table__, MaintenanceTask.__table__,
     ]
     fp = os.path.join(tempfile.gettempdir(), f"copilot_e2e_{uuid.uuid4().hex}.db")
