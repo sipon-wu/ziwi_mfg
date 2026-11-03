@@ -221,16 +221,27 @@ def v3_work_orders(c):
         r = c.put(f"{API}/work-orders/{wid}", json={"route_id": rid})
         after = (data_of(c.get(f"{API}/work-orders/{wid}")) or {}).get("route_id")
         fixed = (r.status_code == 200 and after == rid)
+        # ★evidence 必须由本次断言结果派生，不能写死。
+        # 这里原先是「已本地修复…未部署；因此存量工单的路线空缺无法在线修补」，
+        # 缺陷修好并部署之后，status 已变 PASS，这句结论却还挂着「无法在线修补」——
+        # 报告里同时出现 PASS 和一句"修不了"，读者只能信悲观的那句。
+        # 与 §7 覆盖矩阵同一类错误：把结论当常量写进产物。
+        if fixed:
+            ev = ("修复已验证：UpdateWorkOrderRequest 原先缺 route_id → 字段被 Pydantic "
+                  "丢弃 → data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500；"
+                  "补字段 + 空 payload 返回 400 后已部署 staging，存量工单可在线补挂路线")
+        else:
+            ev = (f"仍未通过（HTTP {r.status_code}，回读 route_id={after}）。"
+                  "根因 UpdateWorkOrderRequest 缺 route_id → 字段被 Pydantic 丢弃 → "
+                  "data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500；"
+                  "存量工单的路线空缺无法在线修补")
         add("B-4", "改单接口能否补挂工艺路线", "PASS" if fixed else "FAIL",
             f"PUT work-orders/{{id}} route_id={rid} → HTTP {r.status_code}，"
-            f"回读 route_id={after}",
-            "UpdateWorkOrderRequest 缺 route_id → 字段被 Pydantic 丢弃 → data 为空 → "
-            "`UPDATE ... SET  WHERE` 语法错 → 500。已本地修复（补字段 + 空 payload 400），"
-            "未部署；因此存量工单的路线空缺无法在线修补")
+            f"回读 route_id={after}", ev)
         add("V3-note", "存量工单路线空缺的来源", "BOUNDARY",
             f"{len(nulls)} 张工单 route_id 为空：{nulls[:4]}",
             "断点续跑（--from p4，id 表为空）时建单，route_id 传了 None；"
-            "不是创建能力缺失，而是造数流程 + 改单接口不可补挂共同造成")
+            "历史空值不随改单接口修复自动补齐，仍需逐张 PUT 回填")
     return wos
 
 

@@ -3,8 +3,7 @@
   "tenant_id": "t_5436c733aa1e",
   "date": "2026-11-03",
   "summary": {
-    "PASS": 11,
-    "FAIL": 2,
+    "PASS": 13,
     "BOUNDARY": 3,
     "GAP": 1
   },
@@ -41,35 +40,35 @@
       "code": "V3",
       "name": "新建工单能绑定工艺路线且与产品匹配",
       "status": "PASS",
-      "detail": "10 张工单：带路线 1 张，路线错配 0 张，路线为空 9 张",
+      "detail": "10 张工单：带路线 3 张，路线错配 0 张，路线为空 7 张",
       "evidence": ""
     },
     {
       "code": "B-4",
       "name": "改单接口能否补挂工艺路线",
-      "status": "FAIL",
-      "detail": "PUT work-orders/{id} route_id=168 → HTTP 500，回读 route_id=None",
-      "evidence": "UpdateWorkOrderRequest 缺 route_id → 字段被 Pydantic 丢弃 → data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500。已本地修复（补字段 + 空 payload 400），未部署；因此存量工单的路线空缺无法在线修补"
+      "status": "PASS",
+      "detail": "PUT work-orders/{id} route_id=168 → HTTP 200，回读 route_id=168",
+      "evidence": "修复已验证：UpdateWorkOrderRequest 原先缺 route_id → 字段被 Pydantic 丢弃 → data 为空 → `UPDATE ... SET  WHERE` 语法错 → 500；补字段 + 空 payload 返回 400 后已部署 staging，存量工单可在线补挂路线"
     },
     {
       "code": "V3-note",
       "name": "存量工单路线空缺的来源",
       "status": "BOUNDARY",
-      "detail": "9 张工单 route_id 为空：['WO-AH-1103-UN3', 'WO-AH-1103-UN2', 'WO-AH-1103-UN1', 'WO-AH-1103-RT3']",
-      "evidence": "断点续跑（--from p4，id 表为空）时建单，route_id 传了 None；不是创建能力缺失，而是造数流程 + 改单接口不可补挂共同造成"
+      "detail": "7 张工单 route_id 为空：['WO-AH-1103-UN1', 'WO-AH-1103-RT3', 'WO-AH-1103-RT2', 'WO-AH-1103-RT1']",
+      "evidence": "断点续跑（--from p4，id 表为空）时建单，route_id 传了 None；历史空值不随改单接口修复自动补齐，仍需逐张 PUT 回填"
     },
     {
       "code": "V4",
       "name": "收货按「收货→上架」两条腿过账且库存不翻倍",
       "status": "PASS",
-      "detail": "7 行 → receipt 7 / transfer 7；库存 4453.25 == 收货 4570 - 发料 116.75 = 4453.25（✓ 未翻倍）；方向 NULL→待检 ✓ / 待检→库位 ✓",
+      "detail": "7 行 → receipt 7 / transfer 7；库存 4448.25 == 收货 4570 - 发料 121.75 = 4448.25（✓ 未翻倍）；方向 NULL→待检 ✓ / 待检→库位 ✓",
       "evidence": ""
     },
     {
       "code": "V5",
       "name": "发料出库为负向净变动",
       "status": "PASS",
-      "detail": "4 张发料单 / 39 条 issue 流水，负数 39 条，正数 0 条",
+      "detail": "4 张发料单 / 42 条 issue 流水，负数 42 条，正数 0 条",
       "evidence": ""
     },
     {
@@ -103,9 +102,9 @@
     {
       "code": "V8",
       "name": "安灯 pending → resolved 且留响应记录",
-      "status": "FAIL",
-      "detail": "状态流转 OK（resolved 4/4），但响应记录 0 条：['personnel', 'material', 'quality', 'equipment']",
-      "evidence": "POST /api/v1/andon/calls/{id}/responses 必 500 —— andon_repo.create_response 的 INSERT 要求 :response_time_seconds，API 层未提供；已本地修复，未部署"
+      "status": "PASS",
+      "detail": "4 张，resolved 4，响应记录 4 条",
+      "evidence": ""
     },
     {
       "code": "V9",
@@ -125,7 +124,7 @@
       "code": "V10",
       "name": "保养计划能生成到期任务且幂等",
       "status": "PASS",
-      "detail": "3 个计划 / 4 张任务 / 已完成 3 张；重跑 generate-due → created=0（0 即幂等）",
+      "detail": "3 个计划 / 5 张任务 / 已完成 3 张；重跑 generate-due → created=0（0 即幂等）",
       "evidence": "HTTP 200"
     }
   ],
@@ -134,37 +133,60 @@
       "system": "数据追溯（批次）",
       "count": 0,
       "note": "仅批次级，无序列号级",
-      "verdict": "GAP"
+      "verdict": "GAP",
+      "codes": [
+        "V9",
+        "G-4"
+      ]
     },
     {
       "system": "MES 生产执行",
       "count": 10,
       "note": "工单/报工/路线/工序全链路通",
-      "verdict": "PASS"
+      "verdict": "PASS",
+      "codes": [
+        "V1",
+        "V2",
+        "V3",
+        "V6"
+      ]
     },
     {
       "system": "WMS 仓储",
-      "count": 80,
+      "count": 83,
       "note": "收货两腿 / 发料负向 / 盘点差异均通",
-      "verdict": "PASS"
+      "verdict": "PASS",
+      "codes": [
+        "V4",
+        "V5"
+      ]
     },
     {
       "system": "TPM 设备保养",
-      "count": 4,
+      "count": 5,
       "note": "计划→到期任务→点检→完工通",
-      "verdict": "PASS"
+      "verdict": "PASS",
+      "codes": [
+        "V10"
+      ]
     },
     {
       "system": "QA 质量管理",
       "count": 3,
       "note": "检验单/项/判定/抽样通；NG→NCR 需人工开",
-      "verdict": "PASS"
+      "verdict": "PASS",
+      "codes": [
+        "V7"
+      ]
     },
     {
       "system": "Andon 安灯",
       "count": 4,
-      "note": "状态流转通，响应留痕 500",
-      "verdict": "FAIL"
+      "note": "状态流转 + 响应留痕 + 响应时长",
+      "verdict": "PASS",
+      "codes": [
+        "V8"
+      ]
     }
   ]
 }
