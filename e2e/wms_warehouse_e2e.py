@@ -189,13 +189,19 @@ def main() -> int:
         return 1
     print(f"  物料 mat_id={mid} code={mat_code}")
 
-    r = c.get(f"{API}/wms/materials/search", params={"keyword": mat_code[:12], "limit": 10})
+    # limit 给到上限 100：前缀会命中历轮造的同类物料，默认 20 条迟早把
+    # 本轮那条挤出结果集（同 W2-2 的跨轮污染）。断言用 `any(id==mid)` 而非条数。
+    r = c.get(f"{API}/wms/materials/search", params={"keyword": mat_code[:12], "limit": 100})
     hits = data(r) if isinstance(data(r), list) else []
     report("W2-1 ★按编码前缀搜到物料（曾经被 {mat_id} 遮蔽 → 100% 422）",
            r.status_code == 200 and any(x.get("id") == mid for x in hits),
            f"HTTP {r.status_code} 命中 {len(hits)} 条")
 
-    r = c.get(f"{API}/wms/materials/search", params={"keyword": "TC4钛合金棒", "limit": 5})
+    # ★关键字必须带 tag：只搜「TC4钛合金棒」在跑了十几轮之后会命中一堆旧数据，
+    #   limit=5 截断后本轮那条根本不在结果里 → 报"没搜到"，但它其实是搜得到的。
+    #   这属于探针的跨轮污染（列表 ≠ 本次记录），不是服务端缺陷。
+    r = c.get(f"{API}/wms/materials/search",
+              params={"keyword": f"钛合金棒{tag}", "limit": 20})
     hits2 = data(r) if isinstance(data(r), list) else []
     report("W2-2 按名称关键字可搜到（不是只按编码）",
            r.status_code == 200 and any(x.get("id") == mid for x in hits2),
