@@ -393,7 +393,15 @@ class ProductionService:
         scrap = order.get("scrap_qty") or 0
         planned = order.get("planned_qty") or 0
 
-        if completed + scrap <= 0 and not force:
+        # B-1 之后 completed_qty 只记末道工序产出。完工闸若还只看 completed，
+        # 「每道工序都报过、只是末道还没报」会被判成"零产出不能完工"。
+        # 这里按**全部工序的累计产出**判"车间是否干过活"；同时保留
+        # completed_qty 这条腿，历史/导入数据里存在"有完工数但无报工行"的工单，
+        # 只认报工会让这些单突然完不了工。
+        total_output = await self._total_reported_output(id)
+        produced = max(total_output, completed) + scrap
+
+        if produced <= 0 and not force:
             raise _bad_request(
                 "工单尚无任何报工产出，不能完工；如确需收尾请传 force=true 并填写原因",
                 "400-0003",
@@ -460,9 +468,12 @@ class ProductionService:
         order = await self._require_order(id)
         completed = order.get("completed_qty") or 0
         scrap = order.get("scrap_qty") or 0
-        if completed + scrap > 0 and not force:
+        # 同完工闸：在制品也是产出，不能因为"还没走到末道工序"就当成没做过，
+        # 否则作废一张正在做的工单不需要任何确认。
+        total_output = await self._total_reported_output(id)
+        if max(total_output, completed) + scrap > 0 and not force:
             raise _bad_request(
-                f"该工单已有产出（合格 {completed} / 报废 {scrap}），"
+                f"该工单已有产出（在制+完工 {max(total_output, completed)} / 报废 {scrap}），"
                 f"作废会使这些报工数据成为孤儿；如确需作废请传 force=true "
                 f"并在 force_reason 中说明这批产出的处理方式",
                 "400-0009",
@@ -478,7 +489,8 @@ class ProductionService:
             # 产出快照写进流水：事后要能回答"作废时到底做了多少"，
             # 否则流水上只剩一句原因，产出事实随工单一起消失。
             remark += (f"；强制作废原因：{force_reason}"
-                       f"；作废时产出快照：合格 {completed} / 报废 {scrap}")
+                       f"；作废时产出快照：完工 {completed} / 在制+完工 {total_output}"
+                       f" / 报废 {scrap}")
         return await self.change_status(id, "cancelled", operator_id, remark=remark)
 
     # ── C-S6 / C-S7：工单拆分与合并 ────────────────────────────
@@ -818,6 +830,42 @@ class ProductionService:
             raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "报工记录不存在"})
         return report
 
+    async def _last_operation_code(self, order: dict) -> Optional[str]:
+        """工单所挂在工艺路线上**末道工序**的编码；解析不到返回 ``None``。
+
+        为什么不缓存：工单的 ``route_id`` 冻结在工单行上，路线步骤是低频主数据，
+        一次报工多一条 SELECT 可以接受；缓存反而要处理"路线被改版"的失效问题。
+
+        为什么用 ``step_seq DESC`` 而不是 ``next_step_seq IS NULL``：造数/导入的
+        路线里 ``next_step_seq`` 经常整列空着（字段是后加的），按它判末道会一条
+        都选不出来；序号最大值在任何数据下都成立。
+        """
+        route_id = order.get("route_id")
+        if not route_id:
+            return None
+        row = await self.repo.query_one(
+            "SELECT o.code AS code FROM route_steps rs "
+            "JOIN operations o ON o.id = rs.operation_id "
+            "WHERE rs.route_id = :r "
+            "ORDER BY rs.step_seq DESC, rs.id DESC LIMIT 1",
+            {"r": route_id},
+        )
+        code = (row or {}).get("code")
+        return str(code) if code else None
+
+    async def _total_reported_output(self, order_id: int) -> int:
+        """该工单**所有工序**的累计产出（在制品 + 已完工），用于完工闸。
+
+        与 ``work_orders.completed_qty`` 的区别：后者只记末道工序产出（合格完工数），
+        前者是"车间确实干过活"的证据。完工闸看前者，产能/达成率看后者。
+        """
+        row = await self.repo.query_one(
+            "SELECT COALESCE(SUM(output_qty), 0) AS q FROM work_reports "
+            "WHERE work_order_id = :w AND (status IS NULL OR status <> 'rejected')",
+            {"w": order_id},
+        )
+        return int((row or {}).get("q") or 0)
+
     async def create_report(self, data: dict, tenant_id: str) -> dict:
         """报工并联动工单产出/不良。
 
@@ -876,13 +924,41 @@ class ProductionService:
             started = True
 
         planned = order.get("planned_qty") or 0
-        new_completed = (order.get("completed_qty") or 0) + output_qty
+        # ── 完工口径（B-1）─────────────────────────────────────────────
+        # ``work_orders.completed_qty`` 是**合格完工数**，只有走到路线末道工序的
+        # 产出才算完工；中间工序的产出是在制品，不属于完工量。
+        #
+        # 改造前这里对每一条报工都做 ``completed_qty += output_qty``：一张 30 道
+        # 工序的工单，每道各报 5 件，completed_qty 变成 150 而计划只有 15。
+        # 后果不止是看板难看 —— ``finished_goods_receipt`` 直接拿这个数当生产
+        # 入库数量，会凭空入库 150 件。
+        #
+        # 判据（保持向后兼容，不误伤简单场景）：
+        #   · 工单没挂路线（单工序/手工建单）      → 每条报工都算完工
+        #   · 报工没填工序编码（"报整单"）         → 算完工
+        #   · 填了工序编码 → 必须等于路线末道工序才算完工
+        # 报废数（``scrap_qty``）**不**受此影响：报废是逐件发生的损失，
+        # 每件只可能报废一次，跨工序累加不会重复计数。
+        finish_code = await self._last_operation_code(order)
+        reported_op = (data.get("operation_code") or "").strip() or None
+        is_finish_report = (
+            finish_code is None or reported_op is None or reported_op == finish_code
+        )
+        finished_delta = output_qty if is_finish_report else 0
+
+        new_completed = (order.get("completed_qty") or 0) + finished_delta
         new_scrap = (order.get("scrap_qty") or 0) + scrap_qty
         await self.repo.update_work_order(order_id, {
             "completed_qty": new_completed, "scrap_qty": new_scrap,
         })
 
         warnings = []
+        if not is_finish_report:
+            # 必须说出来：否则报工成功、完工数不动，现场会以为系统没记上而重复报。
+            warnings.append(
+                f"本次报工工序「{reported_op}」不是该工单路线的末道工序"
+                f"（末道为「{finish_code}」），产出计入在制、不计入完工数"
+            )
         if planned > 0 and new_completed > planned:
             warnings.append(
                 f"累计完成 {new_completed} 已超计划 {planned}"
@@ -936,6 +1012,11 @@ class ProductionService:
             "started": started,
             "completed_qty": new_completed,
             "scrap_qty": new_scrap,
+            # B-1：本次报工算不算完工产出，以及末道工序是谁。
+            # 前端可据此解释「为什么完工数没动」，不必再猜。
+            "is_finish_report": is_finish_report,
+            "finish_operation_code": finish_code,
+            "finished_delta": finished_delta,
             "ncr_id": ncr_id,
             "warnings": warnings,
         }

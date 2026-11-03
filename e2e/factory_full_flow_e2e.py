@@ -144,12 +144,19 @@ async def get_inventory_sum(client: httpx.AsyncClient, material_id: int,
 
 async def get_tx_count(client: httpx.AsyncClient, material_id: int,
                        tx_type: str = None) -> int:
-    """查询某物料的交易流水条数。"""
+    """查询某物料的交易流水**总条数**。
+
+    必须读接口的 ``total``，不能用 ``len(items)``：分页上限 100，某物料的流水
+    一旦累计超过 100 条，条数就永远返回 100 —— 于是 S4 的「cancel 后流水增加」
+    会变成永久假红（实际 cancel 已经写了冲销流水，库存也回滚了）。
+    """
     params: dict = {"material_id": material_id, "page_size": 100}
     if tx_type:
         params["transaction_type"] = tx_type
     body = await get_json(client, "/wms/inventory-transactions", params=params)
-    return len(items_of(body))
+    payload = body.get("data") or {}
+    total = payload.get("total") if isinstance(payload, dict) else None
+    return int(total) if total is not None else len(items_of(body))
 
 
 # ═══════════════════════════════════════════════════════════════════

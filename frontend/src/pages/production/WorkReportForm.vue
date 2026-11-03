@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
-import { showToast } from 'vant'
+import { showToast, showDialog } from 'vant'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import dayjs from 'dayjs'
 import type { WorkOrder, PaginatedResponse } from '@/types'
@@ -150,8 +150,19 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
-    await post('/work-reports', payload)
-    showToast('报工提交成功')
+    const res = await post<{ warnings?: string[] }>('/work-reports', payload)
+    // 后端的 warnings 必须露出来。最典型的一条是 B-1 的「本次报工工序不是末道
+    // 工序，产出计入在制、不计入完工数」—— 报工成功了但完工数没动，不解释的话
+    // 现场会以为是系统没记上，然后再报一遍（报工没有幂等键）。
+    const warns = res?.warnings || []
+    if (warns.length) {
+      await showDialog({
+        title: '报工已提交，但请注意',
+        message: warns.map((w) => `· ${w}`).join('\n\n'),
+      })
+    } else {
+      showToast('报工提交成功')
+    }
     router.push('/work-reports')
   } catch (e: any) {
     // 后端对"数量为 0 / 工单未下达"等给了明确文案，直接展示，不要吞成"提交失败"

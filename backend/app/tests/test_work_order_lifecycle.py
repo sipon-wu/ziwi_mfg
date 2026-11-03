@@ -35,7 +35,7 @@ from app.services.production_service import ProductionService
 class FakeRepo:
     """最小 Repository 替身：只管工单行、更新记录与状态流水。"""
 
-    def __init__(self, order=None):
+    def __init__(self, order=None, reported_output=0, last_operation_code=None):
         self.order = order
         self.updates: list = []
         self.logs: list = []
@@ -43,6 +43,21 @@ class FakeRepo:
         self._session = None
         self._tenant_id = "t1"
         self._write_org_id = None
+        #: B-1：报工累计产出（完工闸读它）。默认 0，闸门转而看工单行的
+        #: completed_qty，行为与改造前一致。
+        self.reported_output = reported_output
+        #: B-1：路线末道工序编码。默认 None = 工单没挂路线，每条报工都算完工。
+        self.last_operation_code = last_operation_code
+        self.queries: list = []
+
+    async def query_one(self, sql, params=None):
+        self.queries.append((sql, params))
+        if "FROM work_reports" in sql:
+            return {"q": self.reported_output}
+        if "FROM route_steps" in sql:
+            return ({"code": self.last_operation_code}
+                    if self.last_operation_code else None)
+        return None
 
     def set_tenant_id(self, tenant_id):
         self._tenant_id = tenant_id
