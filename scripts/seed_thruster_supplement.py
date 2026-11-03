@@ -341,10 +341,9 @@ def s6_inspection(c: httpx.Client) -> None:
         return
     order = unwrap(r)
     oid = order.get("id")
-    # ★ 建单响应只回 `{"data": {"id": ...}}`，不回单号 —— 别拿响应里的 order_no
-    #   去打印，它必然是 None（第一版就这么打印出「None 标准…」的怪日志）。
-    #   要单号就再 GET 一次。
-    order = unwrap(c.get(f"{API}/inspection-orders/{oid}")) or order
+    # ★ 建单响应只回 `{"data": {"id": ...}}`，**不回单号** —— 别拿响应里的
+    #   order_no 去打日志，它必然是 None（第一版就这么打印出「None 标准…」）。
+    #   单号在最后回读时一起拿，不必为此多打一次请求。
 
     ck = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
     todo = ck.get("items", [])
@@ -371,11 +370,17 @@ def s6_inspection(c: httpx.Client) -> None:
     # 判定是人工终态结论，必须显式给结论：JudgeOrderRequest.result 是
     # Literal["ACC","REJ","UAI"] 必填，发 `{}` 会 422（第一版就是这么拿到 None 的）。
     j = c.put(f"{API}/inspection-orders/{oid}/judge", json={"result": "ACC"})
-    result = unwrap(j).get("result") if j.status_code in (200, 201) else None
+    # ★ 判定响应只回**副作用摘要**（ncr_id / batch_locked / sampling_guard…），
+    #   不回判定结论本身。第一版读 `unwrap(j).get("result")` 永远 None，把一次
+    #   成功的判定报成失败（实测单子库里已是 ACC，脚本还在报 ERR）。
+    #   要结论就回读。
+    judged = unwrap(c.get(f"{API}/inspection-orders/{oid}")) or {}
+    result = judged.get("result") if j.status_code in (200, 201) else None
     ck2 = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
-    detail = f"{order.get('order_no')} 标准「{std.get('name')}」{ck2.get('recorded_count')}/{total_items} 项，判定 {result}"
+    detail = (f"{judged.get('order_no')} 标准「{std.get('name')}」"
+              f"{ck2.get('recorded_count')}/{total_items} 项，判定 {result}")
     if result == "ACC":
-        ok("检验执行闭环", detail)
+        ok("检验执行闭环", detail + "（REJ 联动未触发，符合预期）")
     else:
         msg = j.text[:150] if j.status_code not in (200, 201) else f"判定={result}"
         err("检验执行闭环", f"{detail}（期望 ACC；{msg}）")
