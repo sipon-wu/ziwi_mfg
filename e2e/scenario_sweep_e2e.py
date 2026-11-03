@@ -159,7 +159,20 @@ def main():
     print("\n── F-S7 碳排放核算（交叉校验口径）──")
     r = c.get(f"{API}/energy/carbon/emissions", params={"page_size": 100})
     rows = data(r).get("items") or []
-    report("F-S7-1 排放明细可读", r.status_code == 200 and bool(rows), f"{len(rows)} 条")
+    # ★ 只断言"接口可读"，**不把"没有数据"算成断点**。
+    #   `carbon_emission_record` 由 ECMS（独立产品线 ziwi_project_dna）写入，
+    #   mfg 仓里 `repositories/energy_repo.py` 全是 SELECT，没有任何写入口 ——
+    #   所以"mfg 的库里有排放明细"本来就不是本产品线的责任。
+    #   把空表判成 FAIL，等于把产品边界当故障：红的不是缺陷，绿的可信度也被拖下水
+    #   （历史上已经吃过"把设计内降级 403 当故障"的亏）。这里改为先证伪
+    #   "mfg 有写入口"这个假设，再明示边界。
+    report("F-S7-1 排放明细接口可读", r.status_code == 200, f"HTTP {r.status_code} {len(rows)} 条")
+
+    if not rows:
+        w = c.post(f"{API}/energy/carbon/emissions", json={"energy_type": "electricity"})
+        report("F-S7-1b mfg 侧无能耗写入口（边界证伪）", w.status_code in (404, 405),
+               f"POST → {w.status_code}")
+        print("[OUT] 排放明细为空：数据由 ECMS 提供、mfg 只读，核算口径交叉校验本次无法执行")
 
     if rows:
         days = sorted({str(x.get("record_date")) for x in rows})

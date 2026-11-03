@@ -239,7 +239,7 @@ def main():
     # 根本没有该物料的库存行，``/adjust`` 便没有可调整对象，``adjusted_count=0``，
     # 连带 E-S4-8 / E-S4-9 双红。**单跑 40/0、全量偶发 3 红**，成因就是选材不确定。
     # 改为从全量库存里挑一组「库位 × 物料」真实有货的，后面全部字段由这一组派生。
-    def pick_stock_group():
+    def pick_stock_group(min_qty: float = 0.0):
         groups, order = {}, []
         for row in paged(c, f"{API}/wms/inventory"):
             qty = float(row.get("quantity") or 0)
@@ -251,11 +251,21 @@ def main():
                 order.append(key)
             groups[key] += qty
         for key in order:
-            if groups[key] > 0:
+            if groups[key] >= max(min_qty, 0.001):
                 return key, groups[key]
         return None, 0.0
 
-    s4_key, sys_qty = pick_stock_group()
+    # ★先挑"账面足够"的行：盘亏 10 在小账面上会变成离谱的差异率。
+    #   实测账面=1 时盘盈 +5 → 差异率 500%，平台的差异率护栏直接 400：
+    #   「存在 1 行差异率超过 50% 的明细……如确认差异属实请传 force=true」。
+    #   那条护栏是对的（巨额差异更可能是盘错对象），错的是探针**在 1 件库存上
+    #   造 5 件差异**这种不真实的场景。所以优先选账面 ≥ 20 的行，盘亏 10 只有
+    #   50% 以内；实在没有才退回小账面并显式走 force 通道，把 force 本身也验一遍。
+    s4_key, sys_qty = pick_stock_group(min_qty=20)
+    need_force = False
+    if not s4_key:
+        s4_key, sys_qty = pick_stock_group()
+        need_force = True
     if not s4_key:
         gap("E-S4 盘点→差异→调整",
             "全量库存里没有『有货且有库位』的行，无法构造真实差异")
@@ -326,7 +336,10 @@ def main():
             pre = sum(float(x.get("quantity") or 0)
                       for x in rows if x.get("material_id") == tgt)
 
-            r = c.post(f"{API}/wms/inventory-counts/{cn_id}/adjust")
+            r = c.post(f"{API}/wms/inventory-counts/{cn_id}/adjust",
+                       json={"force": need_force,
+                             "force_reason": (f"E2E 复核：账面仅 {sys_qty:g}，差异为构造数据"
+                                              if need_force else None)})
             adj = data(r)
             report("E-S4-7 盘点差异可调整（接口层）", r.status_code == 200,
                    f"{msg(r)[:120] if r.status_code != 200 else adj}")

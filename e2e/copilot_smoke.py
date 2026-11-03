@@ -50,6 +50,7 @@ from app.models.copilot import (  # noqa: E402
 )
 from app.models.production import WorkOrder, WorkReport  # noqa: E402
 from app.models.role import Role  # noqa: E402
+from app.models.user import UserRole  # noqa: E402
 from app.models.andon import AndonCall  # noqa: E402
 from app.models.tpm import Equipment, MaintenancePlan, MaintenanceTask  # noqa: E402
 
@@ -86,6 +87,14 @@ async def main() -> int:
         WorkOrder.__table__, WorkReport.__table__, CopilotSession.__table__,
         CopilotMessage.__table__, CopilotFeedback.__table__, CopilotAskLog.__table__,
         MetricDefinition.__table__, CopilotDocChunk.__table__, Role.__table__,
+        # ★ `user_roles` 必须显式列出：它是 `User.roles` 的 secondary 关联表，
+        #   没有对应的映射类，只给 `Role.__table__` 建不出它。
+        #   漏了它的后果是：每个请求的 `get_user_roles()` 都抛
+        #   `sqlite3.OperationalError: no such table: user_roles` —— 这条异常在
+        #   数据范围解析里被兜底吞掉，原先"看起来无事"；改成 fail-closed 并
+        #   logger.exception 之后，堆栈打上 stderr，run_all 的 ERROR 探测把它判成
+        #   探针失败。**静默兜底会掩盖环境缺陷，日志会把它翻出来** —— 这次是好事。
+        UserRole.__table__,
         AndonCall.__table__, Equipment.__table__, MaintenancePlan.__table__, MaintenanceTask.__table__,
     ]
     fp = os.path.join(tempfile.gettempdir(), f"copilot_e2e_{uuid.uuid4().hex}.db")

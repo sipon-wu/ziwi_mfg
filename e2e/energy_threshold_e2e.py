@@ -91,8 +91,26 @@ def main():
     print("\n── M1 能耗数据载体 ──")
     r = c.get(f"{API}/energy/carbon/emissions", params={"page_size": 100})
     rows = data(r).get("items") or []
-    report("M1-1 能耗记录可读（carbon_emission_record）", r.status_code == 200 and bool(rows),
+    report("M1-1 能耗记录可读（carbon_emission_record）", r.status_code == 200,
            f"{len(rows)} 条 HTTP {r.status_code}")
+
+    if not rows:
+        # ★ 空表不判 FAIL —— 这是**产品边界**，不是缺陷。
+        #   `carbon_emission_record` 由 ECMS（独立产品线 `ziwi_project_dna`）写入；
+        #   mfg 仓 `repositories/energy_repo.py` 只有 SELECT，**没有任何写入口**，
+        #   本仓库也没有能让它长出数据的地方。把"没有数据"判成红，就是拿产品边界
+        #   当故障：红的不是缺陷，久而久之整套回归的红绿都没人信。
+        #   但也不能静默跳过 —— 先把这个假设**证伪**（mfg 真的没有写入口），
+        #   再明确声明边界，才叫"如实"而不是"假装通过"。
+        w = c.post(f"{API}/energy/carbon/emissions", json={"energy_type": "electricity"})
+        report("M1-0 mfg 侧无能耗写入口（边界证伪）", w.status_code in (404, 405),
+               f"POST /energy/carbon/emissions → {w.status_code}")
+        print("[OUT] 能耗数据由 ECMS 提供、mfg 只读 → 阈值告警链路本次无法端到端验证")
+        print(f"\n{'=' * 62}")
+        print(f"通 {len(OK)} / 断 {len(GAP)}")
+        print("=" * 62)
+        return 0
+
     # 判定日要按阈值限定的那一类能源单独汇总——把水/气一起加进来会得到
     # 一个系统里根本不存在的"日耗"，阈值按它算出来的超限是假信号。
     type_days = {}
