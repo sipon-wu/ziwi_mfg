@@ -2,7 +2,10 @@
 import asyncio, httpx, os, sys
 from datetime import datetime
 
-BASE = os.environ.get("BASE_URL", "http://localhost:8092")
+# ★默认端口必须是 8000（本目录其余探针的约定）。原先写 8092 是某个早期
+# 本地 alpha 实例的端口，那个实例早没了 —— 于是不传 BASE_URL 时这条探针
+# 直接 ConnectError，在 run_all 里表现为"断 1 条"，看着像回归失败。
+BASE = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
 # ★不要 fallback 到 os.environ["USERNAME"]：Windows 上 USERNAME 是系统环境变量
 # （当前登录用户名，如 Kane.liu），永远有值 —— 拿它当 API 账号必然 401，
 # 且报错只显示"用户名或密码错误"，看不出是拿错了变量。

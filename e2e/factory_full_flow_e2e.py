@@ -21,7 +21,10 @@ from datetime import date, datetime
 import httpx
 
 # ── 环境配置 ──────────────────────────────────────────────────────
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:8092").rstrip("/")
+# ★默认端口必须是 8000（本目录其余探针的约定）。原先写 8092 是某个早期
+# 本地 alpha 实例的端口，那个实例早没了 —— 于是不传 BASE_URL 时这条探针
+# 直接 ConnectError，在 run_all 里表现为"断 1 条"，看着像回归失败。
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 # ★同 wms_realistic_e2e：Windows 的 USERNAME 环境变量是系统登录用户名，
 # 不能当 API 账号用，否则必 401 且看不出原因。
 USERNAME = os.environ.get("E2E_USER", "mfg_admin")
