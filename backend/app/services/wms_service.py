@@ -1203,7 +1203,7 @@ class IssueOrderService:
         # 自动拣选的 SQL（``find_available_batches``）同步排除过期批次，
         # 否则它会把过期批排到最前面（FIFO 恰恰按入库时间排，越老越可能过期）。
         today = date.today()
-        await self._reject_expired_batch(item, batch_no, today)
+        await self._assert_batch_issuable(item, batch_no, today)
         warehouse_id = order["warehouse_id"] if order else None
         # 本次实际出库的批次（跨批次时会有多条）。过账后回写到单据行，见下方说明。
         used_batches: List[str] = []
@@ -1361,13 +1361,19 @@ class IssueOrderService:
             })
         return {"item_id": item_id, "qty": qty, "order_status": new_status}
 
-    async def _reject_expired_batch(self, item: dict, batch_no, today) -> None:
-        """显式指定批次出库时的过期校验（E-B3）。
+    async def _assert_batch_issuable(self, item: dict, batch_no, today) -> None:
+        """显式指定批次出库时的**批次可用性**校验（锁定 + 过期）。
 
-        自动拣选在 SQL 里已经排除过期批（``find_available_batches`` /
-        ``find_available_rows``），但**显式指定**批次是绕开拣选的，
-        不拦的话等于给"点名出过期货"留了一扇门 —— 而且这扇门开在
-        最需要盯着的地方：敢点名过期批的，多半正是不想让系统拦的人。
+        自动拣选在 SQL 里已经排除"锁定批"与"过期批"
+        （``find_available_batches`` 的 ``b.is_locked IS NOT TRUE`` /
+        ``b.expiry_date >= :today``），但**显式指定**批次是绕开拣选的。
+        不拦的话等于给"点名出冻结货 / 点名出过期货"各留一扇门 ——
+        而且门开在最需要盯着的地方：敢点名冻结批的，多半正是不想让系统拦的人。
+
+        ★原先这里只校验过期，**漏了锁定**：IQC 判 REJ 冻结的批次，走自动拣选
+        拣不到（正确），但现场照着批次标签点名出库照样 200 扣账 ——
+        「冻结」于是成了一个只在列表上好看的字段。两条校验同源（都是
+        "这货不能用"），必须成对存在，否则补一条就等于没补。
         """
         if not batch_no:
             return
@@ -1376,7 +1382,16 @@ class IssueOrderService:
         if self.item_repo._tenant_id:
             batch_repo.set_tenant_id(self.item_repo._tenant_id)
         batch = await batch_repo.get_by_batch_no(item["material_id"], batch_no)
-        exp = (batch or {}).get("expiry_date")
+        if not batch:
+            return
+        # ① 锁定（IQC 冻结 / 客诉召回 / 批次异常）。is_locked 在 SQLite 是 0/1、
+        #    在 PG 是 bool —— 都按真假判断，不写字面量比较。
+        if batch.get("is_locked"):
+            raise ValueError(
+                f"批次 {batch_no} 已被锁定（{batch.get('lock_reason') or '未填锁定原因'}），"
+                f"不能出库；如需放行请先解锁批次")
+        # ② 过期（E-B3）
+        exp = batch.get("expiry_date")
         if not exp:
             return
         # SQLite 的 Date 列经 _row_to_dict 出来是字符串；PG 是 date ——
@@ -1955,6 +1970,13 @@ class MaterialRequestService:
     async def create(self, data: dict):
         items = data.pop("items", [])
         data.setdefault("status", "pending")
+        # ★SQL 里 :approved_by / :department_id 是**命名占位符**，编译期就要求绑定，
+        #   跟 schema 里标没标 Optional 无关。`MaterialRequestCreate` 里没有
+        #   approved_by 字段 → model_dump 不给这个键 → StatementError → 创建
+        #   100% 500。模型上的 Optional 只约束 API 入参，约束不了手写 SQL。
+        #   （同型：approval_nodes.status / messages.is_read / ControlPlan.source）
+        data.setdefault("approved_by", None)
+        data.setdefault("department_id", None)
         request_id = await self.repo.create(data)
         for item in items:
             item["request_id"] = request_id

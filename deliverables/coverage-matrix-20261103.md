@@ -1,8 +1,8 @@
-# 功能覆盖矩阵（2026-11-03 22:52）
+# 功能覆盖矩阵（2026-11-03 23:00）
 
 - 业务路由总数：**458**
-- 探针源码中出现过的：**395**（86.2%，乐观口径）
-- 完全没出现过的：**63**
+- 探针源码中出现过的：**417**（91.0%，乐观口径）
+- 完全没出现过的：**41**
 
 > 口径：`被测到` = 探针源码里出现过该 URL 字面量。**不等于被断言** —— 断言强度要看探针本身；用变量拼路径的会被算作未覆盖（保守）。
 
@@ -11,7 +11,7 @@
 | 模块 | 名称 | 路由 | 被测到 | 未测 | 覆盖率 |
 |---|---|---:|---:|---:|---:|
 | PLAT  | 平台底座 | 98 | 98 | 0 | 100% |
-| M04  | 仓储管理 | 81 | 59 | 22 | 73% |
+| M04  | 仓储管理 | 81 | 81 | 0 | 100% |
 | M03  | 品质管理 | 47 | 34 | 13 | 72% |
 | M10  | 品质高阶（SPC/FMEA/PPAP） | 47 | 47 | 0 | 100% |
 | M00  | 基础数据 | 32 | 27 | 5 | 84% |
@@ -26,31 +26,6 @@
 | M30  | 不合格评审 NCR | 5 | 5 | 0 | 100% |
 
 ## 未覆盖清单（按模块）
-
-### M04 仓储管理 — 22 条
-
-- `POST /api/v1/wms/batches/{batch_id}/lock`
-- `GET /api/v1/wms/issue-orders/scan`
-- `POST /api/v1/wms/issue-orders/{io_id}/complete`
-- `GET /api/v1/wms/material-requests`
-- `POST /api/v1/wms/material-requests`
-- `GET /api/v1/wms/material-requests/{mr_id}`
-- `PUT /api/v1/wms/material-requests/{mr_id}`
-- `DELETE /api/v1/wms/material-requests/{mr_id}`
-- `POST /api/v1/wms/material-requests/{mr_id}/approve`
-- `GET /api/v1/wms/materials/search`
-- `GET /api/v1/wms/reports/slow-moving`
-- `GET /api/v1/wms/reports/stock-by-location`
-- `GET /api/v1/wms/reports/stock-summary`
-- `GET /api/v1/wms/reports/summary`
-- `GET /api/v1/wms/reports/turnover`
-- `GET /api/v1/wms/warehouses/all/active`
-- `GET /api/v1/wms/warehouses/{wh_id}/zones`
-- `POST /api/v1/wms/zones`
-- `GET /api/v1/wms/zones/{zone_id}`
-- `PUT /api/v1/wms/zones/{zone_id}`
-- `DELETE /api/v1/wms/zones/{zone_id}`
-- `GET /api/v1/wms/zones/{zone_id}/locations`
 
 ### M03 品质管理 — 13 条
 

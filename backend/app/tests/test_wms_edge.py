@@ -122,7 +122,7 @@ class TestExpiredBatchExcluded:
         assert rows == [] and rows2 == []
 
 
-class TestRejectExpiredBatchExplicit:
+class TestAssertBatchIssuable:
     def _svc(self, batch):
         svc = IssueOrderService.__new__(IssueOrderService)
         svc.item_repo = AsyncMock()
@@ -130,7 +130,7 @@ class TestRejectExpiredBatchExplicit:
         svc.repo = AsyncMock()
         svc.inv_repo = AsyncMock()
         svc.tx_repo = AsyncMock()
-        # _reject_expired_batch 内部 new 一个 BatchRepository(session)，
+        # _assert_batch_issuable 内部 new 一个 BatchRepository(session)，
         # 这里把 get_by_batch_no 的结果提前注入——用 monkeypatch 太重，
         # 直接换掉它依赖的私有方法不可行，故把 batch 放进一个假 repo。
         return svc, batch
@@ -142,7 +142,7 @@ class TestRejectExpiredBatchExplicit:
             BR.return_value.get_by_batch_no = AsyncMock(
                 return_value={"expiry_date": YESTERDAY})
             with pytest.raises(ValueError) as e:
-                await svc._reject_expired_batch(
+                await svc._assert_batch_issuable(
                     {"material_id": 1}, "B1", date.today())
         assert "已过期" in str(e.value)
 
@@ -152,13 +152,13 @@ class TestRejectExpiredBatchExplicit:
         with patch("app.repositories.wms_repo.BatchRepository") as BR:
             BR.return_value.get_by_batch_no = AsyncMock(
                 return_value={"expiry_date": TOMORROW})
-            await svc._reject_expired_batch({"material_id": 1}, "B1", date.today())
+            await svc._assert_batch_issuable({"material_id": 1}, "B1", date.today())
 
     async def test_no_batch_no_skips(self):
         svc, _ = self._svc(None)
         # batch_no 为空（自动拣选路径）→ 这里的校验必须短路，
         # 不能去查库（查库会把"自动拣选"慢成"逐条点名"）。
-        await svc._reject_expired_batch({"material_id": 1}, None, date.today())
+        await svc._assert_batch_issuable({"material_id": 1}, None, date.today())
 
     async def test_sqlite_string_date_compared_right(self):
         """SQLite 的 Date 列读出来是字符串，直接和 date 比会 TypeError。"""
@@ -168,8 +168,97 @@ class TestRejectExpiredBatchExplicit:
             BR.return_value.get_by_batch_no = AsyncMock(
                 return_value={"expiry_date": YESTERDAY})  # str，不是 date
             with pytest.raises(ValueError):
-                await svc._reject_expired_batch(
+                await svc._assert_batch_issuable(
                     {"material_id": 1}, "B1", date.today())
+
+    async def test_locked_batch_rejected_on_explicit_path(self):
+        """IQC 冻结的批次，显式点名出库必须被拒（自动拣选早就排除了）。
+
+        这条路曾经是通的：``find_available_batches`` 里有 ``b.is_locked IS NOT TRUE``，
+        但显式指定 batch_no 绕开拣选，只校验了过期没校验锁定 → 现场照着批次标签
+        点名出库照样扣账，"冻结"成了只在列表上好看的字段。
+        """
+        from unittest.mock import patch
+        svc, _ = self._svc(None)
+        with patch("app.repositories.wms_repo.BatchRepository") as BR:
+            BR.return_value.get_by_batch_no = AsyncMock(
+                return_value={"is_locked": 1, "lock_reason": "IQC 判 REJ",
+                              "expiry_date": TOMORROW})
+            with pytest.raises(ValueError) as e:
+                await svc._assert_batch_issuable(
+                    {"material_id": 1}, "B1", date.today())
+        assert "锁定" in str(e.value) and "IQC 判 REJ" in str(e.value)
+
+    async def test_locked_false_does_not_block(self):
+        """解锁后（is_locked=0）必须放行 —— 别把"解锁"也一起拦掉。"""
+        from unittest.mock import patch
+        svc, _ = self._svc(None)
+        with patch("app.repositories.wms_repo.BatchRepository") as BR:
+            BR.return_value.get_by_batch_no = AsyncMock(
+                return_value={"is_locked": 0, "expiry_date": TOMORROW})
+            await svc._assert_batch_issuable({"material_id": 1}, "B1", date.today())
+
+
+# ── 领料申请创建：SQL 占位符 vs schema 字段 ───────────────────────────
+
+class TestMaterialRequestCreate:
+    """领料申请创建的跨文件契约：**SQL 要的每个键，service 都必须给。**
+
+    ``MaterialRequestRepository.create`` 的 INSERT 写了 8 个命名占位符，
+    其中 ``:approved_by`` 在 ``MaterialRequestCreate`` schema 里**没有对应字段**
+    → ``model_dump()`` 不给这个键 → SQLAlchemy 编译期就报
+    ``StatementError: A value is required for bind parameter 'approved_by'``
+    → ``POST /wms/material-requests`` 100% 500。
+
+    这类 bug 单元测试抓不到是因为它奔的是"服务层有没有补键"，而
+    "schema 有没有这个字段"要靠跨文件对读才看得出来 —— 所以这里不 mock
+    schema，直接把 schema 产出的 dict 原样喂进去。
+    """
+
+    async def test_create_fills_approved_by_for_sql_bind(self):
+        from app.schemas.wms import MaterialRequestCreate
+        from app.services.wms_service import MaterialRequestService
+
+        # 真的走一遍 schema，避免手写 dict 把字段补齐了反而测不到问题
+        req = MaterialRequestCreate(
+            request_no="MR-T-1", work_order_id=1, warehouse_id=1,
+            items=[{"line_no": 1, "material_id": 1, "required_qty": 5, "unit": "根"}])
+        payload = req.model_dump()
+
+        captured: dict = {}
+        repo = AsyncMock()
+
+        async def _create(data):
+            captured.update(data)
+            return 1
+
+        repo.create = _create
+        item_repo = AsyncMock()
+        item_repo.batch_create = AsyncMock(return_value=1)
+
+        out = await MaterialRequestService(repo, item_repo).create(payload)
+
+        assert out == {"id": 1}
+        assert "approved_by" in captured, f"缺 approved_by 绑定 → StatementError: {sorted(captured)}"
+        assert "department_id" in captured
+        assert captured["status"] == "pending"
+
+    async def test_items_get_request_id(self):
+        """明细行必须挂到刚建的申请上，否则审批人打开详情看不到要什么料。"""
+        from app.services.wms_service import MaterialRequestService
+
+        repo = AsyncMock()
+        repo.create = AsyncMock(return_value=42)
+        item_repo = AsyncMock()
+        item_repo.batch_create = AsyncMock(return_value=1)
+
+        await MaterialRequestService(repo, item_repo).create({
+            "request_no": "MR-T-2", "work_order_id": 1, "warehouse_id": 1,
+            "items": [{"line_no": 1, "material_id": 1, "required_qty": 5, "unit": "根"},
+                      {"line_no": 2, "material_id": 2, "required_qty": 3, "unit": "个"}]})
+
+        sent = item_repo.batch_create.await_args.args[0]
+        assert [x["request_id"] for x in sent] == [42, 42]
 
 
 # ── E-E5 盘点差异率阈值 ─────────────────────────────────────────────
