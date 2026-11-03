@@ -4,11 +4,11 @@
 业务单据，本批补的是"有关系但没填"的那一层：
 
     1. 工作中心产能与班次配置（capacity_per_shift / shift_config / labor_count）
-    2. 工作中心班组（wc_teams）
+    2. 班组（`teams` 表：name / code / department）
     3. 员工（employees，挂到班组）
     4. 工作日历 2026（factory_calendars）+ 法定节假日
     5. Andon 升级规则（方案书 §12.1 的 5/10/15/10 分钟时限）
-    6. 检验结果补全（把已录 3 项/7 项补齐到全项，再重新判定）
+    6. 检验执行闭环（新建一张录满的检验单 → 全部录入 → 判定 ACC）
     7. 打印留痕（print_artifacts，工单与检验单各打一次）
 
 **不补的三项**（会打印成 BLOCKED，原因不是偷懒）：
@@ -129,40 +129,52 @@ def s1_work_centers(c: httpx.Client) -> None:
 
 
 TEAM_PLAN = [
-    ("定子线白班", "assembly"),
-    ("转子线白班", "assembly"),
-    ("总装线白班", "assembly"),
-    ("总装线夜班", "assembly"),
-    ("检测组", "quality"),
-    ("机加组", "machining"),
+    # (班组名, 编码, 所属车间, 对应工作中心类型)
+    ("定子线白班", "TM-STAT-D", "总装车间", "assembly"),
+    ("转子线白班", "TM-ROTR-D", "总装车间", "assembly"),
+    ("总装线白班", "TM-ASSY-D", "总装车间", "assembly"),
+    ("总装线夜班", "TM-ASSY-N", "总装车间", "assembly"),
+    ("检测组", "TM-QC", "质量部", "quality"),
+    ("机加组", "TM-MACH", "机加车间", "machining"),
 ]
 
 
 def s2_teams(c: httpx.Client) -> None:
-    print("\nS2 工作中心班组")
-    # ★ 工作中心的 wc_type 实际取值是 assembly / machining / quality ——
-    #   前端 WC_TYPE_OPTIONS 写的却是 production_line / work_cell / workstation。
-    #   两套枚举对不上：页面上按「产线」筛选查不到任何数据（见闭环报告）。
-    #   这里按**库里的真值**建班组。
+    print("\nS2 班组")
+    # ★ 班组有**两张表**，别混（这里踩过一次）：
+    #   `teams`      —— 通用班组，本接口的实体，字段 name / code / department；
+    #   `wc_teams`   —— 工作中心×班组配置，模型 + WcTeamCreate/Update/Response 三个
+    #                   schema 都在，但**没有任何路由与服务引用**（与 wc_equipments
+    #                   同类的死表 + 死 schema）。
+    #   第一版按 WcTeamCreate 发了 {wc_id, team_name} → 422 missing name。
+    #   不是"schema 与路由不一致"，是我发错了实体。
+    #
+    # 另外：工作中心 wc_type 的实际取值是 assembly / machining / quality，而前端
+    #   WC_TYPE_OPTIONS 是 production_line / work_cell / workstation —— 前后端枚举
+    #   对不上，页面按「产线」筛选查不到数据（已单独记进闭环报告，不在此处改）。
     wcs = paged(c, "/work-centers")
-    existing = {t.get("team_name") for t in paged(c, "/teams")}
+    existing = {t.get("name") for t in paged(c, "/teams")}
 
-    for idx, (name, wtype) in enumerate(TEAM_PLAN):
+    created = 0
+    for idx, (name, code, dept, wtype) in enumerate(TEAM_PLAN):
         if name in existing:
             skip(f"班组 {name}", "已存在")
             continue
         cand = [w for w in wcs if (w.get("wc_type") or "") == wtype]
-        if not cand:
-            err(f"班组 {name}", f"找不到 wc_type={wtype} 的工作中心")
-            continue
-        wc = cand[idx % len(cand)]
+        wc = cand[idx % len(cand)] if cand else None
         r = c.post(f"{API}/teams", json={
-            "wc_id": wc["id"], "team_name": name, "team_type": "regular", "is_active": True,
+            "name": name,
+            "code": code,
+            "department": dept,
+            # teams 表没有 wc_id 列，工作中心只能写进描述 —— 如实标注，不假装有外键
+            "description": f"主责工作中心 {wc['code']} {wc['name']}" if wc else "",
         })
         if r.status_code in (200, 201):
-            ok(f"班组 {name}", f"挂 {wc['code']}")
+            created += 1
         else:
             err(f"班组 {name}", f"HTTP {r.status_code} {r.text[:120]}")
+    if created:
+        ok("班组", f"{created} 个（name/code/department，挂 6 类工位）")
 
 
 # ────────────────────────── S3 员工 ──────────────────────────
@@ -302,9 +314,10 @@ def s6_inspection(c: httpx.Client) -> None:
     if not standards:
         err("检验执行", "没有检验标准，无法建单")
         return
-    # 挑项数最少的那个标准，录满它 → 走自动判定
+    # 挑"项数最少"的那个标准来录满 —— item_count 是标准表上的冗余计数，
+    # 可能是 0（建项后没回写），`or 99` 把它排到后面，避免选中一个计数为 0 的。
     std = min(standards, key=lambda s: s.get("item_count") or 99)
-    sid, items_cnt = std["id"], std.get("item_count") or 0
+    sid = std["id"]
 
     existing = [o for o in paged(c, "/inspection-orders")
                 if o.get("standard_id") == sid and o.get("order_type") == "ipqc"
@@ -328,12 +341,19 @@ def s6_inspection(c: httpx.Client) -> None:
         return
     order = unwrap(r)
     oid = order.get("id")
+    # ★ 建单响应只回 `{"data": {"id": ...}}`，不回单号 —— 别拿响应里的 order_no
+    #   去打印，它必然是 None（第一版就这么打印出「None 标准…」的怪日志）。
+    #   要单号就再 GET 一次。
+    order = unwrap(c.get(f"{API}/inspection-orders/{oid}")) or order
 
     ck = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
     todo = ck.get("items", [])
     if not todo:
         err("检验单 checklist", f"空（degraded={ck.get('degraded')}）")
         return
+    # 分母用 checklist 的实际项数，不用 standard.item_count：后者是标准表上的
+    # 冗余计数，建项后没回写就是 0，会打出「6/0 项」这种自相矛盾的日志。
+    total_items = len(todo)
 
     payload = {"source": "web", "results": [
         {
@@ -348,14 +368,17 @@ def s6_inspection(c: httpx.Client) -> None:
         err("检验结果录入", f"HTTP {r.status_code} {r.text[:150]}")
         return
 
-    j = c.put(f"{API}/inspection-orders/{oid}/judge", json={})
+    # 判定是人工终态结论，必须显式给结论：JudgeOrderRequest.result 是
+    # Literal["ACC","REJ","UAI"] 必填，发 `{}` 会 422（第一版就是这么拿到 None 的）。
+    j = c.put(f"{API}/inspection-orders/{oid}/judge", json={"result": "ACC"})
     result = unwrap(j).get("result") if j.status_code in (200, 201) else None
     ck2 = unwrap(c.get(f"{API}/inspection-orders/{oid}/checklist"))
-    detail = f"{order.get('order_no')} 标准「{std.get('name')}」{ck2.get('recorded_count')}/{items_cnt} 项，判定 {result}"
+    detail = f"{order.get('order_no')} 标准「{std.get('name')}」{ck2.get('recorded_count')}/{total_items} 项，判定 {result}"
     if result == "ACC":
         ok("检验执行闭环", detail)
     else:
-        err("检验执行闭环", f"{detail}（期望 ACC）")
+        msg = j.text[:150] if j.status_code not in (200, 201) else f"判定={result}"
+        err("检验执行闭环", f"{detail}（期望 ACC；{msg}）")
 
 
 # ────────────────────────── S7 打印留痕 ──────────────────────────
@@ -426,6 +449,8 @@ def main() -> int:
     BLOCKED.extend([
         "供应商主数据 —— 只有 GET /suppliers，无写入口（方案书 G2：靠 ERP 同步）",
         "wc_equipments（工作中心×设备）—— 表在模型里但全库无代码引用，死表",
+        "wc_teams（工作中心×班组）—— 同上：模型 + 3 个 schema 在，零路由零服务引用；"
+        "班组实体实际是 `teams` 表，已由 S2 补上",
         "work_reports.org_id —— CreateWorkReportRequest 无该字段，服务端也不填",
     ])
     for b in BLOCKED:

@@ -60,6 +60,17 @@ _FOOT_RULE_Y = MARGIN_BOTTOM + 3 * mm   # 分隔横线
 _FOOT_LINE1_Y = MARGIN_BOTTOM - 2 * mm  # 打印时间/打印人/副本/版本　＋　留痕码/模板
 _FOOT_LINE2_Y = MARGIN_BOTTOM - 6 * mm  # 免责声明　＋　第 N/M 页
 
+# 基本信息表的列宽比例。值列宽度同时被下面「长字段」的判定复用，
+# 所以抽成常量：改列宽忘了改判定阈值，就会出现"判定说短、实际排成 4 行"的错判。
+_META_LABEL_RATIO = 0.16
+_META_VALUE_RATIO = 0.34
+# 值文本宽度超过值列宽的这个倍数 → 不放进表格，改走段落流。
+# 为什么必须分流：表格的单行**不能跨页**，行高一超过 frame 高度，platypus 直接
+# 抛 LayoutError，整张单据 500（实测 300 字备注 → 单行 1074pt，A4 可用高 671pt）。
+# 取 2 倍是留余量：表格里最多出现两行字的单元格，行高上限约 30pt，
+# 再多的文字一律进段落流，Paragraph 自己会分页，多长都不炸。
+_META_LONG_FACTOR = 2.0
+
 
 def ensure_fonts() -> str:
     """注册中文字体（幂等）。返回正文字体名。"""
@@ -162,7 +173,43 @@ def _styles() -> dict[str, ParagraphStyle]:
                                textColor=colors.HexColor("#64748b"), **cjk),
         "sign": ParagraphStyle("sign", fontName=font, fontSize=9, leading=26,
                                alignment=TA_CENTER, **cjk),
+        # 长字段（备注 / 齐套结果）专用：带浅底与细框，视觉上仍是"一格信息"，
+        # 但内容是段落，可以跨页续排。backColor 而不是画表格，就是为了能分页。
+        "metalong": ParagraphStyle("metalong", fontName=font, fontSize=9, leading=13,
+                                   backColor=colors.HexColor("#f8fafc"),
+                                   borderColor=colors.HexColor("#cbd5e1"),
+                                   borderWidth=0.4, borderPadding=4,
+                                   spaceBefore=1, spaceAfter=1, **cjk),
     }
+
+
+def _text_width(text: str, font: str, size: float = 9) -> float:
+    """估算一段文本排成一行时的宽度（pt）。用于判断"这段值放不放得进表格单元格"。"""
+    if not text:
+        return 0.0
+    try:
+        return pdfmetrics.stringWidth(text, font, size)
+    except Exception:  # 字体没注册好时退回按字数估，别让排版因为度量失败而 500
+        return len(text) * size
+
+
+def _split_meta(
+    meta: Sequence[tuple[Any, Any]], value_col_width: float, font: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """把基本信息拆成「进表格的短字段」与「走段落流的长字段」两拨。
+
+    这是打印 500 的根因所在：早期实现把所有 meta 无差别两两塞进 4 列表格，
+    备注/齐套结果这类自由文本一旦变长，就把单行撑到超过 frame 高度，
+    platypus 抛 `LayoutError: Flowable <Table ... too large on page>` —— 500。
+    而工单备注几乎必然会被写长（现场就是往里堆情况说明），所以这不是边界情况。
+    """
+    short: list[tuple[str, str]] = []
+    long: list[tuple[str, str]] = []
+    limit = value_col_width * _META_LONG_FACTOR
+    for label, value in meta:
+        pair = (str(label), "" if value is None else str(value))
+        (long if _text_width(pair[1], font, 9) > limit else short).append(pair)
+    return short, long
 
 
 def _qr_image(url: str, size_mm: float = 22):
@@ -284,35 +331,47 @@ def render_pdf(pdoc: PrintDoc, meta: RenderMeta) -> tuple[bytes, int]:
     )
 
     story: list[Any] = []
+    font = ensure_fonts()
+    usable = A4[0] - MARGIN_X * 2
 
-    # 基本信息：两列并排（label/value 成对），三行一组
+    # 基本信息：两列并排（label/value 成对），两对一行。
+    # 长值不进表格（见 _split_meta 的说明），改为整宽段落块排在表格之后。
     if pdoc.meta:
-        pairs = list(pdoc.meta)
-        rows = []
-        for i in range(0, len(pairs), 2):
-            chunk = pairs[i:i + 2]
-            row = []
-            for label, value in chunk:
-                row.extend([Paragraph(escape(str(label)), st["cell"]),
-                            Paragraph(escape(str(value)), st["cell"])])
-            while len(row) < 4:
-                row.extend([Paragraph("", st["cell"]), Paragraph("", st["cell"])])
-            rows.append(row)
-        usable = A4[0] - MARGIN_X * 2
-        table = Table(rows, colWidths=[usable * 0.16, usable * 0.34, usable * 0.16, usable * 0.34])
-        table.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f8fafc")),
-            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f8fafc")),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
-        story.append(table)
+        value_col = usable * _META_VALUE_RATIO
+        short_meta, long_meta = _split_meta(pdoc.meta, value_col, font)
+        if short_meta:
+            rows = []
+            for i in range(0, len(short_meta), 2):
+                row = []
+                for label, value in short_meta[i:i + 2]:
+                    row.extend([Paragraph(escape(label), st["cell"]),
+                                Paragraph(escape(value), st["cell"])])
+                while len(row) < 4:
+                    row.extend([Paragraph("", st["cell"]), Paragraph("", st["cell"])])
+                rows.append(row)
+            table = Table(
+                rows,
+                colWidths=[usable * _META_LABEL_RATIO, value_col,
+                           usable * _META_LABEL_RATIO, value_col],
+            )
+            table.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f8fafc")),
+                ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f8fafc")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.append(table)
+        for label, value in long_meta:
+            story.append(Paragraph(
+                f'<font name="{font}-Bold" color="#334155">{escape(label)}</font>'
+                f'　{escape(value)}',
+                st["metalong"],
+            ))
         story.append(Spacer(1, 5 * mm))
 
     # 明细区
-    usable = A4[0] - MARGIN_X * 2
     for sec in pdoc.sections:
         head = [Paragraph(escape(str(c[0])), st["cell"]) for c in sec.columns]
         data = [head] + [
@@ -321,7 +380,10 @@ def render_pdf(pdoc: PrintDoc, meta: RenderMeta) -> tuple[bytes, int]:
         ]
         total_w = sum(c[1] for c in sec.columns) or 1
         widths = [usable * c[1] / total_w for c in sec.columns]
-        t = Table(data, colWidths=widths, repeatRows=1)
+        # splitInRow=1：单个单元格内容过高时允许在行内断开续页。
+        # 默认 splitByRow 只能整行分页，一行本身高于 frame 时同样抛 LayoutError，
+        # 明细里的「不良原因」「规格要求」都可能被现场写成长句，必须留这条路。
+        t = Table(data, colWidths=widths, repeatRows=1, splitInRow=1)
         t.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),

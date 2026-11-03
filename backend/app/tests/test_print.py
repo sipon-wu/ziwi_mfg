@@ -326,3 +326,83 @@ def test_hash_matches_manual_sha256():
         json.dumps(snap, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     assert _canonical_hash(snap) == expect
+
+
+# ── 长文本排版 ──────────────────────────────────────────────
+
+
+class TestRenderLongText:
+    """长文本不该把整张单子打成 500。
+
+    2026-11-03 staging 实测：`POST /print/work_order/{id}` 对两张工单返回 500，
+    日志里是
+      `LayoutError: Flowable <Table 1 rows x 4 cols(tallest row 978)> ... too large
+       on page 2 in frame 'normal'(492 x 671)`
+
+    根因不是字体也不是页边距，而是**基本信息表把所有 meta 无差别塞进 4 列表格**，
+    而工单备注是自由文本（现场就是往里堆情况说明）。表格的单行不能跨页，
+    一旦行高超过 frame 就整篇报错 —— 备注越长越必然触发，不是边界情况。
+
+    修法：值宽超过值列 2 倍的字段不进表格，改走段落流（Paragraph 天然可分页）。
+    这组用例锁的是"多长都能出 PDF"，而不是"版式好看"。
+    """
+
+    @staticmethod
+    def _meta() -> RenderMeta:
+        return RenderMeta(
+            verify_code="ABCD2345", verify_url="https://mfg1.ziwi.cn/#/verify/ABCD2345",
+            printed_at="2026-11-03 10:00", printed_by_name="admin",
+            copy_no=1, doc_revision=1, template_code="WO-CARD", template_version="1.0",
+        )
+
+    @staticmethod
+    def _doc(remark: str, rows=None) -> PrintDoc:
+        return PrintDoc(
+            doc_type="work_order", title="生产工单流转卡", doc_no="WO-AH-1103-01",
+            meta=[("产品编码", "P-AH-001"), ("产品名称", "推进器壳体"),
+                  ("计划数量", 15), ("已完工数", 3), ("备注", remark)],
+            sections=[Section(title="报工明细（1 条）",
+                              columns=[("工序", 1.0), ("不良原因", 2.0)],
+                              rows=rows if rows is not None else [["OP10", "无"]])],
+            signs=["编制", "审核", "操作工", "品质确认"],
+            doc_status="in_progress", note="本卡随工单流转。",
+        )
+
+    def test_short_remark_still_one_page(self):
+        pdf, pages = render_pdf(self._doc("首件已确认"), self._meta())
+        assert pdf[:4] == b"%PDF"
+        assert pages == 1
+
+    @pytest.mark.parametrize("repeat", [50, 300, 900])
+    def test_long_remark_never_raises(self, repeat):
+        """300 字是 staging 上真实炸过的长度；900 字要能续到第 2 页。"""
+        pdf, pages = render_pdf(self._doc("长备注说明" * repeat), self._meta())
+        assert pdf[:4] == b"%PDF"
+        assert pages >= 1
+
+    def test_long_remark_flows_to_second_page(self):
+        """足够长时必须分页，而不是被裁掉 —— 裁掉等于纸面少了一段免责说明。"""
+        _, pages = render_pdf(self._doc("情况说明" * 1200), self._meta())
+        assert pages >= 2
+
+    def test_tall_detail_row_splits_instead_of_failing(self):
+        """明细里单个单元格被写成长句（不良原因）时，靠 splitInRow 续页。
+
+        默认 splitByRow 只能整行分页，一行本身高于 frame 时同样抛 LayoutError。
+        """
+        pdf, pages = render_pdf(
+            self._doc("简短", rows=[["OP20 " + "划伤" * 800, "漆包线绝缘层" * 400]]),
+            self._meta(),
+        )
+        assert pdf[:4] == b"%PDF"
+        assert pages >= 2
+
+    def test_split_meta_keeps_short_fields_in_table(self):
+        """短字段仍走表格（不能被长字段一起拖去段落流，否则版式全散）。"""
+        from app.services.print.renderer import _split_meta, ensure_fonts
+
+        short, long = _split_meta(
+            [("产品编码", "P-AH-001"), ("备注", "长" * 400)], 167.0, ensure_fonts(),
+        )
+        assert [x[0] for x in short] == ["产品编码"]
+        assert [x[0] for x in long] == ["备注"]
