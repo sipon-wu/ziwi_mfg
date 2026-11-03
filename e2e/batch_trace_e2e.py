@@ -70,6 +70,27 @@ def first_id(payload):
     return d
 
 
+def paged(c, path, params=None, page_size=100, max_pages=40):
+    """把列表接口按页翻完再返回。
+
+    ★本探针复用同一物料反复造批次，库存行会随每次运行线性增长
+      （每条批次 × 库位一行，上架/出库还会留 0 行）。实测 material 35
+      已 56 行、`page_size=50` 只回第一页 50 条，最新批号排在页外 ——
+      T11「原料库存行带批号」于是恒为 0 命中，红得毫无道理。
+      凡是"按批号在列表里找某一行"的断言，都必须翻全量，不能读一页。
+    """
+    out, page = [], 1
+    while page <= max_pages:
+        r = c.get(path, params={**(params or {}), "page": page,
+                                "page_size": page_size})
+        chunk = items_of(r.json()) if r.status_code == 200 else []
+        out.extend(chunk)
+        if len(chunk) < page_size:
+            break
+        page += 1
+    return out
+
+
 def ensure_material(c, code, name, mtype):
     r = c.get(f"{API}/wms/materials", params={"keyword": code, "page_size": 50})
     hit = next((m for m in items_of(r.json()) if m.get("code") == code), None)
@@ -269,11 +290,10 @@ def main():
            f"HTTP {r.status_code} warning={(body.get('data') or {}).get('warning')}")
 
     # ── T11 库存行带批次（批次能被冻结/召回的前提） ──
-    r = c.get(f"{API}/wms/inventory", params={"material_id": rm_id, "page_size": 50})
-    rows = items_of(r.json()) if r.status_code == 200 else []
+    rows = paged(c, f"{API}/wms/inventory", params={"material_id": rm_id})
     with_batch = [x for x in rows if x.get("batch_no") == batch_rm]
     report("T11 原料库存行带批号", bool(with_batch),
-           f"带该批号的行数={len(with_batch)}")
+           f"带该批号的行数={len(with_batch)}（全量 {len(rows)} 行）")
 
     # ══════════════════════════════════════════════════════════
     # 第二段：客诉 → NCR → 召回（X6 的后两环）

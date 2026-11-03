@@ -234,26 +234,47 @@ def main():
 
     # ══════════════ E-S4 盘点 → 差异 → 调整 ══════════════
     print("\n── E-S4 盘点 → 差异 → 调整（原标注：差异原因必填 ⚠️）──")
-    if not loc:
-        print("  （无库位，E-S4 跳过）")
+    # ★选材必须确定：原先取 ``locs[0]``（第一个仓的第一个库位），再从该库位挑一条
+    # quantity>0 的库存行；挑不到就退回 ``mat["id"]`` + 账面 0 —— 可那个库位往往
+    # 根本没有该物料的库存行，``/adjust`` 便没有可调整对象，``adjusted_count=0``，
+    # 连带 E-S4-8 / E-S4-9 双红。**单跑 40/0、全量偶发 3 红**，成因就是选材不确定。
+    # 改为从全量库存里挑一组「库位 × 物料」真实有货的，后面全部字段由这一组派生。
+    def pick_stock_group():
+        groups, order = {}, []
+        for row in paged(c, f"{API}/wms/inventory"):
+            qty = float(row.get("quantity") or 0)
+            if not (row.get("location_id") and row.get("material_id")):
+                continue
+            key = (row.get("warehouse_id"), row["location_id"], row["material_id"])
+            if key not in groups:
+                groups[key] = 0.0
+                order.append(key)
+            groups[key] += qty
+        for key in order:
+            if groups[key] > 0:
+                return key, groups[key]
+        return None, 0.0
+
+    s4_key, sys_qty = pick_stock_group()
+    if not s4_key:
+        gap("E-S4 盘点→差异→调整",
+            "全量库存里没有『有货且有库位』的行，无法构造真实差异")
     else:
-        r = c.get(f"{API}/wms/inventory/by-location",
-                  params={"location_id": loc["id"]})
-        rows = rows_of(r)
-        sys_row = next((x for x in rows if float(x.get("quantity") or 0) > 0), None)
-        tgt = sys_row.get("material_id") if sys_row else mat["id"]
-        sys_qty = float(sys_row.get("quantity") or 0) if sys_row else 0.0
-        print(f"  盘点对象 material_id={tgt} 账面={sys_qty:g}")
+        s4_wh_id, s4_loc_id, tgt = s4_key
+        s4_wh_id = s4_wh_id or wh["id"]
+        # 账面量取**该库位该物料的合计**，不是一个批次行：后面 ``pre`` 是合计，
+        # 用单行数量算差异会让 E-S4-8 在多批次同库位时错位。
+        print(f"  盘点对象 material_id={tgt} location_id={s4_loc_id} 账面={sys_qty:g}")
 
         cn_no = f"CN-{tag}"
         r = c.post(f"{API}/wms/inventory-counts", json={
             "count_no": cn_no,
             "count_type": "cycle",
-            "warehouse_id": wh["id"],
+            "warehouse_id": s4_wh_id,
             "count_date": datetime.now().date().isoformat(),
             "items": [{
                 "material_id": tgt,
-                "location_id": loc["id"],
+                "location_id": s4_loc_id,
                 "system_qty": sys_qty,
             }],
         })
@@ -300,7 +321,7 @@ def main():
 
             # 调整前库存
             r = c.get(f"{API}/wms/inventory/by-location",
-                      params={"location_id": loc["id"]})
+                      params={"location_id": s4_loc_id})
             rows = rows_of(r)
             pre = sum(float(x.get("quantity") or 0)
                       for x in rows if x.get("material_id") == tgt)
@@ -311,7 +332,7 @@ def main():
                    f"{msg(r)[:120] if r.status_code != 200 else adj}")
 
             r = c.get(f"{API}/wms/inventory/by-location",
-                      params={"location_id": loc["id"]})
+                      params={"location_id": s4_loc_id})
             rows = rows_of(r)
             post = sum(float(x.get("quantity") or 0)
                        for x in rows if x.get("material_id") == tgt)

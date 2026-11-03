@@ -221,6 +221,16 @@ def v3_work_orders(c):
         r = c.put(f"{API}/work-orders/{wid}", json={"route_id": rid})
         after = (data_of(c.get(f"{API}/work-orders/{wid}")) or {}).get("route_id")
         fixed = (r.status_code == 200 and after == rid)
+        # ★探针必须无副作用：补挂成功后立刻还原成 NULL。
+        # 原先不还原 —— 每跑一次就永久消耗掉一张「空路线工单」：跑满 7 次 nulls
+        # 见底，B-4 变 NOTRUN；同时 V3-note 里"存量工单路线空缺"这个数字会自己
+        # 变小（7→6→5…），看上去像"有人补了数据"，其实只是探针改了它。
+        # 探针只能观测，不能改变被观测对象。
+        if fixed:
+            c.put(f"{API}/work-orders/{wid}", json={"route_id": None})
+            restored = (data_of(c.get(f"{API}/work-orders/{wid}")) or {}).get("route_id")
+            if restored is not None:
+                print(f"  [WARN] B-4 还原失败：{probe} 的 route_id 仍为 {restored}")
         # ★evidence 必须由本次断言结果派生，不能写死。
         # 这里原先是「已本地修复…未部署；因此存量工单的路线空缺无法在线修补」，
         # 缺陷修好并部署之后，status 已变 PASS，这句结论却还挂着「无法在线修补」——
