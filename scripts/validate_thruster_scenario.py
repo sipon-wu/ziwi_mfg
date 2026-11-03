@@ -485,36 +485,55 @@ def v10_maintenance(c):
 
 
 def coverage(c):
+    """全面性覆盖矩阵：条数由接口现取，**结论由断言结果派生**。
+
+    ★结论不许手写。第一版把「Andon 安灯」的结论写成常量 "FAIL（响应留痕 500）"，
+    结果缺陷修好、V8 转 PASS 之后，矩阵还挂着 FAIL —— 报告里同时出现
+    "FAIL 0" 和 "Andon FAIL"，读者只能信那个比较悲观的。
+    矩阵是给人做覆盖判断的，它一旦和断言脱钩，就只剩误导作用。
+    """
     def n(path, pred):
         return len([x for x in pages(c, f"{API}{path}") if pred(x)])
 
     has_ah = lambda x: any("AH" in str(x.get(k) or "")
                            for k in ("code", "wo_no", "receipt_no", "issue_no",
                                      "ncr_no", "batch_no", "plan_name", "task_no"))
+    # (系统, 计数接口, 计数谓词, 说明, 相关断言码)
     matrix = [
         ("数据追溯（批次）", "/trace/batches", has_ah,
-         "仅批次级，无序列号级", "GAP"),
+         "仅批次级，无序列号级", ["V9", "G-4"]),
         ("MES 生产执行", "/work-orders", lambda x: (x.get("wo_no") or "").startswith("WO-AH-"),
-         "工单/报工/路线/工序全链路通", "PASS"),
+         "工单/报工/路线/工序全链路通", ["V1", "V2", "V3", "V6"]),
         ("WMS 仓储", "/wms/inventory-transactions",
          lambda x: (x.get("source_doc_no") or "").startswith(("RO-AH-", "ISO-AH-")),
-         "收货两腿 / 发料负向 / 盘点差异均通", "PASS"),
+         "收货两腿 / 发料负向 / 盘点差异均通", ["V4", "V5"]),
         ("TPM 设备保养", "/maintenance-tasks",
          lambda x: (x.get("task_no") or "").startswith(("MT-", "MT-AH-")),
-         "计划→到期任务→点检→完工通", "PASS"),
+         "计划→到期任务→点检→完工通", ["V10"]),
         ("QA 质量管理", "/inspection-orders", lambda x: True,
-         "检验单/项/判定/抽样通；NG→NCR 需人工开", "PASS"),
+         "检验单/项/判定/抽样通；NG→NCR 需人工开", ["V7"]),
         ("Andon 安灯", "/andon/calls",
          lambda x: (x.get("description") or "") in (
              "合装压机压力异常，MA020 停机", "定子电检耐压不合格连续 3 件",
              "磁钢来料镀层不良，线边告急", "绕线工位缺员，产能不足"),
-         "状态流转通，响应留痕 500", "FAIL"),
+         "状态流转 + 响应留痕 + 响应时长", ["V8"]),
     ]
+    by_code = {r["code"]: r["status"] for r in ROWS}
     out = []
-    for name, path, pred, note, verdict in matrix:
+    for name, path, pred, note, codes in matrix:
         cnt = n(path, pred)
+        seen = [by_code.get(c) for c in codes if by_code.get(c)]
+        if "FAIL" in seen:
+            verdict = "FAIL"
+        elif "GAP" in seen:
+            verdict = "GAP"
+        elif not seen:
+            verdict = "NOTRUN"
+        else:
+            verdict = "PASS"
         out.append({"system": name, "count": cnt, "note": note,
-                    "verdict": verdict if cnt else "GAP"})
+                    "verdict": verdict if cnt else "GAP",
+                    "codes": codes})
     return out
 
 
