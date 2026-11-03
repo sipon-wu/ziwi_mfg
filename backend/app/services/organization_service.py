@@ -4,8 +4,11 @@ from app.constants.modules import (
     ORG_TYPES, SCOPE_ALL, SCOPE_DEPT, SCOPE_DEPT_CHILD, SCOPE_SELF,
 )
 from typing import Optional, List, Dict
+import logging
 
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class OrganizationService:
@@ -224,17 +227,39 @@ class OrganizationService:
         """把角色的数据范围解析成"可见组织 id 列表"。
 
         - ALL         → ``None``（表示不加组织过滤）
-        - SELF        → ``[]``（调用方应改用 created_by/reporter 过滤；本方法只给组织维度）
+        - SELF        → ``None``（组织维度不限定，由业务按 created_by/reporter 过滤）
         - DEPT        → 用户所属组织 id 列表
         - DEPT_CHILD  → 用户所属组织 + 其全部子孙组织 id
+        - 角色声明了 DEPT/DEPT_CHILD 但用户**没有任何组织归属** → ``[]``（恒假）
 
-        用户没有任何组织归属时，退回 ``None``（不误伤，避免"新用户看不到任何数据"）。
+        ★ ``[]`` 而不是 ``None``：这是 **fail-closed**。
+        早期实现写的是"没组织归属就退回 None（不限）"，理由是"避免新用户什么都
+        看不到"。但这句话把因果搞反了 —— **角色既然声明了"只看本部门"，用户却没
+        有部门，正确结果是"看不到部门数据"，不是"看到全部数据"**。
+
+        2026-11-03 实测踩到：清库把 `user_organizations` 一起清了之后，
+        `demo_ws1_leader`（department_head，DEPT_CHILD）解析出空归属 → 退回 None →
+        与 admin 看到完全相同的 30 条报工 / 113 张工单 / 145 条流水。
+        **一次数据清理就变成了一次越权**，这正是 fail-open 的典型代价。
+
+        真正"新用户什么都看不到"的诉求该由**角色**解决（给 ALL 或 SELF），
+        而不是靠数据范围缺省放宽。空列表在注入层已有既定语义：
+        `_inject_tenant_where_select` 会拼成 `AND 1 = 0`。
+
+        注意 SELF 必须返回 ``None`` 而不是 ``[]``：SELF 是"按人过滤"，组织维度
+        本就不该限制；返回 ``[]`` 会把 SELF 变成一个看不到任何数据的死角色。
         """
-        if scope == SCOPE_ALL:
+        if scope == SCOPE_ALL or scope == SCOPE_SELF:
             return None
+
         my_org_ids = await self.repo.user_org_ids(user_id)
         if not my_org_ids:
-            return None
+            # fail-closed：声明了部门范围却没有部门 → 没有可看的部门
+            logger.warning(
+                "数据范围解析：用户 %s 的角色 scope=%s，但无任何组织归属 → 按空集处理",
+                user_id, scope,
+            )
+            return []
         if scope == SCOPE_DEPT:
             return my_org_ids
 
@@ -243,6 +268,10 @@ class OrganizationService:
         for oid in my_org_ids:
             org = await self.repo.get_org(oid)
             if not org:
+                # 组织已被删除但成员关系还挂着（清库/删组织后常见）。
+                # 保留这个 id 在集合里没有意义（表里已无该行），但也**不能**因此
+                # 放宽成"不限" —— 让它自然落成恒假即可。
+                logger.warning("数据范围解析：用户 %s 归属的组织 %s 不存在，已跳过", user_id, oid)
                 continue
             subtree = await self.repo.list_org_subtree(org["path"], include_self=True)
             all_ids.update(int(s["id"]) for s in subtree)
