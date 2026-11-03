@@ -299,14 +299,23 @@ class RoleRepository(MultiTenantRepository):
         return [r[0] for r in rows.fetchall()]
 
     async def seed_permissions_if_not_exist(self, permissions: List[dict]) -> List[int]:
-        """插入权限种子数据（如果编码不存在则创建），返回所有匹配权限的 ID 列表。"""
+        """插入权限种子数据（如果编码不存在则创建），返回所有匹配权限的 ID 列表。
+
+        ⚠️ **必须走裸 session**：``permissions`` 表**没有 tenant_id 列**（权限码是
+        平台级字典，不是租户数据）。基类的 ``query_one`` 会给 SELECT 注入
+        ``permissions.tenant_id = :_tenant_id`` → ``no such column`` →
+        ``POST /roles/key-user-permissions`` 100% 500。
+        与 ``_replace_role_permissions`` 同一个坑，同类第三次。
+        """
         ids = []
         for perm in permissions:
-            existing = await self.query_one(
-                "SELECT id FROM permissions WHERE code = :code", {"code": perm["code"]}
+            existing = await self._session.execute(
+                text("SELECT id FROM permissions WHERE code = :code"),
+                {"code": perm["code"]},
             )
-            if existing:
-                ids.append(existing["id"])
+            row = existing.first()
+            if row:
+                ids.append(row[0])
             else:
                 await self.execute(
                     "INSERT INTO permissions (code, name, module, resource_type, action, description) "
@@ -314,9 +323,11 @@ class RoleRepository(MultiTenantRepository):
                     perm,
                 )
                 # 重新查询获取自增 ID
-                row = await self.query_one(
-                    "SELECT id FROM permissions WHERE code = :code", {"code": perm["code"]}
+                again = await self._session.execute(
+                    text("SELECT id FROM permissions WHERE code = :code"),
+                    {"code": perm["code"]},
                 )
-                if row:
-                    ids.append(row["id"])
+                row2 = again.first()
+                if row2:
+                    ids.append(row2[0])
         return ids

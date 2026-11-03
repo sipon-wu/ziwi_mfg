@@ -82,6 +82,10 @@ DEFAULT_PROBES = [
     # JSON 列不序列化、更新端点复用创建 schema、控制计划缺必填绑定）。
     "collect_iot_e2e",         # M12 数据采集：网关→数据源→设备→任务→推数→查数
     "quality_advanced_e2e",    # M10 品质高阶：PFMEA→控制计划→PPAP→SPC
+    # PLAT 平台底座：字典/消息/角色范围/同步消费者/集成网关/导入/打印留痕/
+    # 租户模块/审批动作/Copilot。补上后打出 6 条真缺陷，其中"全站下拉框数据源
+    # 100% 500"和"审批永远通不过"属于平常没人单独验、坏了全站受影响的那类。
+    "platform_base_e2e",
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL

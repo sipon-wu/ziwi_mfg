@@ -15,13 +15,6 @@
       "default": "True"
     },
     {
-      "file": "app/repositories/approval_repo.py",
-      "line": 135,
-      "table": "approval_nodes",
-      "column": "status",
-      "default": "'pending'"
-    },
-    {
       "file": "app/repositories/complaint_repo.py",
       "line": 42,
       "table": "customer_complaints",
@@ -86,112 +79,112 @@
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 30,
+      "line": 90,
       "table": "data_source_config",
       "column": "protocol",
       "default": "'Modbus'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 68,
+      "line": 133,
       "table": "collect_task",
       "column": "collect_interval_seconds",
       "default": "60"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 68,
+      "line": 133,
       "table": "collect_task",
       "column": "failed_count",
       "default": "0"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 68,
+      "line": 133,
       "table": "collect_task",
       "column": "status",
       "default": "'idle'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 68,
+      "line": 133,
       "table": "collect_task",
       "column": "total_collect_count",
       "default": "0"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 142,
+      "line": 227,
       "table": "collect_data_record",
       "column": "quality",
       "default": "'good'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 142,
+      "line": 227,
       "table": "collect_data_record",
       "column": "source_type",
       "default": "'iot'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 178,
+      "line": 275,
       "table": "iot_gateway",
       "column": "status",
       "default": "'offline'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 223,
+      "line": 320,
       "table": "iot_device",
       "column": "collect_interval_seconds",
       "default": "60"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 223,
+      "line": 320,
       "table": "iot_device",
       "column": "protocol",
       "default": "'Modbus'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 223,
+      "line": 320,
       "table": "iot_device",
       "column": "scaling_factor",
       "default": "1.0"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 223,
+      "line": 320,
       "table": "iot_device",
       "column": "status",
       "default": "'offline'"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 267,
+      "line": 368,
       "table": "link_monitor",
       "column": "consecutive_failures",
       "default": "0"
     },
     {
       "file": "app/repositories/data_collection_repo.py",
-      "line": 267,
+      "line": 368,
       "table": "link_monitor",
       "column": "expected_status_code",
       "default": "200"
     },
     {
       "file": "app/repositories/dictionary_repo.py",
-      "line": 15,
+      "line": 17,
       "table": "dictionaries",
       "column": "is_system",
       "default": "False"
     },
     {
       "file": "app/repositories/dictionary_repo.py",
-      "line": 25,
+      "line": 39,
       "table": "dictionary_items",
       "column": "status",
       "default": "'active'"
@@ -239,13 +232,6 @@
       "default": "'pending'"
     },
     {
-      "file": "app/repositories/message_repo.py",
-      "line": 13,
-      "table": "messages",
-      "column": "is_read",
-      "default": "False"
-    },
-    {
       "file": "app/repositories/organization_repo.py",
       "line": 27,
       "table": "employees",
@@ -268,63 +254,63 @@
     },
     {
       "file": "app/repositories/production_repo.py",
-      "line": 195,
+      "line": 219,
       "table": "route_steps",
       "column": "step_type",
       "default": "'production'"
     },
     {
       "file": "app/repositories/quality_repo.py",
-      "line": 119,
+      "line": 135,
       "table": "inspection_item",
       "column": "is_auto_generated",
       "default": "False"
     },
     {
       "file": "app/repositories/role_repo.py",
-      "line": 53,
+      "line": 58,
       "table": "roles",
       "column": "is_system",
       "default": "False"
     },
     {
       "file": "app/repositories/role_repo.py",
-      "line": 53,
+      "line": 58,
       "table": "roles",
       "column": "scope",
       "default": "'ALL'"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 97,
+      "line": 164,
       "table": "maintenance_tasks",
       "column": "priority",
       "default": "0"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 97,
+      "line": 164,
       "table": "maintenance_tasks",
       "column": "status",
       "default": "'pending'"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 155,
+      "line": 233,
       "table": "maintenance_plans",
       "column": "cycle_unit",
       "default": "'month'"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 155,
+      "line": 233,
       "table": "maintenance_plans",
       "column": "cycle_value",
       "default": "1"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 155,
+      "line": 233,
       "table": "maintenance_plans",
       "column": "status",
       "default": "'active'"
@@ -359,105 +345,105 @@
     },
     {
       "file": "app/repositories/user_repo.py",
-      "line": 230,
+      "line": 260,
       "table": "users",
       "column": "must_change_password",
       "default": "False"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 697,
+      "line": 870,
       "table": "receipt_orders",
       "column": "received_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 697,
+      "line": 870,
       "table": "receipt_orders",
       "column": "status",
       "default": "'pending'"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 697,
+      "line": 870,
       "table": "receipt_orders",
       "column": "stored_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 697,
+      "line": 870,
       "table": "receipt_orders",
       "column": "total_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 738,
+      "line": 911,
       "table": "receipt_order_items",
       "column": "expected_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 738,
+      "line": 911,
       "table": "receipt_order_items",
       "column": "inspection_status",
       "default": "'pending'"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 738,
+      "line": 911,
       "table": "receipt_order_items",
       "column": "received_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 738,
+      "line": 911,
       "table": "receipt_order_items",
       "column": "stored_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 799,
+      "line": 996,
       "table": "issue_orders",
       "column": "issued_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 799,
+      "line": 996,
       "table": "issue_orders",
       "column": "status",
       "default": "'pending'"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 799,
+      "line": 996,
       "table": "issue_orders",
       "column": "total_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 833,
+      "line": 1030,
       "table": "issue_order_items",
       "column": "issued_qty",
       "default": "0"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 833,
+      "line": 1030,
       "table": "issue_order_items",
       "column": "pick_status",
       "default": "'pending'"
     },
     {
       "file": "app/repositories/wms_repo.py",
-      "line": 833,
+      "line": 1030,
       "table": "issue_order_items",
       "column": "required_qty",
       "default": "0"

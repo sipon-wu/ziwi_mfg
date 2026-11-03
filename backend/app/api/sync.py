@@ -11,6 +11,7 @@ from app.repositories.base import MultiTenantRepository
 from app.sync.change_log_service import ChangeLogService
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+import json
 import secrets
 
 router = APIRouter(prefix="/api/v1/sync", tags=["M00-数据同步"])
@@ -30,6 +31,15 @@ async def verify_consumer(
         raise HTTPException(status_code=401, detail={"code": "401-0001", "message": "API Key 无效"})
     if not consumer["is_active"]:
         raise HTTPException(status_code=403, detail={"code": "403-0001", "message": "该消费者已被禁用"})
+    # allowed_tables 是 JSON 列：SQLite 原生 SQL 出来是字符串、PG 出来是 list。
+    # 不归一的话下游 `isinstance(allowed, list)` 恒假 → **表级白名单静默失效**，
+    # 消费者能拉到全部表的变更（越权而不是报错，最危险的那种）。
+    allowed = consumer.get("allowed_tables")
+    if isinstance(allowed, (str, bytes)):
+        try:
+            consumer["allowed_tables"] = json.loads(allowed)
+        except (ValueError, TypeError):
+            consumer["allowed_tables"] = None
     if consumer["expires_at"]:
         expires = consumer["expires_at"]
         if isinstance(expires, str):
@@ -137,15 +147,22 @@ async def create_consumer(
     api_key = f"ziwi_{secrets.token_hex(24)}"
     expires_at = datetime.now(timezone.utc) + timedelta(days=expire_days)
     tables = allowed_tables.split(",") if allowed_tables else None
-    
+
+    # ★ 两个坑一起避：
+    #  ① allowed_tables 是 JSON 列。原生 SQL 下 SQLAlchemy 不做序列化，直接绑
+    #     Python list → SQLite `type 'list' is not supported`、PG DataError。
+    #  ② is_active 原来在 VALUES 里写字面量 1。SQLite 宽容，PG 的 boolean 列
+    #     会直接 `column "is_active" is of type boolean but expression is of type
+    #     integer`（C-37 同类，本地永远测不出来）。
     await repo.execute(
         "INSERT INTO sync_consumer (tenant_id, consumer_name, api_key, allowed_tables, is_active, expires_at) "
-        "VALUES (:tenant_id, :consumer_name, :api_key, :allowed_tables, 1, :expires_at)",
+        "VALUES (:tenant_id, :consumer_name, :api_key, :allowed_tables, :is_active, :expires_at)",
         {
             "tenant_id": tenant_id,
             "consumer_name": consumer_name,
             "api_key": api_key,
-            "allowed_tables": tables,
+            "allowed_tables": json.dumps(tables, ensure_ascii=False) if tables else None,
+            "is_active": True,
             "expires_at": expires_at,
         },
     )

@@ -131,9 +131,15 @@ class ApprovalRepository(MultiTenantRepository):
         # 缺这一列时基类的 SELECT 注入会直接 no such column: approval_nodes.tenant_id。
         payload = {"tenant_id": self._tenant_id, **data}
         payload.setdefault("node_type", "approve")
+        # ★ status 也必须显式写。模型上的 `default="pending"` 是 **ORM 层**默认，
+        #   只对 Python 侧 INSERT 生效；本方法走原生 SQL 且列清单里带 :status，
+        #   不给值就是 NULL。而 `POST /approvals/{id}/action` 靠
+        #   `n["status"] == "pending"` 找待批节点 —— NULL 永远匹配不上，
+        #   于是每张审批单一发起就"没有待审批的节点"，审批链 100% 走不动。
+        payload.setdefault("status", "pending")
         return await self.execute(
-            "INSERT INTO approval_nodes (tenant_id, approval_id, node_order, approver_id, node_type) "
-            "VALUES (:tenant_id, :approval_id, :node_order, :approver_id, :node_type)", payload)
+            "INSERT INTO approval_nodes (tenant_id, approval_id, node_order, approver_id, node_type, status) "
+            "VALUES (:tenant_id, :approval_id, :node_order, :approver_id, :node_type, :status)", payload)
 
     async def list_nodes(self, approval_id: int) -> List[Dict]:
         return await self.query("SELECT * FROM approval_nodes WHERE approval_id = :aid ORDER BY node_order", {"aid": approval_id})

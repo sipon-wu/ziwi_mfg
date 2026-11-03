@@ -184,7 +184,16 @@ async def approve_action(
 
     # 更新当前节点状态
     now = datetime.now(timezone.utc)
-    await repo.update_node(current_node["id"], {"status": req.action, "comment": req.comment, "operated_at": now})
+    # ★ 动作词 vs 状态词必须分开。请求体传的是动作 ``approve``/``reject``，
+    #   而全流程（本文件后续的三处判断、list_nodes 的读回、前端状态渲染）用的是
+    #   状态词 ``approved``/``rejected``。此前直接把 req.action 写进 status：
+    #     - 单节点：节点变成 "approve"，`all(n["status"] == "approved")` 恒假
+    #       → 实例永远停在 pending，接口回"等待下一节点审批"，**审批永远通不过**
+    #     - 多节点：第二级进来先撞"前面的审批节点（顺序1）尚未完成"→ 400，**二级永远批不动**
+    _NODE_STATUS = {"approve": "approved", "reject": "rejected"}
+    node_status = _NODE_STATUS.get(req.action, req.action)
+    await repo.update_node(current_node["id"], {"status": node_status,
+                                              "comment": req.comment, "operated_at": now})
     await audit.log(
         AuditAction.APPROVAL_ACTION,
         before={"node_id": current_node["id"], "status": "pending",

@@ -1,8 +1,8 @@
-# 功能覆盖矩阵（2026-11-03 22:37）
+# 功能覆盖矩阵（2026-11-03 22:52）
 
 - 业务路由总数：**458**
-- 探针源码中出现过的：**340**（74.2%，乐观口径）
-- 完全没出现过的：**118**
+- 探针源码中出现过的：**395**（86.2%，乐观口径）
+- 完全没出现过的：**63**
 
 > 口径：`被测到` = 探针源码里出现过该 URL 字面量。**不等于被断言** —— 断言强度要看探针本身；用变量拼路径的会被算作未覆盖（保守）。
 
@@ -10,7 +10,7 @@
 
 | 模块 | 名称 | 路由 | 被测到 | 未测 | 覆盖率 |
 |---|---|---:|---:|---:|---:|
-| PLAT ⚠️ | 平台底座 | 98 | 43 | 55 | 44% |
+| PLAT  | 平台底座 | 98 | 98 | 0 | 100% |
 | M04  | 仓储管理 | 81 | 59 | 22 | 73% |
 | M03  | 品质管理 | 47 | 34 | 13 | 72% |
 | M10  | 品质高阶（SPC/FMEA/PPAP） | 47 | 47 | 0 | 100% |
@@ -26,64 +26,6 @@
 | M30  | 不合格评审 NCR | 5 | 5 | 0 | 100% |
 
 ## 未覆盖清单（按模块）
-
-### PLAT 平台底座 — 55 条
-
-- `POST /api/v1/approvals/{approval_id}/action`
-- `POST /api/v1/auth/logout`
-- `POST /api/v1/copilot/ask`
-- `POST /api/v1/copilot/briefing`
-- `POST /api/v1/copilot/feedback`
-- `GET /api/v1/copilot/sessions`
-- `DELETE /api/v1/copilot/sessions/{session_id}`
-- `GET /api/v1/dictionaries`
-- `POST /api/v1/dictionaries`
-- `GET /api/v1/dictionaries/code/{code}/items`
-- `PUT /api/v1/dictionaries/items/{item_id}`
-- `DELETE /api/v1/dictionaries/items/{item_id}`
-- `GET /api/v1/dictionaries/{dict_id}`
-- `PUT /api/v1/dictionaries/{dict_id}`
-- `POST /api/v1/dictionaries/{dict_id}/items`
-- `DELETE /api/v1/employees/{employee_id}`
-- `GET /api/v1/excel-import/tasks`
-- `POST /api/v1/excel-import/tasks`
-- `GET /api/v1/excel-import/tasks/{task_id}`
-- `GET /api/v1/excel-import/templates`
-- `GET /api/v1/excel-import/templates/{import_type}/download`
-- `POST /api/v1/integration-gateway/keys`
-- `GET /api/v1/integration-gateway/keys`
-- `DELETE /api/v1/integration-gateway/keys/{key_id}`
-- `GET /api/v1/integration-gateway/me`
-- `GET /api/v1/messages`
-- `POST /api/v1/messages`
-- `GET /api/v1/messages/unread-count`
-- `PUT /api/v1/messages/{msg_id}/read`
-- `DELETE /api/v1/organizations/{org_id}/members/{user_id}`
-- `GET /api/v1/print/artifacts`
-- `GET /api/v1/print/artifacts/{artifact_id}/pdf`
-- `GET /api/v1/print/verify/{verify_code}`
-- `POST /api/v1/roles/key-user-permissions`
-- `PUT /api/v1/roles/{role_id}/scope`
-- `GET /api/v1/roles/{role_id}/users`
-- `POST /api/v1/roles/{role_id}/users`
-- `DELETE /api/v1/roles/{role_id}/users/{user_id}`
-- `GET /api/v1/sync/changes`
-- `POST /api/v1/sync/changes/ack`
-- `GET /api/v1/sync/consumers`
-- `POST /api/v1/sync/consumers`
-- `POST /api/v1/sync/consumers/{consumer_id}/renew`
-- `POST /api/v1/sync/consumers/{consumer_id}/revoke`
-- `GET /api/v1/sync/status`
-- `GET /api/v1/system/config`
-- `GET /api/v1/system/health`
-- `GET /api/v1/system/license`
-- `PUT /api/v1/teams/{team_id}`
-- `DELETE /api/v1/teams/{team_id}`
-- `GET /api/v1/tenants/tenant/modules`
-- `PUT /api/v1/tenants/tenant/modules`
-- `GET /api/v1/tenants/{tenant_id}`
-- `PUT /api/v1/tenants/{tenant_id}`
-- `GET /api/v1/tenants/{tenant_id}/license`
 
 ### M04 仓储管理 — 22 条
 

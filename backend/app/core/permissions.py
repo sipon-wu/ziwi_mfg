@@ -46,6 +46,12 @@ logger = logging.getLogger(__name__)
 PERMISSION_EXEMPT_PREFIXES: Tuple[str, ...] = (
     "/api/v1/auth/login",
     "/api/v1/auth/me",
+    # 集成网关自检端点：它的**唯一用途**就是让第三方确认自己的 API Key 是否生效
+    # （返回 auth_type / tenant_id / key_id / key_name）。走权限判定的话，一把
+    # 刚创建、还没配业务权限的 Key 调它必然 403 `缺少权限:
+    # PLAT:integration_gateway_me:read` —— 自检永远失败，而"认证"本身已经由
+    # get_api_key_user 强制（无效/吊销/过期一律 401）。故这里只免"授权"不免"认证"。
+    "/api/v1/integration-gateway/me",
     "/health",
     "/docs",
     "/redoc",
@@ -525,7 +531,7 @@ async def permission_guard(
     if is_enforced(required):
         logger.info(
             "权限拒绝: user=%s %s %s 需要 %s",
-            (request.state.user or {}).get("id") if hasattr(request, "state") else None,
+            (getattr(request.state, "user", None) or {}).get("id") if hasattr(request, "state") else None,
             request.method, path, required,
         )
         raise HTTPException(403, detail={
