@@ -159,10 +159,11 @@
     {
       "system": "QA 质量管理",
       "count": 3,
-      "note": "检验单/项/判定/抽样通；NG→NCR 需人工开",
+      "note": "检验单/项/判定/抽样通；判 REJ→自动 NCR、报工报废→自动 NCR 均成立",
       "verdict": "PASS",
       "codes": [
-        "V7"
+        "V7",
+        "B-2"
       ]
     },
     {

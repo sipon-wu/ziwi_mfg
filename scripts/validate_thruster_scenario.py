@@ -639,7 +639,12 @@ def coverage(c):
          lambda x: (x.get("task_no") or "").startswith(("MT-", "MT-AH-")),
          "计划→到期任务→点检→完工通", ["V10"]),
         ("QA 质量管理", "/inspection-orders", lambda x: True,
-         "检验单/项/判定/抽样通；NG→NCR 需人工开", ["V7"]),
+         # ★文案随 B-2 的结论一起改。B-2 原判 GAP（"NG→NCR 需人工开"），
+         #   清库后系统自动生成的 NC-QC-*/NC-WR2 浮现，实测两条联动都存在。
+         #   矩阵文案若不同步，报告里会同时出现「B-2 PASS」与「需人工开」——
+         #   这种自相矛盾比报红更误导现场。
+         "检验单/项/判定/抽样通；判 REJ→自动 NCR、报工报废→自动 NCR 均成立",
+         ["V7", "B-2"]),
         ("Andon 安灯", "/andon/calls",
          lambda x: (x.get("description") or "") in (
              "合装压机压力异常，MA020 停机", "定子电检耐压不合格连续 3 件",
