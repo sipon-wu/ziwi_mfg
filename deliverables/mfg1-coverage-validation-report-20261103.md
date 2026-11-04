@@ -421,6 +421,58 @@ fmea_hierarchies.operation_id  →  operations.is_critical
 
 ---
 
+### 10.5 业务时区：一个"每天 8 小时红、16 小时绿"的缺陷（2026-11-05，`044a75d`）
+
+**现象。** 全量 48 探针回归跑到 `wms_edge_e2e::E-B3-1`（自动拣选必须排除过期批次）时挂掉：探针把某批次的效期改成"昨天"，再走自动拣选出 40 件，**系统照常发货、扣账 200**。
+
+**为什么以前一直是绿的。** 同一个用例，2026-11-04 17:27 CST 跑是全绿的，2026-11-05 00:58 CST 跑必红。差别不在代码，在**跑的时刻**：
+
+| | 时刻 | 日期 |
+|---|---|---|
+| 本地 / 主机 | 2026-11-05 00:58 CST | 11-05 |
+| 容器 | 2026-11-04 16:58 UTC | **11-04** |
+
+容器跑 **UTC**，业务在 **CST(+08)**。UTC 16:00–24:00 这 8 小时里，容器的"今天"比业务上的"今天"**早一天**。探针按本地日算"昨天"= 11-04，后端 `date.today()` 也返回 11-04 → `expiry_date >= :today` 成立 → 判为**未过期**。
+
+所以这是一个 **UTC 16:00 之后的 8 小时里必现、其余 16 小时必不现**的缺陷。白天开发、白天跑测试、白天回归，**永远碰不到**；碰得到的只有夜班和凌晨跑的 CI。这类缺陷比"一直红"危险得多 —— 它给的是**假绿**。
+
+**定性过程（三步排除）。**
+
+1. 先查拣选 SQL：`find_available_batches` / `find_available_rows` **都带**过期过滤（`b.expiry_date >= :today`）—— 不是漏了过滤，是过滤参数错了。
+2. 再查 `PUT /wms/batches/{id}` 的 `expiry_date` 是否真落库：临时探针回读 `2026-11-04`、`affected:1` —— **落库了**，不是写丢了。
+3. 最后并排打三处时钟，才看见容器比业务日早一天。
+
+**修法。** 存储继续 UTC-naive **不动**（改存储口径等于把整个 WMS 的账重算一遍），只把"业务日"抽成显式函数：
+
+- `app/core/business_time.py` 新增 —— `business_tz()` / `business_now()` / `business_today()`
+- `config.py` 加 `BUSINESS_UTC_OFFSET_HOURS: int = 8`
+- `wms_repo.py` 2 处（`find_available_rows` / `find_available_batches` 的 `:today` 参数）
+- `wms_service.py` 4 处（IQC 单号前缀 / `suggest_picks` / `_assert_batch_issuable` / `eta` 到货预测）
+
+**光修不够，要能复现。** 原来的单测也测不出这个缺陷 —— 它们都显式传 `today` 参数，绕开了"今天从哪来"这个问题。新增 `app/tests/test_business_time.py`（7 条）：
+
+| 类型 | 条数 | 断言 |
+|---|---|---|
+| 纯函数 | 5 | UTC 傍晚跨日（16:30 UTC → 业务日 +1）/ 白天同日 / 16:00 整边界 / naive 输入按 UTC 解释 / `business_now` 偏移正确 |
+| 仓储级 | 2 | `patch("...wms_repo.business_today", return_value=SENTINEL)` 后，断言**传给 SQL 的 `today` 参数就是 SENTINEL** |
+
+后两条是关键：谁把 `business_today()` 改回 `date.today()`，**立刻红**，不用等到半夜复现。
+
+**同一个提交里还修了一个自己引入的 NameError。** 迁移时把 `from datetime import date` 删了（以为是死导入），但 `_assert_batch_issuable` 里还在用 `isinstance(exp, date)` —— 结果是**显式指定批次出库直接 500**。被 4 条既有单测当场拦下（`pytest.raises(ValueError)` 里没抛 ValueError，往下翻才看到 `NameError: name 'date' is not defined`）。教训：删导入前必须 `grep -n "\bdate\b"` 过一遍整个文件，不能靠"看起来没用"。
+
+**验证（在复现窗口内完成，这是最有力的一次）。** 部署 `a82c226` 时容器时钟是 `2026-11-04 17:09 UTC`、业务日 `2026-11-05` —— **正处在缺陷必现的那 8 小时里**。同一份探针：
+
+- 修前：`E-B3-1` 断（40 件过期品照常出库）
+- 修后：`E-B3-1` 通（出库 400「无可用的库存记录」）；`E-B3-2` 显式点名过期批同样 400「已过期（到期日 2026-11-04）」
+- 全量 pytest **1424 passed / 0 failed**
+- **全量 51 探针回归：通 1542 / 断 0，退出码 0**；覆盖棘轮 458/458（未覆盖 0）；契约闸无新增断裂
+
+⚠️ **这次还撞出一个工具坑**：编辑 `wms_repo.py` 时文件被整体从 CRLF 刷成 LF，产生 2615 行伪 diff（仓库 `core.autocrlf=false`，backend 下 66 个 CRLF + 215 个 LF 混存，git 按字节存）。已用 `a82c226` 还原行尾，还原后相对父提交的真实差异是 6 增 3 删。**以后改这批 CRLF 文件后要 `git show --stat` 看一眼改动行数是否离谱。**
+
+**同一类问题还剩 6 处未迁**（本轮按范围纪律只改已实证有伤害的 WMS 链）：`lab_service.py`(2) / `bom_service.py`(2) / `trial_service.py`(1) / `production_service.py`(1) / `ppap_service.py`(1)。这些还没有证据表明造成过实际伤害，先记录不动。
+
+---
+
 ## 11. 下一步
 
 1. ~~**推 staging 并做全模块浏览器回归**（阶段④⑤）~~ —— **已完成（2026-11-04）**：`origin/main` @ `7d8cc42` 已部署，API 1542/0、浏览器 FAIL 0、PG 冒烟 5xx=0。17 个修复在 PG 上确认有效（见 §10.1）。
