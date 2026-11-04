@@ -173,13 +173,19 @@ async function handleSaveLinkOp() {
 
 async function fetchOperations() {
   try {
-    const res = await get<{ items: OperationOpt[] }>('/operations', {
-      params: { page: 1, page_size: 200 },
+    // ★ page_size 上限是 100（后端 Query(20, ge=1, le=100)），传 200 会 422。
+    // 而 422 在 catch 里被吞掉时，表现是"页面正常、关联下拉是空的" ——
+    // 所以这里失败必须说出来，不能静默。
+    const res = await get<{ items: OperationOpt[]; total: number }>('/operations', {
+      params: { page: 1, page_size: 100 },
     })
     operations.value = res.items || []
+    if ((res.total || 0) > operations.value.length) {
+      showToast(`工序较多，关联下拉仅列出前 ${operations.value.length} 条（共 ${res.total} 条）`)
+    }
   } catch {
-    // 工序主数据拉不到不影响结构树编辑，只是关联下拉为空 —— 不打断页面
     operations.value = []
+    showToast('工序列表加载失败，关联工序下拉不可用')
   }
 }
 
