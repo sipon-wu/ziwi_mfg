@@ -118,10 +118,12 @@ def main() -> int:
                                           params={"page": 1, "page_size": 5}))
 
     # ⑦ 同步中心（消费者面接口，鉴权走 X-Api-Key 不是 JWT）
+    #    ★ 建消费者四个参数全是 **query**，不是 JSON body —— 发 body 会 422，
+    #      而 422 会被"不再 5xx 就算过"的判据当成通过，实际一行代码都没走到。
     tid = (c.get(f"{API}/auth/me").json().get("data") or {}).get("tenant_id")
     cons = c.post(f"{API}/sync/consumers",
-                  json={"tenant_id": tid, "consumer_name": f"smoke-{TAG}",
-                        "allowed_tables": "equipment,work_report", "expire_days": 7})
+                  params={"tenant_id": tid, "consumer_name": f"smoke-{TAG}",
+                          "allowed_tables": "equipment,work_report", "expire_days": 7})
     key = (cons.json().get("data") or {}).get("api_key")
     rec("POST /sync/consumers（JSON 列 + boolean）", cons)
     if key:
@@ -138,6 +140,30 @@ def main() -> int:
         did = ed[0]["id"]
         rec(f"PUT /energy/devices/{did} 只改 location",
             c.put(f"{API}/energy/devices/{did}", json={"location": f"B 车间-{TAG}"}))
+
+    # ⑨ 导入模板列表（import_templates 无 tenant_id 列 + is_active 是 Integer）
+    #    两处错误叠在一起：注入 tenant_id → no such column；`is_active = true`
+    #    → operator does not exist: integer = boolean。SQLite 两个都容忍。
+    rec("GET /excel-import/templates（全局表 + Integer 比 1）",
+        c.get(f"{API}/excel-import/templates"))
+
+    # ⑩ 建角色带权限码（permissions 无 tenant_id 列 → 曾 500）
+    #    ★ 编码必须**小写字母开头**（CreateRoleRequest 前置校验），否则 400 直接
+    #      挡在 service 之前 —— 那样根本没走到 find_permission_ids_by_codes，
+    #      等于没验。权限码也不能瞎编：编的码查不到 id，角色建出来但没有权限行，
+    #      看着 200 通过、实际那行 SQL 只返回空集。所以用真实存在的码。
+    pick = ["M01:work_order:read", "M04:wms_material:read", "M03:inspection_order:read"]
+    cr = c.post(f"{API}/roles",
+                json={"name": f"烟测角色-{TAG}", "code": f"smoke_{TAG}",
+                      "description": "PG 冒烟用，跑完即删", "permissions": pick})
+    rec(f"POST /roles（带 {len(pick)} 个真实权限码）", cr)
+    rid = (cr.json().get("data") or {}).get("id") if cr.status_code < 400 else None
+    if rid:
+        got = c.get(f"{API}/roles/{rid}/permissions").json()
+        n = len((got.get("data") or []))
+        print(f"  回读：角色 {rid} 实际落库权限 {n} 条（期望 {len(pick)}）")
+        c.delete(f"{API}/roles/{rid}")
+        print(f"  [清理] 已删除烟测角色 id={rid}")
 
     print(f"{'端点':<52}{'HTTP':>6}  说明")
     print("-" * 104)

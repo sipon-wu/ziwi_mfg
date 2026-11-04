@@ -273,6 +273,7 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 | API 全量（48 探针） | **1542 通 / 断 0**（本地 1565；差的 23 条是 `energy_threshold` 在 staging 只跑 2 条 —— mfg 侧无能耗写入口，如实 `[OUT]`） |
 | 浏览器全模块扫描 | **PASS 67 / WARN 5 / FAIL 0 / 72** |
 | PG 方言冒烟 | 字典 items / 品质报表生成 / 备件部分更新（回读 `min_stock=8`）/ 空载荷 PUT / 保养任务状态 / IoT ingest / 数据源 / 同步消费者+status+changes **全部 200，5xx = 0** |
+| 补验（`0a4f6dc` 部署后，2026-11-04） | `GET /excel-import/templates` **200**（返回 3 条模板）；`POST /roles` 带 3 个真实权限码 **200**，**回读角色权限 3/3** → 全局表注入问题在 PG 上确认消失。冒烟脚本扩到 **14 条、5xx = 0**，并修掉它自己的一处"没验到"（`/sync/consumers` 参数在 query 不在 body，原来发 body 拿 422 冒充通过） |
 
 5 个 WARN 全部可解释：都是写死 `id=1` 的详情页，staging 真实首条 id 是 518/101，`/work-orders/1` 确实 404；`/andon/1` 另有路径写错（`ROUTE_NOT_FOUND`）。属探针口径，不是产品缺陷。**已于 2026-11-04 修掉**（详见 §10.2 末）：详情页 id 改为跑前查列表取首条真实 id，重跑 **PASS 72 / WARN 0 / FAIL 0 / OUT 0**，13 个详情页全部用真实 id 打开（工单 518、设备 101、安灯 12、试产 111、委托 15、检验 406、工艺路线 78、SPC 27、FMEA 5、入库单 405）。
 
@@ -298,6 +299,7 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 > **C 类已于 2026-11-04 修完，基线 21 → 19 条。** 两处都是"全局表走了会注入的基类方法"，改法照抄同文件既有写法（裸 `self._session.execute(text(...))`）：
 > `RoleRepository.find_permission_ids_by_codes`（`POST /roles` 带权限码）、`ExcelImportRepository.get_template/list_templates`（`GET /excel-import/templates`）。
 > 回归用例 `app/tests/test_no_tenant_tables.py`（3 条，全部**显式 `set_tenant_id`** —— 不设租户就测不到这类问题）。证伪：直接调旧路径 → `no such column: import_templates.tenant_id` / `permissions.tenant_id`；新路径正常返回。
+> **staging 实证**（部署 `0a4f6dc` 后）：`GET /excel-import/templates` 200 返回 3 条模板；`POST /roles` 带 3 个真实权限码 200，回读角色权限 **3/3** 落库。
 >
 > 修的时候还发现第二层坑：`import_templates.is_active` 在模型里是 **Integer 不是 Boolean**，原 SQL 写的 `is_active = true` 在 PG 上报 `operator does not exist: integer = boolean`。也就是说这个接口是**两处错误叠加**，只是 SQLite 把两者都容忍了。改成 `= 1`（列类型是 integer 时该写 1，别被"别给 boolean 列写 0/1"那条经验带偏）。
 > **闸在这里各漏一半**：`check_pg_bool_literals` 只查"boolean 列被写 0/1"，方向相反的不查；`check_contracts` 只查列是否存在，不查类型能不能比。按列名做规则又会误伤（`is_active` 在几十张表里既可能是 Boolean 也可能是 Integer），要拦得住必须带**表上下文**——列为后续项，本轮没做。
