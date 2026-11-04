@@ -77,22 +77,73 @@ const STATIC_ROUTES = [
   ['/setup', '方案配置'],
 ];
 
-// 详情/编辑路由（用 seed 中存在的 id=1 探测）
+// 详情/编辑路由：id **不写死**，跑前先查列表取首条真实 id。
+// 为什么：写死 id=1 只在本地 seed 出来的库成立。staging 真实首条工单 id 是 518、
+// 设备是 101，于是这 13 条常年进 WARN，门禁就得靠人一条条判"这个 404 是数据没有
+// 还是页面坏了"——结果就是 5 个 WARN 挂了很久没人动。探针要证明的是"页面能打开"，
+// 不是"id=1 恰好存在"。
+// 第三个元素 = 对应的列表端点；列表为空时记 OUT（无样本），不记 WARN。
 const DETAIL_ROUTES = [
-  ['/work-orders/1', '工单详情'],
-  ['/equipment/1', '设备详情'],
-  ['/andon/1', '安灯详情'],
-  ['/trials/1', '试产详情'],
-  ['/lab/1', '委托详情'],
-  ['/quality/1', '检验详情'],
-  ['/basics/route-editor/1', '工艺路线编辑'],
-  ['/quality/spc/control-limits/1/chart', 'SPC控制图'],
-  ['/quality/spc/control-limits/1/capability', '过程能力分析'],
-  ['/quality/fmea/1/edit', 'FMEA编辑'],
-  ['/quality/fmea/1/actions', 'FMEA整改措施'],
-  ['/quality/fmea/1/control-plan', '控制计划'],
-  ['/wms/receipt-orders/1', '入库单详情'],
+  ['/work-orders/{id}', '工单详情', '/work-orders'],
+  ['/equipment/{id}', '设备详情', '/equipment'],
+  ['/andon/{id}', '安灯详情', '/andon/calls'],
+  ['/trials/{id}', '试产详情', '/trials'],
+  ['/lab/{id}', '委托详情', '/lab/requests'],
+  ['/quality/{id}', '检验详情', '/inspection-orders'],
+  ['/basics/route-editor/{id}', '工艺路线编辑', '/routes'],
+  ['/quality/spc/control-limits/{id}/chart', 'SPC控制图', '/spc/control-limits'],
+  ['/quality/spc/control-limits/{id}/capability', '过程能力分析', '/spc/control-limits'],
+  ['/quality/fmea/{id}/edit', 'FMEA编辑', '/fmea/documents'],
+  ['/quality/fmea/{id}/actions', 'FMEA整改措施', '/fmea/documents'],
+  ['/quality/fmea/{id}/control-plan', '控制计划', '/fmea/documents'],
+  ['/wms/receipt-orders/{id}', '入库单详情', '/wms/receipt-orders'],
 ];
+
+// 用页面自身的登录态去查列表（同源 fetch，不引第二个 HTTP 客户端，也不用猜 API 主机）。
+// 取不到 id 的条目从扫描列表里摘掉并记 OUT —— 让"没样本"和"页面坏了"在结果里
+// 是两种颜色，而不是混成一片 WARN 等人判读。
+async function resolveDetailIds(page) {
+  const kept = [];
+  for (const item of DETAIL_ROUTES) {
+    const [tpl, name, listPath] = item;
+    const probe = await page.evaluate(async (p) => {
+      // 后端统一包成 {code, message, data:{items,total}} 三层，且不同模块的
+      // 集合键叫法不完全一样（items / list / rows）。只取一层会一律得到"0 条"——
+      // 第一版就是这么错的：13 个详情页全记成 OUT，看着像"没数据"，其实是探针
+      // 自己没把返回体解开。
+      const firstRow = (node, depth) => {
+        if (depth > 4 || node === null || node === undefined) return null;
+        if (Array.isArray(node)) return node.length ? node[0] : null;
+        if (typeof node !== 'object') return null;
+        for (const k of ['items', 'data', 'list', 'rows', 'results', 'records']) {
+          if (node[k] !== undefined) {
+            const r = firstRow(node[k], depth + 1);
+            if (r) return r;
+          }
+        }
+        return null;
+      };
+      const token = localStorage.getItem('access_token') || '';
+      const sep = p.includes('?') ? '&' : '?';
+      try {
+        const r = await fetch('/api/v1' + p + sep + 'page=1&page_size=1',
+                              { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return { err: 'HTTP ' + r.status };
+        const row = firstRow(await r.json(), 0);
+        const id = row ? (row.id !== undefined ? row.id : row.ID) : null;
+        return { id: id === undefined ? null : id };
+      } catch (e) { return { err: String(e).slice(0, 60) }; }
+    }, listPath);
+    if (probe.id === null || probe.id === undefined) {
+      rec('D:' + name, name, 'OUT', `列表无样本（${probe.err || '0 条'}），详情页本轮不探`);
+      continue;
+    }
+    item[0] = tpl.replace('{id}', String(probe.id));
+    kept.push(item);
+  }
+  DETAIL_ROUTES.length = 0;
+  kept.forEach(x => DETAIL_ROUTES.push(x));
+}
 
 async function login(page, user, pw) {
   await page.goto(`${BASE}/#/login`, { waitUntil: 'networkidle', timeout: 30000 });
@@ -119,6 +170,9 @@ async function login(page, user, pw) {
   // ── 登录 admin ──
   const token = await login(page, 'mfg_admin', 'admin123');
   rec('LOGIN', 'admin 登录', token ? 'PASS' : 'FAIL', `token=${!!token}`);
+
+  // 先把详情页要用的 id 从真实数据里取出来，再开始扫
+  await resolveDetailIds(page);
 
   async function scan(id, name, route) {
     const errBefore = consoleErrors.length;
@@ -180,8 +234,9 @@ async function login(page, user, pw) {
   const pass = results.filter(r => r.status === 'PASS').length;
   const warn = results.filter(r => r.status === 'WARN').length;
   const fail = results.filter(r => r.status === 'FAIL').length;
+  const out = results.filter(r => r.status === 'OUT').length;
   console.log(`\n════════ 全模块扫描汇总 ════════`);
-  console.log(`PASS ${pass} / WARN ${warn} / FAIL ${fail} / TOTAL ${results.length}`);
+  console.log(`PASS ${pass} / WARN ${warn} / FAIL ${fail} / OUT ${out} / TOTAL ${results.length}`);
   const fails = results.filter(r => r.status === 'FAIL');
   if (fails.length) { console.log('FAIL 明细：'); fails.forEach(f => console.log(`  ✗ ${f.id} ${f.name} — ${f.detail}`)); }
   const warns = results.filter(r => r.status === 'WARN');

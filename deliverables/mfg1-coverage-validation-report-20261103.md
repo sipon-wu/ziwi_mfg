@@ -274,7 +274,7 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 | 浏览器全模块扫描 | **PASS 67 / WARN 5 / FAIL 0 / 72** |
 | PG 方言冒烟 | 字典 items / 品质报表生成 / 备件部分更新（回读 `min_stock=8`）/ 空载荷 PUT / 保养任务状态 / IoT ingest / 数据源 / 同步消费者+status+changes **全部 200，5xx = 0** |
 
-5 个 WARN 全部可解释：都是写死 `id=1` 的详情页，staging 真实首条 id 是 518/101，`/work-orders/1` 确实 404；`/andon/1` 另有路径写错（`ROUTE_NOT_FOUND`）。属探针口径，不是产品缺陷。
+5 个 WARN 全部可解释：都是写死 `id=1` 的详情页，staging 真实首条 id 是 518/101，`/work-orders/1` 确实 404；`/andon/1` 另有路径写错（`ROUTE_NOT_FOUND`）。属探针口径，不是产品缺陷。**已于 2026-11-04 修掉**（详见 §10.2 末）：详情页 id 改为跑前查列表取首条真实 id，重跑 **PASS 72 / WARN 0 / FAIL 0 / OUT 0**，13 个详情页全部用真实 id 打开（工单 518、设备 101、安灯 12、试产 111、委托 15、检验 406、工艺路线 78、SPC 27、FMEA 5、入库单 405）。
 
 ### 10.2 契约闸 `scripts/check_contracts.py`（2026-11-04 新增）
 
@@ -325,6 +325,36 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 1. `e2e/run_all.py` 末尾，紧跟覆盖棘轮，结果计入总退出码；`--skip-contracts` 可单独跳过。覆盖管"该跑的都跑到了"，契约管"跑到的那条路上名字对不对"，两件事不能互相替代。
 2. `backend/app/tests/test_contract_gate.py` —— 日常改代码只跑 pytest，不跑 `run_all.py`；闸只在合并前跑一次，就拦不住日常提交。
 
+#### 10.2.1 顺带修掉的探针口径：详情页不再写死 `id=1`
+
+`full_module_scan.js` 的 13 个详情页原本全部用 `id=1`，本地 seed 库能过、staging 必 404 —— 这就是那 5 个常年挂着、要靠人判读的 WARN 的来历。改为第三列声明列表端点、跑前用页面自身登录态查一次取首条真实 id；查不到的记 **OUT（无样本）** 而不是 WARN，让"没数据"和"页面坏了"在结果里是两种颜色。
+
+改造过程中又踩了一次自己的坑：第一版只解开一层返回体（`j.items`），而后端统一是 `{code, message, data:{items,total}}` 三层 → 13 个详情页全被记成 "0 条 / OUT"，看着像数据没有，其实是探针没把返回体解对。**"OUT 13" 和 "真的没数据" 在日志上长得一模一样**，只有对着 API 契约核一遍才分得清。
+
+### 10.3 `route_steps` 三连：PFMEA 发布链路为什么一直发布不了
+
+契约闸 A1/A2/D 三条命中的是同一个类 `production_repo.RouteStepRepository`，把三层证据串起来看，这不是三个独立笔误，是**数据模型改过、这段代码没跟**：
+
+| 层 | 事实 |
+|---|---|
+| 表 | `route_steps` 真实列 = `route_id / operation_id / step_name / step_seq / wc_id / setup_time_override / unit_time_override / is_parallel_eligible / is_outsource / next_step_seq / parallel_group`。**没有** `product_id / process_code / process_name / sort_order / workcenter / standard_time / is_critical` |
+| 仓储 | 该类 5 个方法里 4 个零调用（`list_by_product` / `create_step` / `get_step` / `batch_set_critical`）；唯一在用的 `update_is_critical` 写的就是不存在的 `is_critical` 列 |
+| 表头 | 工艺路线主表是 `process_routes`，列里**没有 `product_id`** —— "按产品找路线"这个前提在现模型里根本不成立 |
+| 调用链 | `FmeaService.publish_document`（`fmea_service.py:220`）在 `fmea_type == 'PFMEA' and doc.process_id` 时调 `sync_to_process_route` → 第 415 行 `SELECT id FROM route_steps WHERE product_id = :pid AND process_name = :pname` → **必 500** → `get_db` 回滚，发布整条失败（不是半提交） |
+
+也就是说：**PFMEA 文档只要设了 `process_id`，点发布就是 500**；没设 `process_id` 就跳过这段，看着一切正常 —— 这正是"走不到那行就永远看不见"。
+
+修法需要产品拍板（落点决定数据模型），四条路：
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| A 加到工序主数据 | `operations.is_critical`（migration），FMEA 的 hierarchy label 按 `operations.name` 匹配，`route_steps.operation_id` 天然带上 | 语义最贴合现模型；但"关键工序"变成租户级属性，不分产品 |
+| B 加到路线步骤 | `route_steps.is_critical`（migration），仍需决定按什么找到目标 step（无 product 维度） | 保留"按路线"粒度，但匹配规则要重新定义 |
+| C 去掉联动 | 发布流程只生成控制计划，FMEA 不再动工艺路线 | 最省事，等于砍功能，需确认没人依赖 |
+| D 止血 | 这段包 try/except 记 warning，发布不再 500 | 发布能过，但"已同步 N 个关键工序"仍是空话 |
+
+我的建议是 **A**：现模型里 `route_steps` 的下游就是 `operations`，把"关键工序"放在工序主数据上，既不新增跨表匹配规则，也让 FMEA / 工艺 / 控制计划三处共用同一个标记。但这是产品语义决定，不擅自改。
+
 ---
 
 ## 11. 下一步
@@ -335,4 +365,4 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
 5. **`full_module_scan.js` 详情页别写死 `id=1`** —— staging 真实 id 是 518/101，5 个 WARN 全来自这里；`/andon/1` 路径也是错的（应为 `/andon/calls/{id}` 一类）。改成先查列表取首条 id 就能把 WARN 清零，让门禁不再需要人工判读。
 6. **`energy_threshold_e2e` 在 staging 只跑 2 条** —— mfg 侧无能耗写入口（ECMS 归独立产品线），阈值告警链路端到端只能在 ECMS 侧验。这条要不要补、补在哪一侧，待定。
-7. **契约闸查出的 3 处活缺陷**（`route_steps` 三连：`create_step` 列名全错、`update_is_critical` 列不存在、`fmea_service` 的 SELECT 用 `product_id/process_name`）+ 2 处可达性待确认（`/excel-import/templates`、`POST /roles` 带 codes）—— 已录基线，闸不会因此变红；修不修、什么时候修，待拍板（详见 §10.2）。
+7. **契约闸查出的 3 处活缺陷**（`route_steps` 三连）+ 2 处可达性待确认（`/excel-import/templates`、`POST /roles` 带 codes）—— 已录基线，闸不会因此变红。其中 `route_steps` 直接卡死 **PFMEA 发布**（设了 `process_id` 就 500），有四个修法待选，**建议方案 A（关键工序落到 `operations`）**，详见 §10.3。
