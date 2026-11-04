@@ -193,6 +193,7 @@
 | **OEE 端点** | 平台无 OEE 计算接口，只能由看板前端自己算 | 要不要服务端出 OEE？口径（时间开动率/性能开动率/合格品率）怎么定 |
 | **G1 序列号三级赋码** | 只有批次级追溯，无序列号级 | 序列号体系做不做、做几级（单品/箱/托） |
 | **业务时区** | 安灯升级扫描 `'str' object has no attribute 'tzinfo'` 刷屏 | 统一 UTC 存储 + 展示层转换，还是业务本地时区存 |
+| **逾期天数口径** | `overdue_days = (now - due).days`，即**满 24 小时**才进一位：迟到 23 小时 `is_overdue=False`、25 小时才 =1；且"刚好 4 天"在边界上会落成 3 天 | 按自然日（日历差）还是按满 24h？直接影响保养升级（≥3 urgent / ≥7 critical）的触发时点 |
 | **批次锁重复调用语义** | 后者覆盖前者的 `lock_reason` | 幂等（保留首次）还是覆盖（以最新为准） |
 
 ---
@@ -246,7 +247,7 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 
 ## 10. 代码变更清单
 
-本轮 8 个提交（`main` 分支，**尚未 push** —— 按交付 SOP 需过 CVM 全模块浏览器回归才推）：
+本轮 10 个提交（`main` 分支，**已全部 push 到 origin/main 并部署 staging**）：
 
 | commit | 内容 | 覆盖变化 |
 |---|---|---|
@@ -258,14 +259,30 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 | `17f091a` | 补齐最后 28 条路由（3 缺陷） | 458/458 = 100% |
 | `9d4d993` | 两条探针默认 BASE_URL 8092 → 8000 | 门禁不再假红 |
 | `148a2b2` | 仓储探针去跨轮污染 | 可重复 |
+| `a45041b` | 覆盖棘轮接入 E2E 门禁 | 覆盖不许偷偷退 |
+| `0792fb2` | staging 首跑 2 断的探针口径修复 + PG 冒烟脚本 | 门禁在真实网络下也稳 |
 
 新增单测 5 个文件（`test_quality_report_payload` 10 条 / `test_partial_update_schemas` 7 条 / `test_control_plan_generate` 2 条 / `test_iot_ingest_and_json_cols` 17 条 / `test_work_report_finish_qty` 14 条）+ `test_wms_edge` 补 5 条，共 55 条。这些单测专门守"跨文件契约"——**schema 字段数 vs 手写 SQL 占位符数**、**service 调用的仓储方法是否存在**，这两类错误跑通别的用例永远发现不了。
+
+### 10.1 staging 验收记录（2026-11-04）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `origin/main` @ `7d8cc42` → `/opt/ziwi/mfg` 重建 backend（migrations 全跑）+ 前端 `dist_deploy_20261104` 换到 `/opt/mfg1/frontend` |
+| 健康 | `https://mfg1.ziwi.cn/health` 200；首页引用的 `assets/index-CPKKH98v.js` 真实存在 |
+| API 全量（48 探针） | **1542 通 / 断 0**（本地 1565；差的 23 条是 `energy_threshold` 在 staging 只跑 2 条 —— mfg 侧无能耗写入口，如实 `[OUT]`） |
+| 浏览器全模块扫描 | **PASS 67 / WARN 5 / FAIL 0 / 72** |
+| PG 方言冒烟 | 字典 items / 品质报表生成 / 备件部分更新（回读 `min_stock=8`）/ 空载荷 PUT / 保养任务状态 / IoT ingest / 数据源 / 同步消费者+status+changes **全部 200，5xx = 0** |
+
+5 个 WARN 全部可解释：都是写死 `id=1` 的详情页，staging 真实首条 id 是 518/101，`/work-orders/1` 确实 404；`/andon/1` 另有路径写错（`ROUTE_NOT_FOUND`）。属探针口径，不是产品缺陷。
 
 ---
 
 ## 11. 下一步
 
-1. **推 staging 并做全模块浏览器回归**（阶段④⑤）—— 17 个缺陷目前只过了本地单测 + E2E，staging 的 PG 方言才是真考场（`text()` 路径下 JSON/boolean/TIMESTAMPTZ 的坑在 SQLite 上全被吞了）。
+1. ~~**推 staging 并做全模块浏览器回归**（阶段④⑤）~~ —— **已完成（2026-11-04）**：`origin/main` @ `7d8cc42` 已部署，API 1542/0、浏览器 FAIL 0、PG 冒烟 5xx=0。17 个修复在 PG 上确认有效（见 §10.1）。
 2. **`scripts/probe_artifacts.py`** —— 探针造数归档清理。本地库已被污染到物料 671+ / 工单 1538，本轮已两次导致探针跨轮污染。
 3. ~~**覆盖矩阵接入 `run_all.py` 前置**~~ —— **已完成（`a45041b`）**：探针跑完自动跑覆盖棘轮，未覆盖条数只许降不许升，结果计入门禁退出码；`--skip-coverage` 可单独跳过。棘轮已证伪过一次（伪基线 hit=460 → 退出码 1），不是空壳闸。
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
+5. **`full_module_scan.js` 详情页别写死 `id=1`** —— staging 真实 id 是 518/101，5 个 WARN 全来自这里；`/andon/1` 路径也是错的（应为 `/andon/calls/{id}` 一类）。改成先查列表取首条 id 就能把 WARN 清零，让门禁不再需要人工判读。
+6. **`energy_threshold_e2e` 在 staging 只跑 2 条** —— mfg 侧无能耗写入口（ECMS 归独立产品线），阈值告警链路端到端只能在 ECMS 侧验。这条要不要补、补在哪一侧，待定。
