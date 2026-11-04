@@ -366,6 +366,52 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 
 ---
 
+### 10.4 已实施：A+ 方案（2026-11-04，`e1d8cfd`）
+
+产品拍板选 A 并加强：**把"按名称匹配"整个去掉，改成纯外键链**。
+
+```
+fmea_hierarchies.operation_id  →  operations.is_critical
+                                        ↑
+                            route_steps.operation_id（自带，天然继承）
+```
+
+为什么不照 A 原样做（保留 label ↔ `operations.name` 字符串匹配）：实测同一份 PFMEA 里 `压装工序` / `压装` 并存，而 `operations.name` 是 `粗车外圆 / 热处理 / 外圆磨削` 这套标准词表 —— **两套词表，任何字符串匹配都恒 0 条**，而且返回体还会显示"已同步 0 个关键工序"，看起来像"本来就没有高风险工序"。加一个外键列比维护一张同义词表便宜得多。
+
+改动清单：
+
+| 层 | 改动 |
+|---|---|
+| 模型 | `operations.is_critical`（Boolean NOT NULL DEFAULT false）、`fmea_hierarchies.operation_id`（BigInteger） |
+| 迁移 | `migrations/20261104_operation_critical.py`，照 `20261103_t03_columns.py` 的幂等范式（`inspect` 查列 → 存在即 skip），本地跑两次幂等、`diff_schema.py` **0 漂移 / 123 表一致** |
+| 服务 | `sync_to_process_route` 整段重写。**只置真、不清零**：`operations` 是租户级主数据，同一工序可能被多张 PFMEA / 多条路线引用，单张文档发布无权替别的文档清标记。本次未命中的原标记作为 `stale_operation_ids` 上报，交人工确认 |
+| 发布 | `publish_document` 去掉 `and doc.process_id` 前置条件 —— 新链路与"挂在哪条路线上"无关；老条件让绝大多数 PFMEA 根本没走到这段，正是 500 藏住的直接原因 |
+| 死代码 | 删除 `production_repo.RouteStepRepository`（与 `basic_data_repo` 同名但列全错，包根导出的是坏的那个）；`repositories/__init__.py` 改从 `basic_data_repo` 导出 |
+| 透传 | `save_structure_tree`、`_copy_from_source`（修订版复制）透传 `operation_id`；`fmea_repo.create_node` / `basic_data_repo.create_op` 补新列；`list_steps` 带出 `op_is_critical` |
+| 前端 | 工序主数据页：列表「关键」列 + 表单开关 + 检索/详情字段；FMEA 结构树：节点显示关联工序、点节点弹关联下拉，整树覆盖保存统一走 `saveTree`；工艺路线编辑页：步骤标题「关键」标签 |
+
+**返回值口径变了**（原来是 `critical_process_ids` + 静默 0）：
+
+```json
+{"message": "已标记 1 个关键工序；1 个高风险节点未关联工序，已跳过",
+ "critical_operation_ids": [1], "skipped_without_operation": 1,
+ "stale_operation_ids": [], "high_risk_count": 2}
+```
+
+`skipped_without_operation` 是关键：老实现"查不到就 continue"，于是"词表对不上"和"真的没有高风险工序"在日志上长得一模一样。
+
+验证（三层，从假到真）：
+
+| 层 | 证据 |
+|---|---|
+| 单测（假仓储） | `test_fmea_critical_sync.py` 5 条：标记落点 / 跳过计数 / 非 PFMEA 不动 / 重复发布幂等 / 无 `process_id` 也触发。含**「一条 SQL 都不碰 `route_steps`」**断言 —— 老代码正是打这张表 |
+| 真库集成（一次性脚本，已删） | `create_all` 建真 SQLite → 造工序/结构树/两条高风险项 → `publish_document` 返回「发布成功」；`operations` 回读 `(1,true) (2,false)`；跳过数 1 如实上报；`PRAGMA table_info(route_steps)` 确认**无 `is_critical` 列**；重复发布幂等 |
+| 全量回归 | pytest **1417 passed / 0 failed**；契约闸基线 19→16（`--update-baseline` 收缩，A1/A2/D 三条随死类消失）；insert_defaults 基线 64→63；`vue-tsc` 错误数 **76→76（零新增）** |
+
+⚠️ **staging 未部署**：`git push` 被 GitHub 拒绝（`git@github.com: Permission denied (publickey)`）。已核实本机 `~/.ssh/ziwi_mfg_deploy_key` 私钥/公钥配对正常，且同机 `github-ziwi-contracts` 密钥能通过认证 —— 是 `sipon-wu/ziwi_mfg` 仓库侧这把部署密钥被移除/轮换了，不是本机配置问题。补回密钥后 `git push origin main` + CVM `./deploy.sh` 即可；**PG 方言层因此尚未实测**（`= true` 打在 Boolean 列、`operation_id` BIGINT 两处风险最低但未证）。
+
+---
+
 ## 11. 下一步
 
 1. ~~**推 staging 并做全模块浏览器回归**（阶段④⑤）~~ —— **已完成（2026-11-04）**：`origin/main` @ `7d8cc42` 已部署，API 1542/0、浏览器 FAIL 0、PG 冒烟 5xx=0。17 个修复在 PG 上确认有效（见 §10.1）。
@@ -374,4 +420,7 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
 5. **`full_module_scan.js` 详情页别写死 `id=1`** —— staging 真实 id 是 518/101，5 个 WARN 全来自这里；`/andon/1` 路径也是错的（应为 `/andon/calls/{id}` 一类）。改成先查列表取首条 id 就能把 WARN 清零，让门禁不再需要人工判读。
 6. **`energy_threshold_e2e` 在 staging 只跑 2 条** —— mfg 侧无能耗写入口（ECMS 归独立产品线），阈值告警链路端到端只能在 ECMS 侧验。这条要不要补、补在哪一侧，待定。
-7. **契约闸查出的 5 处活缺陷**：其中 **2 处已修**（2026-11-04，`POST /roles` 带 codes、`GET /excel-import/templates` —— 全局表被注入 `tenant_id`；顺带修掉 `is_active = true` 打在 Integer 列上的方言错，详见 §10.2）；剩下 3 处是 `route_steps` 三连，直接卡死 **PFMEA 发布**（设了 `process_id` 就 500），有四个修法待选，**建议方案 A（关键工序落到 `operations`）**，详见 §10.3。
+7. **契约闸查出的 5 处活缺陷**：**5 处全部已修**（2026-11-04）。其中 2 处是全局表被注入 `tenant_id`（`POST /roles` 带 codes、`GET /excel-import/templates`，顺带修掉 `is_active = true` 打在 Integer 列上的方言错，详见 §10.2）；另外 3 处是 `route_steps` 三连 —— 已按 **A+（外键链）** 实施，删掉写错列的整个仓储类，PFMEA 发布不再 500，详见 §10.4。
+8. **补回 `ziwi_mfg` 仓库的部署密钥** —— 本机这把 key 已被 GitHub 侧移除，`git push` 全挂；恢复后 §10.4 才能上 staging 做 PG 实测。
+9. **`product_routes` 有表无 API** —— 0 行数据、全项目零读写。将来做「产品默认路线」时必须补，现在不补也不算缺（`route_steps` 直接挂 `route_id`）。
+10. **按列名判 boolean/integer 需带表上下文** —— 两个静态闸各漏一半（`check_pg_bool_literals.py` 认 `= 1`，挡不住 `= true` 打在 Integer 上；`check_insert_defaults.py` 只管缺列）。本轮 `import_templates.is_active` 就是撞在中间。
