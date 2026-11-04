@@ -38,6 +38,16 @@ class FmeaHierarchy(Base):
     level_type = Column(String(50), comment="DFMEA: system/subsystem/component; PFMEA: process/step/element")
     sort_order = Column(Integer, default=0, comment="同层级排序")
     label = Column(String(200), nullable=False, comment="节点名称/描述")
+    # 关联工序（PFMEA 的 process / step 节点用）：指向 operations.id。
+    #
+    # 为什么必须加这一列：原来"同步关键工序到工艺路线"靠 label **按名字匹配**
+    # route_steps.process_name，而 (a) route_steps 没有 process_name 列、
+    # (b) label 是自由文本（实测同一份文档里 '压装工序' 与 '压装' 并存，而工序
+    # 主数据叫 '粗车外圆 / 热处理'），所以那段代码永远匹配 0 条 —— 却回 200
+    # "已同步 0 个关键工序"，比 500 还难发现。
+    # 有外键之后整条链变成：hierarchies.operation_id → operations.is_critical
+    # → route_steps.operation_id（天然继承），不再有任何字符串匹配。
+    operation_id = Column(BigInteger, comment="关联工序ID(引用 operations.id)")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

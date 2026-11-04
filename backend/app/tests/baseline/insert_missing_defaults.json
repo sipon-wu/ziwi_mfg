@@ -205,21 +205,21 @@
     },
     {
       "file": "app/repositories/excel_import_repo.py",
-      "line": 25,
+      "line": 27,
       "table": "excel_import_tasks",
       "column": "failed_rows",
       "default": "0"
     },
     {
       "file": "app/repositories/excel_import_repo.py",
-      "line": 25,
+      "line": 27,
       "table": "excel_import_tasks",
       "column": "success_rows",
       "default": "0"
     },
     {
       "file": "app/repositories/excel_import_repo.py",
-      "line": 25,
+      "line": 27,
       "table": "excel_import_tasks",
       "column": "total_rows",
       "default": "0"
@@ -253,15 +253,8 @@
       "default": "False"
     },
     {
-      "file": "app/repositories/production_repo.py",
-      "line": 219,
-      "table": "route_steps",
-      "column": "step_type",
-      "default": "'production'"
-    },
-    {
       "file": "app/repositories/quality_repo.py",
-      "line": 135,
+      "line": 136,
       "table": "inspection_item",
       "column": "is_auto_generated",
       "default": "False"
@@ -296,21 +289,21 @@
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 233,
+      "line": 246,
       "table": "maintenance_plans",
       "column": "cycle_unit",
       "default": "'month'"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 233,
+      "line": 246,
       "table": "maintenance_plans",
       "column": "cycle_value",
       "default": "1"
     },
     {
       "file": "app/repositories/tpm_repo.py",
-      "line": 233,
+      "line": 246,
       "table": "maintenance_plans",
       "column": "status",
       "default": "'active'"

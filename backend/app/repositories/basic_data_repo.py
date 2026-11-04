@@ -33,11 +33,20 @@ class OperationRepository(MultiTenantRepository):
         )
 
     async def create_op(self, data: dict) -> int:
+        """插入工序。
+
+        ``is_critical``（2026-11-04 新增）由 PFMEA 发布自动置真；手工建工序时
+        调用方不传，这里补 False，避免固定列 INSERT 缺绑定参数。
+        """
+        data = {**data}
+        data.setdefault("is_critical", False)
         return await self.execute(
             """INSERT INTO operations (tenant_id, code, name, op_type, setup_time, unit_time,
-               labor_cert, equip_req, material_reqs, sop_refs, env_req, remark, is_active)
+               labor_cert, equip_req, material_reqs, sop_refs, env_req, remark, is_active,
+               is_critical)
                VALUES (:tenant_id, :code, :name, :op_type, :setup_time, :unit_time,
-               :labor_cert, :equip_req, :material_reqs, :sop_refs, :env_req, :remark, :is_active)""",
+               :labor_cert, :equip_req, :material_reqs, :sop_refs, :env_req, :remark, :is_active,
+               :is_critical)""",
             data,
         )
 
@@ -194,8 +203,15 @@ class RouteStepRepository(MultiTenantRepository):
     """工艺路线步骤 CRUD"""
 
     async def list_steps(self, route_id: int) -> List[Dict]:
+        """路线步骤列表。
+
+        ``op_is_critical`` 一起带出来，前端才能在路线里标出关键工序 ——
+        关键标记的落点是 ``operations.is_critical``（PFMEA 发布回写），
+        ``route_steps`` 自己不存这个字段，靠自己的 ``operation_id`` 继承。
+        """
         return await self.query(
             """SELECT rs.*, o.code as op_code, o.name as op_name, o.op_type, o.setup_time, o.unit_time,
+               o.is_critical as op_is_critical,
                wc.name as wc_name
                FROM route_steps rs
                LEFT JOIN operations o ON o.id = rs.operation_id

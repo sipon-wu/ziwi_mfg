@@ -25,6 +25,9 @@ interface Operation {
   env_req: string | null
   remark: string | null
   is_active: boolean
+  // 关键工序：PFMEA 发布时按 fmea_hierarchies.operation_id 自动置真，
+  // 也可在这里手工开关（手工置真不会被发布流程清掉 —— 发布只置真、不清零）。
+  is_critical: boolean
   created_at: string
 }
 
@@ -129,6 +132,7 @@ function openCreate() {
     env_req: null,
     remark: null,
     is_active: true,
+    is_critical: false,
   }
   showDialog_.value = true
 }
@@ -250,6 +254,7 @@ onMounted(() => {
             <th>工序编码</th>
             <th>工序名称</th>
             <th>工序类型</th>
+            <th>关键</th>
             <th class="num">准备时间(min)</th>
             <th class="num">单件时间(min/件)</th>
             <th>状态</th>
@@ -263,6 +268,10 @@ onMounted(() => {
               <td>{{ item.name }}</td>
               <td>
                 <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
+              </td>
+              <td>
+                <van-tag v-if="item.is_critical" type="danger">关键</van-tag>
+                <span v-else class="op-dash">—</span>
               </td>
               <td class="num">{{ item.setup_time }}</td>
               <td class="num">{{ item.unit_time }}</td>
@@ -281,7 +290,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
-              <td :colspan="7">
+              <td :colspan="8">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
                 <div class="ziwi-row-actions">
                   <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
@@ -312,6 +321,15 @@ onMounted(() => {
         </van-field>
         <van-field v-model.number="editing.setup_time" label="准备时间(min)" type="number" placeholder="0" />
         <van-field v-model.number="editing.unit_time" label="单件时间(min/件)" type="number" placeholder="0" />
+        <van-field label="关键工序">
+          <template #input>
+            <van-switch v-model="editing.is_critical" />
+          </template>
+        </van-field>
+        <div class="op-critical-hint">
+          PFMEA 发布时，被标记为高风险（且关联了本工序）的结构树节点会自动把这里置为开；
+          自动标记只增不清，降风险后需在此手工关闭。
+        </div>
         <van-field v-model="editing.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
     </ZiwiFormSheet>
@@ -333,7 +351,7 @@ onMounted(() => {
 
 .op-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 840px;
   border-collapse: collapse;
   font-size: 14px;
   color: var(--ziwi-text-primary, #1e293b);
@@ -372,6 +390,19 @@ onMounted(() => {
 }
 
 /* .op-btns 已随行内操作移入展开区删除（改用共享类 .ziwi-row-actions）。 */
+
+/* 「关键」列的空值占位：不留白，避免看起来像漏渲染 */
+.op-dash {
+  color: var(--ziwi-text-tertiary, #94a3b8);
+}
+
+/* 关键工序开关的说明文案。放在表单里而不是 tooltip —— 移动端 tooltip 点不到。 */
+.op-critical-hint {
+  padding: 0 16px 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ziwi-text-secondary, #64748b);
+}
 
 /* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */
 /* 数据行本身是"点行展开"的点击目标，必须 ≥ --ziwi-touch-min（同 WorkCenterList：

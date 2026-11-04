@@ -1,8 +1,6 @@
 {
   "说明": "契约闸基线：已知存量，只拦新增。修完用 --update-baseline 缩减。",
   "sigs": [
-    "A1|app/repositories/production_repo.py|route_steps",
-    "A2|app/repositories/production_repo.py|route_steps",
     "A3|app/repositories/data_collection_repo.py|collect_task",
     "A3|app/repositories/data_collection_repo.py|iot_device",
     "A3|app/repositories/data_collection_repo.py|iot_gateway",
@@ -18,7 +16,6 @@
     "A3|app/repositories/lab_repo.py|test_standards",
     "A3|app/repositories/organization_repo.py|employees",
     "A3|app/repositories/ppap_repo.py|ppap_submissions",
-    "A3|app/repositories/quality_repo.py|inspection_item",
-    "D|app/repositories/production_repo.py|route_steps"
+    "A3|app/repositories/quality_repo.py|inspection_item"
   ]
 }

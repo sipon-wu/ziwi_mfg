@@ -2,7 +2,7 @@
 # M01 产品管理 | M04 工序定义 | M05 工作中心 | M03 工艺路线 | M06 工厂日历
 
 from sqlalchemy import (Column, BigInteger, String, Integer, Float, DateTime, Text, Date,
-                       Boolean, UniqueConstraint)
+                       Boolean, UniqueConstraint, text)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -27,6 +27,15 @@ class Operation(Base):
     env_req       = Column(Text, comment="环境要求(JSON): {temp_min, temp_max, humidity_min, humidity_max, clean_level}")
     remark        = Column(Text, comment="备注")
     is_active     = Column(Boolean, default=True, comment="启用状态")
+    # 关键工序（CTQ 落点）：PFMEA 发布时把高风险工序标到这里，工艺路线的
+    # route_steps 通过 operation_id 天然带出，不需要在每条路线里各刷一遍。
+    #
+    # 为什么 NOT NULL + server_default 而不是 nullable：NOT NULL 才能让下游
+    # `WHERE is_critical` 不必每处都写 `OR IS NULL`（本项目已有 `is_system`
+    # 这类可空布尔导致 `WHERE x = false` 静默漏行的前科）。server_default 是
+    # 给**老库 ALTER** 用的 —— 已有行必须能拿到 false，否则加列当场失败。
+    is_critical   = Column(Boolean, nullable=False, server_default=text("false"),
+                           default=False, comment="关键工序(PFMEA 高风险自动标记)")
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

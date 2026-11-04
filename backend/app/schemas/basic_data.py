@@ -21,6 +21,9 @@ class OperationCreate(BaseModel):
     env_req: Optional[str] = None
     remark: Optional[str] = None
     is_active: bool = True
+    # 关键工序标记（2026-11-04 新增）。PFMEA 发布时按 fmea_hierarchies.operation_id
+    # 自动置真；也可在工序主数据页手工开关。
+    is_critical: bool = False
 
 
 class OperationUpdate(BaseModel):
@@ -36,6 +39,7 @@ class OperationUpdate(BaseModel):
     env_req: Optional[str] = None
     remark: Optional[str] = None
     is_active: Optional[bool] = None
+    is_critical: Optional[bool] = None
 
 
 class OperationResponse(BaseModel):
@@ -53,6 +57,7 @@ class OperationResponse(BaseModel):
     env_req: Optional[str] = None
     remark: Optional[str] = None
     is_active: bool = True
+    is_critical: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

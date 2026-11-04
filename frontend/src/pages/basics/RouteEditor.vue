@@ -26,6 +26,7 @@ interface OperationOption {
   op_type: string
   setup_time: number
   unit_time: number
+  is_critical?: boolean
 }
 
 interface WorkCenterOption {
@@ -54,6 +55,8 @@ interface StepItem {
   op_code?: string
   op_name?: string
   op_type?: string
+  // 关键工序：来自 operations.is_critical（PFMEA 发布回写），步骤自身不存该字段
+  op_is_critical?: boolean
   wc_name?: string
 }
 
@@ -191,6 +194,7 @@ function confirmAddStep() {
       editingStep.value.op_code = op.code
       editingStep.value.op_name = op.name
       editingStep.value.op_type = op.op_type
+      editingStep.value.op_is_critical = !!op.is_critical
     }
     const wc = allWorkCenters.value.find(w => w.id === editingStep.value.wc_id)
     if (wc) editingStep.value.wc_name = wc.name
@@ -201,6 +205,7 @@ function confirmAddStep() {
       editingStep.value.op_code = op.code
       editingStep.value.op_name = op.name
       editingStep.value.op_type = op.op_type
+      editingStep.value.op_is_critical = !!op.is_critical
     }
     const wc = allWorkCenters.value.find(w => w.id === editingStep.value.wc_id)
     if (wc) editingStep.value.wc_name = wc.name
@@ -323,6 +328,9 @@ function wcTypeLabel(t: string): string {
                 <div class="ziwi-font-medium">
                   {{ step.op_code || '' }}
                   <span class="ziwi-text-secondary ziwi-ml-1">{{ step.op_name || '' }}</span>
+                  <!-- 关键工序来自 operations.is_critical（PFMEA 发布回写），
+                       步骤本身不存这个字段，按 operation_id 继承。 -->
+                  <van-tag v-if="step.op_is_critical" type="danger" class="ziwi-ml-1">关键</van-tag>
                 </div>
                 <div class="ziwi-text-xs ziwi-text-muted ziwi-flex ziwi-flex-wrap ziwi-gap-2 ziwi-mt-2xs">
                   <van-tag plain size="mini">{{ step.step_type === 'outsource' ? '外协' : step.step_type === 'inspect' ? '检验' : '生产' }}</van-tag>

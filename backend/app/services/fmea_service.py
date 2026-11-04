@@ -144,6 +144,10 @@ class FmeaService:
                     "level_type": node["level_type"],
                     "sort_order": node["sort_order"],
                     "label": node["label"],
+                    # ★ 修订版必须把工序关联一起复制。丢了这个字段，新版本发布时
+                    # 所有节点都"未关联工序"，高风险标记一个都落不下去 —— 而且
+                    # 表面上发布照样返回"成功"。
+                    "operation_id": node.get("operation_id"),
                 })
                 node_id_map[node["id"]] = new_id
 
@@ -158,6 +162,10 @@ class FmeaService:
                     "level_type": node["level_type"],
                     "sort_order": node["sort_order"],
                     "label": node["label"],
+                    # ★ 修订版必须把工序关联一起复制。丢了这个字段，新版本发布时
+                    # 所有节点都"未关联工序"，高风险标记一个都落不下去 —— 而且
+                    # 表面上发布照样返回"成功"。
+                    "operation_id": node.get("operation_id"),
                 })
                 node_id_map[node["id"]] = new_id
 
@@ -216,14 +224,19 @@ class FmeaService:
         })
 
         # 自动触发工艺路线联动
-        if doc["fmea_type"] == "PFMEA" and doc.get("process_id"):
-            await self.sync_to_process_route(doc_id, doc.get("tenant_id", ""))
+        # ★ 不再要求 doc.process_id：新链路是 fmea_hierarchies.operation_id →
+        # operations.is_critical，与"这张 PFMEA 挂在哪条工艺路线上"无关。
+        # 老代码写 `and doc.get("process_id")`，本意是"没挂路线就不联动"，
+        # 但副作用是**绝大多数 PFMEA 根本没走到这段**，于是里面的 500 藏了很久。
+        sync_result = None
+        if doc["fmea_type"] == "PFMEA":
+            sync_result = await self.sync_to_process_route(doc_id, doc.get("tenant_id", ""))
 
         # 自动生成控制计划
         cp_service = ControlPlanService(self.control_plan_repo)
         await cp_service.generate_from_fmea(doc_id)
 
-        return {"message": "发布成功", "doc_id": doc_id}
+        return {"message": "发布成功", "doc_id": doc_id, "route_sync": sync_result}
 
     async def create_revision(self, doc_id: int, created_by: int) -> Dict:
         """创建修订版
@@ -385,44 +398,103 @@ class FmeaService:
     # ── 工艺路线联动 ─────────────────────────────────────────
 
     async def sync_to_process_route(self, doc_id: int, tenant_id: str) -> Dict:
-        """同步到工艺路线（PFMEA专用）
+        """把 PFMEA 高风险工序标记落到 ``operations.is_critical``（A+ 外键链）
 
-        高风险工序标记 route_steps.is_critical = 1
+        ★★ 2026-11-04 整段重写。老实现是**必 500**，不是"偶尔不准"：
+
+            SELECT id FROM route_steps
+             WHERE product_id = :pid AND process_name = :pname
+
+        ``product_id`` / ``process_name`` 这两列在 ``route_steps`` 里**都不存在**
+        （真实列是 ``route_id / operation_id / step_seq / wc_id / ...``，见
+        ``models/basic_data.py::RouteStep``）。PG 直接 UndefinedColumn，
+        ``get_db`` 整请求回滚 → **PFMEA 只要设了 process_id，点发布就 500**；
+        没设 process_id 时 `publish_document` 会跳过本方法，所以一直看着正常。
+
+        就算列名蒙对了也拿不到数据：``fmea_hierarchies.label`` 是自由文本
+        （实测同一份文档里"压装工序"/"压装"并存），而 ``operations.name`` 是
+        标准词表（"粗车外圆/热处理/外圆磨削"）—— **两套词表，字符串匹配恒 0 条**。
+
+        新方案是纯外键链，一次字符串比较都不做：
+
+            fmea_hierarchies.operation_id  →  operations.is_critical
+
+        ``route_steps`` 自带 ``operation_id``，工序被标记后所有引用它的步骤天然
+        继承，不需要按步骤逐个写 —— 所以**不给 route_steps 加列**。
+
+        写操作**只置真、不清零**：``operations`` 是租户级主数据，同一工序可能被
+        多张 PFMEA / 多条路线引用，单张文档发布无权替别人清除标记。本次未命中
+        的原有标记会作为 ``stale_operation_ids`` 返回，由前端提示人工确认。
+
+        Returns:
+            如实报告口径：``critical_operation_ids`` 本次标记成功的工序；
+            ``skipped_without_operation`` 因节点没关联工序而跳过的**节点数**
+            （不再静默 0 条）；``stale_operation_ids`` 本文件节点集内已被标记、
+            但本次不在高风险清单里的工序。
         """
-        from app.repositories.production_repo import RouteStepRepository
-
-        route_repo = RouteStepRepository(self.doc_repo._session)
-        if tenant_id:
-            route_repo.set_tenant_id(tenant_id)
+        from app.repositories.basic_data_repo import OperationRepository
 
         doc = await self.doc_repo.get_doc(doc_id)
-        if not doc or doc["fmea_type"] != "PFMEA":
-            return {"message": "非PFMEA文档，跳过工艺路线联动"}
+        if not doc or doc.get("fmea_type") != "PFMEA":
+            return {
+                "message": "非PFMEA文档，跳过工艺路线联动",
+                "skipped": True,
+                "critical_operation_ids": [],
+            }
 
-        # 获取高风险项
+        op_repo = OperationRepository(self.doc_repo._session)
+        if tenant_id:
+            op_repo.set_tenant_id(tenant_id)
+
+        # 一次性取回结构树：既拿 operation_id，也拿"本文件拥有哪些工序"的集合
+        tree = await self.hierarchy_repo.list_tree(doc_id)
+        node_by_id = {n["id"]: n for n in tree}
+        doc_op_ids = {int(n["operation_id"]) for n in tree if n.get("operation_id")}
+
+        threshold = doc.get("rpn_threshold") or self.RPN_THRESHOLD_DEFAULT
         high_risk_items = await self.item_repo.list_high_risk(
-            doc_id, threshold_rpn=doc.get("rpn_threshold", self.RPN_THRESHOLD_DEFAULT),
+            doc_id, threshold_rpn=threshold,
         )
 
-        # 更新关键工序标记
-        critical_process_ids = []
+        critical_op_ids: set = set()
+        skipped_without_operation = 0
+        seen_nodes: set = set()
         for item in high_risk_items:
-            if item.get("is_critical_process"):
-                # 找到关联的 route_step
-                hierarchy = await self.hierarchy_repo.get_node(item["hierarchy_id"])
-                if hierarchy:
-                    # 通过工序名称匹配 route_steps
-                    steps = await route_repo.query(
-                        "SELECT id FROM route_steps WHERE product_id = :pid AND process_name = :pname",
-                        {"pid": doc.get("product_id"), "pname": hierarchy.get("label", "")},
-                    )
-                    for step in steps:
-                        await route_repo.update_is_critical(step["id"], True)
-                        critical_process_ids.append(step["id"])
+            if not item.get("is_critical_process"):
+                continue
+            hid = item.get("hierarchy_id")
+            if hid in seen_nodes:
+                continue
+            seen_nodes.add(hid)
+            node = node_by_id.get(hid)
+            if node is None and hid is not None:
+                node = await self.hierarchy_repo.get_node(hid)
+            op_id = node.get("operation_id") if node else None
+            if not op_id:
+                # 关键：这里必须计数上报。老实现是"查不到就 continue"，
+                # 于是"词表对不上"和"真的没有高风险工序"在日志上长得一模一样。
+                skipped_without_operation += 1
+                continue
+            critical_op_ids.add(int(op_id))
+
+        for op_id in sorted(critical_op_ids):
+            await op_repo.execute(
+                "UPDATE operations SET is_critical = true WHERE id = :id",
+                {"id": op_id},
+            )
+
+        stale_op_ids = sorted(doc_op_ids - critical_op_ids)
+
+        msg = f"已标记 {len(critical_op_ids)} 个关键工序"
+        if skipped_without_operation:
+            msg += f"；{skipped_without_operation} 个高风险节点未关联工序，已跳过"
 
         return {
-            "message": f"已同步 {len(critical_process_ids)} 个关键工序",
-            "critical_process_ids": critical_process_ids,
+            "message": msg,
+            "skipped": False,
+            "critical_operation_ids": sorted(critical_op_ids),
+            "skipped_without_operation": skipped_without_operation,
+            "stale_operation_ids": stale_op_ids,
             "high_risk_count": len(high_risk_items),
         }
 

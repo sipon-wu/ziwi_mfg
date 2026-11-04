@@ -165,6 +165,7 @@ async def save_structure_tree(
             "level_type": node.level_type,
             "sort_order": node.sort_order,
             "label": node.label,
+            "operation_id": node.operation_id,
         })
         if node.id:
             node_id_map[node.id] = new_id

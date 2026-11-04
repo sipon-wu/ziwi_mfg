@@ -55,6 +55,10 @@ class FmeaHierarchyNode(BaseModel):
     level_type: Optional[str] = None
     sort_order: int = 0
     label: str
+    # 关联工序（→ operations.id）。PFMEA 发布时靠这个外键把高风险标记落到
+    # operations.is_critical，取代原先按 label 字符串匹配 operations.name
+    # 的做法（两套词表对不上，恒 0 条）。
+    operation_id: Optional[int] = None
 
 
 class FmeaHierarchyResponse(BaseModel):
@@ -64,6 +68,7 @@ class FmeaHierarchyResponse(BaseModel):
     level_type: Optional[str] = None
     sort_order: int = 0
     label: str
+    operation_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

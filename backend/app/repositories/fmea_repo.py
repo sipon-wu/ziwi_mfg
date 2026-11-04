@@ -89,10 +89,18 @@ class FmeaHierarchyRepository(MultiTenantRepository):
         )
 
     async def create_node(self, data: dict) -> int:
+        """插入结构树节点。
+
+        ``operation_id`` 是 2026-11-04 新加的外键（→ ``operations.id``），
+        PFMEA 发布时靠它把高风险标记落到 ``operations.is_critical``，
+        不再做字符串匹配。旧调用方不传这个键，所以这里显式补 None，
+        否则固定列 INSERT 会报缺绑定参数。
+        """
         return await self.execute(
-            "INSERT INTO fmea_hierarchies (tenant_id, doc_id, parent_id, level_type, sort_order, label) "
-            "VALUES (:tenant_id, :doc_id, :parent_id, :level_type, :sort_order, :label)",
-            data,
+            "INSERT INTO fmea_hierarchies "
+            "(tenant_id, doc_id, parent_id, level_type, sort_order, label, operation_id) "
+            "VALUES (:tenant_id, :doc_id, :parent_id, :level_type, :sort_order, :label, :operation_id)",
+            {**data, "operation_id": data.get("operation_id")},
         )
 
     async def update_node(self, id: int, data: dict) -> int:

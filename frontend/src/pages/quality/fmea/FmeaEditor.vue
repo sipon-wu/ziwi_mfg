@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put } from '@/api/client'
@@ -12,7 +12,17 @@ interface TreeNode {
   level_type: string | null
   sort_order: number
   label: string
+  // 关联工序（→ operations.id）。PFMEA 发布时靠这个外键把高风险节点落到
+  // operations.is_critical，不再按节点名称去猜工序（两套词表对不上）。
+  operation_id: number | null
   children?: TreeNode[]
+}
+
+interface OperationOpt {
+  id: number
+  code: string
+  name: string
+  is_critical: boolean
 }
 
 interface FmeaItem {
@@ -57,9 +67,29 @@ const activeTab = ref<'structure' | 'matrix'>('structure')
 // Structure tree editing
 const editNodeLabel = ref('')
 const editNodeLevelType = ref('system')
+const editNodeOperationId = ref<string | number | null>(0)
 const showAddNodeDialog = ref(false)
 const selectedParentId = ref<number | null>(null)
 const addingNodeParentId = ref<number | null>(null)
+
+// 关联工序
+const operations = ref<OperationOpt[]>([])
+const operationOptions = computed(() =>
+  operations.value.map((o) => ({
+    value: o.id,
+    label: `${o.code} ${o.name}${o.is_critical ? '（关键）' : ''}`,
+  })),
+)
+const showLinkOpDialog = ref(false)
+const linkingNode = ref<TreeNode | null>(null)
+const linkingOpId = ref<string | number | null>(0)
+/* 下拉里显式放一个 0 = 「不关联」的哨兵项。不能靠"清空"表达解绑 ——
+   SelectField 清空后回传的是 undefined，而整树覆盖保存会把 undefined 序列化成
+   缺字段，后端拿到的就是 null，看着对、但用户无法区分"没选"和"故意解绑"。 */
+const linkOperationOptions = computed(() => [
+  { value: 0, label: '（不关联）' },
+  ...operationOptions.value,
+])
 
 // FMEA item editing
 const showItemDialog = ref(false)
@@ -87,6 +117,71 @@ const levelTypeOptions = [
   { value: 'process', label: '工序' },
   { value: 'operation', label: '工步' },
 ]
+
+// 结构树保存：整棵覆盖
+/* ⚠️ 后端 save_structure_tree 是 `delete_by_doc_id` + 逐条重插，不是按 id 更新。
+   所以**每次提交都必须把 operation_id 带上** —— 漏字段不会报错，但整棵树的
+   工序关联会被静默清空，表现为"刚关联好的工序，添加/删除一个节点后就没了"。
+   三处调用统一走 saveTree，不要再各自拼 payload。 */
+function treePayload(nodes: TreeNode[]) {
+  return nodes.map((n) => ({
+    id: n.id,
+    parent_id: n.parent_id,
+    label: n.label,
+    level_type: n.level_type,
+    sort_order: n.sort_order,
+    operation_id: n.operation_id ?? null,
+  }))
+}
+
+async function saveTree(nodes: TreeNode[]) {
+  await post(`/fmea/documents/${docId}/tree`, { nodes: treePayload(nodes) })
+}
+
+function nodeSubtitle(node: TreeNode): string {
+  const base = '类型: ' + (node.level_type || '-')
+  if (!node.operation_id) return base + ' ｜ 关联工序: 未关联（点此行关联）'
+  const op = operations.value.find((o) => o.id === node.operation_id)
+  return base + ' ｜ 关联工序: ' + (op ? `${op.code} ${op.name}` : `#${node.operation_id}`)
+}
+
+function openLinkOp(node: TreeNode) {
+  linkingNode.value = node
+  linkingOpId.value = node.operation_id ?? 0
+  showLinkOpDialog.value = true
+}
+
+async function handleSaveLinkOp() {
+  const node = linkingNode.value
+  if (!node) return
+  const nextOpId = Number(linkingOpId.value) || null
+  submitting.value = true
+  try {
+    const all = flattenTree(treeNodes.value).map((n) =>
+      n.id === node.id ? { ...n, operation_id: nextOpId } : n,
+    )
+    await saveTree(all)
+    showToast(nextOpId ? '已关联工序' : '已解除关联')
+    showLinkOpDialog.value = false
+    fetchData()
+  } catch {
+    showToast('保存失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function fetchOperations() {
+  try {
+    const res = await get<{ items: OperationOpt[] }>('/operations', {
+      params: { page: 1, page_size: 200 },
+    })
+    operations.value = res.items || []
+  } catch {
+    // 工序主数据拉不到不影响结构树编辑，只是关联下拉为空 —— 不打断页面
+    operations.value = []
+  }
+}
 
 async function fetchData() {
   loading.value = true
@@ -140,6 +235,7 @@ function openAddNode(parentId: number | null) {
   addingNodeParentId.value = parentId
   editNodeLabel.value = ''
   editNodeLevelType.value = 'component'
+  editNodeOperationId.value = 0
   showAddNodeDialog.value = true
 }
 
@@ -151,21 +247,16 @@ async function handleAddNode() {
   submitting.value = true
   try {
     const allNodes = flattenTree(treeNodes.value)
-    const newNode: any = {
+    const newNode: TreeNode = {
+      id: null,
       parent_id: addingNodeParentId.value,
       label: editNodeLabel.value,
       level_type: editNodeLevelType.value,
       sort_order: allNodes.length + 1,
-      id: null,
+      operation_id: Number(editNodeOperationId.value) || null,
     }
 
-    await post(`/fmea/documents/${docId}/tree`, { nodes: [...allNodes, newNode].map(n => ({
-      id: n.id,
-      parent_id: n.parent_id,
-      label: n.label,
-      level_type: n.level_type,
-      sort_order: n.sort_order,
-    })) })
+    await saveTree([...allNodes, newNode])
 
     showToast('节点已添加')
     showAddNodeDialog.value = false
@@ -181,13 +272,7 @@ async function handleDeleteNode(nodeId: number) {
   try {
     await showConfirmDialog({ message: '确定删除该节点及其子节点？' })
     const remaining = flattenTree(treeNodes.value).filter(n => n.id !== nodeId)
-    await post(`/fmea/documents/${docId}/tree`, { nodes: remaining.map(n => ({
-      id: n.id,
-      parent_id: n.parent_id,
-      label: n.label,
-      level_type: n.level_type,
-      sort_order: n.sort_order,
-    })) })
+    await saveTree(remaining)
     showToast('节点已删除')
     fetchData()
   } catch {
@@ -288,7 +373,10 @@ function getRpnLevel(rpn: number): string {
   return 'low'
 }
 
-onMounted(fetchData)
+onMounted(() => {
+  fetchData()
+  fetchOperations()
+})
 </script>
 
 <template>
@@ -312,32 +400,32 @@ onMounted(fetchData)
           <!-- 递归渲染结构树 -->
           <div v-if="treeNodes.length">
             <template v-for="(node, nidx) in treeNodes" :key="'n' + (node.id ?? nidx)">
-              <van-cell :title="node.label" :label="'类型: ' + (node.level_type || '-')">
+              <van-cell :title="node.label" :label="nodeSubtitle(node)" is-link @click="openLinkOp(node)">
                 <template #value>
-                  <van-button size="mini" plain type="primary" @click="openAddNode(node.id)">添加子节点</van-button>
-                  <van-button size="mini" plain type="danger" @click="handleDeleteNode(node.id!)">删除</van-button>
+                  <van-button size="mini" plain type="primary" @click.stop="openAddNode(node.id)">添加子节点</van-button>
+                  <van-button size="mini" plain type="danger" @click.stop="handleDeleteNode(node.id!)">删除</van-button>
                 </template>
               </van-cell>
               <!-- Level 2 -->
               <div v-for="(child, cidx) in node.children" :key="'c' + (child.id ?? cidx)" style="margin-left:24px; border-left:2px solid #e8eaed; padding-left:8px;">
-                <van-cell :title="child.label" :label="'类型: ' + (child.level_type || '-')">
+                <van-cell :title="child.label" :label="nodeSubtitle(child)" is-link @click="openLinkOp(child)">
                   <template #value>
-                    <van-button size="mini" plain type="primary" @click="openAddNode(child.id)">添加</van-button>
-                    <van-button size="mini" plain type="danger" @click="handleDeleteNode(child.id!)">删除</van-button>
+                    <van-button size="mini" plain type="primary" @click.stop="openAddNode(child.id)">添加</van-button>
+                    <van-button size="mini" plain type="danger" @click.stop="handleDeleteNode(child.id!)">删除</van-button>
                   </template>
                 </van-cell>
                 <!-- Level 3 -->
                 <div v-for="(grandchild, gidx) in child.children" :key="'g' + (grandchild.id ?? gidx)" style="margin-left:24px; border-left:2px solid #e8eaed; padding-left:8px;">
-                  <van-cell :title="grandchild.label" :label="'类型: ' + (grandchild.level_type || '-')">
+                  <van-cell :title="grandchild.label" :label="nodeSubtitle(grandchild)" is-link @click="openLinkOp(grandchild)">
                     <template #value>
-                      <van-button size="mini" plain type="danger" @click="handleDeleteNode(grandchild.id!)">删除</van-button>
+                      <van-button size="mini" plain type="danger" @click.stop="handleDeleteNode(grandchild.id!)">删除</van-button>
                     </template>
                   </van-cell>
                   <!-- Level 4 -->
                   <div v-for="(great, g2idx) in grandchild.children" :key="'x' + (great.id ?? g2idx)" style="margin-left:24px; border-left:2px solid #e8eaed; padding-left:8px;">
-                    <van-cell :title="great.label" :label="'类型: ' + (great.level_type || '-')">
+                    <van-cell :title="great.label" :label="nodeSubtitle(great)" is-link @click="openLinkOp(great)">
                       <template #value>
-                        <van-button size="mini" plain type="danger" @click="handleDeleteNode(great.id!)">删除</van-button>
+                        <van-button size="mini" plain type="danger" @click.stop="handleDeleteNode(great.id!)">删除</van-button>
                       </template>
                     </van-cell>
                   </div>
@@ -398,6 +486,35 @@ onMounted(fetchData)
             </van-radio-group>
           </template>
         </van-field>
+        <van-field label="关联工序">
+          <template #input>
+            <SelectField v-model="editNodeOperationId" :options="linkOperationOptions" class="ziwi-w-full" />
+          </template>
+        </van-field>
+        <div class="fmea-link-hint">
+          只有关联了工序的节点，才会在 PFMEA 发布时把高风险标记写到工序主数据的「关键工序」上。
+          不关联则发布时跳过该节点（会如实提示跳过数量）。
+        </div>
+      </div>
+    </ZiwiFormSheet>
+
+    <!-- 关联工序弹窗 -->
+    <ZiwiFormSheet
+      v-model:show="showLinkOpDialog"
+      :title="linkingNode ? `关联工序 · ${linkingNode.label}` : '关联工序'"
+      :submitting="submitting"
+      submit-text="保存"
+      @submit="handleSaveLinkOp"
+    >
+      <div style="padding:16px">
+        <van-field label="工序">
+          <template #input>
+            <SelectField v-model="linkingOpId" :options="linkOperationOptions" class="ziwi-w-full" />
+          </template>
+        </van-field>
+        <div class="fmea-link-hint">
+          当选「（不关联）」时，该节点在 PFMEA 发布时不会产生任何关键工序标记。
+        </div>
       </div>
     </ZiwiFormSheet>
 
@@ -414,7 +531,7 @@ onMounted(fetchData)
         <van-field v-model.number="itemForm.occurrence" label="频度(O)" type="digit" placeholder="1-10" />
         <van-field v-model.number="itemForm.detection" label="探测度(D)" type="digit" placeholder="1-10" />
         <van-cell title="RPN (自动计算)" :value="computedRpn()" />
-        <van-field name="is_critical_process" label="关键工序">
+        <van-field name="is_critical_process" label="关键工序(写回)">
           <template #input>
             <van-switch v-model="itemForm.is_critical_process" />
           </template>
@@ -424,3 +541,14 @@ onMounted(fetchData)
     </ZiwiFormSheet>
   </div>
 </template>
+
+<style scoped>
+/* 关联工序的说明文案：放在表单里而不是 tooltip —— 移动端 tooltip 点不到，
+   而这段是"为什么发布了没标记"的唯一解释位。 */
+.fmea-link-hint {
+  padding: 8px 16px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ziwi-text-secondary, #64748b);
+}
+</style>

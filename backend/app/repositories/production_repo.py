@@ -186,50 +186,17 @@ class ProductionRepository(MultiTenantRepository):
         return await self.query(sql, params)
 
 
-class RouteStepRepository(MultiTenantRepository):
-    """工艺路线工序步骤数据访问（供 FMEA 跨模块联动使用）"""
+# ── 已删除：production_repo.RouteStepRepository ──────────────────────
+# 这个类原本"供 FMEA 跨模块联动使用"，但它写的列在 route_steps 里**一个都不存在**：
+# `product_id / process_code / process_name / sort_order / workcenter /
+#  standard_time / is_critical` —— 真实列是 `route_id / operation_id /
+#  step_seq / wc_id / ...`。5 个方法里 4 个零调用，唯一在用的
+# `update_is_critical` 是 PFMEA 发布 500 的直接原因。
+#
+# 它和 basic_data_repo.RouteStepRepository **同名但完全不同**，而
+# `app/repositories/__init__.py` 从本模块导出这个名字 → 谁从包根 import，
+# 拿到的就是坏的这一个。现在整类删除，包根改为导出 basic_data 那个（真正在用的）。
+#
+# 关键工序标记的落点已改为 `operations.is_critical`（见 models/basic_data.py），
+# route_steps 通过自己的 operation_id 天然继承，不再需要按步骤逐个标记。
 
-    async def list_by_product(self, product_id: int) -> list:
-        return await self.query(
-            "SELECT * FROM route_steps WHERE product_id = :product_id ORDER BY sort_order ASC",
-            {"product_id": product_id},
-        )
-
-    async def get_step(self, id: int) -> Optional[Dict]:
-        return await self.query_one(
-            "SELECT * FROM route_steps WHERE id = :id", {"id": id}
-        )
-
-    async def update_is_critical(self, id: int, is_critical: bool) -> int:
-        return await self.execute(
-            "UPDATE route_steps SET is_critical = :is_critical WHERE id = :id",
-            {"id": id, "is_critical": is_critical},
-        )
-
-    async def batch_set_critical(self, step_ids: list, is_critical: bool = True) -> int:
-        """批量设置关键工序标记"""
-        count = 0
-        for sid in step_ids:
-            await self.update_is_critical(sid, is_critical)
-            count += 1
-        return count
-
-    async def create_step(self, data: dict) -> int:
-        return await self.execute(
-            "INSERT INTO route_steps (tenant_id, product_id, process_code, process_name, "
-            "sort_order, workcenter, standard_time, is_critical, remark, "
-            "step_type, is_outsource, is_parallel_eligible) "
-            "VALUES (:tenant_id, :product_id, :process_code, :process_name, "
-            ":sort_order, :workcenter, :standard_time, :is_critical, :remark, "
-            ":step_type, :is_outsource, :is_parallel_eligible)",
-            # ★同上（C-64）：实测 54 行工艺路线里 is_parallel_eligible 全部 NULL、
-            # step_type 22 行 NULL、is_outsource 22 行 NULL。
-            # is_parallel_eligible 是"可否并行"的开关，NULL 在任何布尔判断里都
-            # 会走 else 分支 —— 配了并行也当不能并行。
-            {**data,
-             "step_type": data.get("step_type") or "production",
-             # ★必须是 bool 不是 0/1：这两列在 PG 上是 BOOLEAN，传 int 会
-             # DataError: a boolean is required (got type int) —— 建工艺路线 500。
-             "is_outsource": bool(data.get("is_outsource")),
-             "is_parallel_eligible": bool(data.get("is_parallel_eligible"))}
-        )
