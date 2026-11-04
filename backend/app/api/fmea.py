@@ -111,7 +111,17 @@ async def publish_fmea_document(
     result = await svc.publish_document(doc_id)
     if result.get("error"):
         raise HTTPException(400, detail={"code": "400-0000", "message": result["error"]})
-    return {"code": 0, "message": result["message"]}
+    # ★ 必须把 route_sync 透出来：里面是"标记了哪几个关键工序 / 几个高风险节点
+    # 因没关联工序被跳过"。原先只回 message，同步结果在接口层被整个丢掉 ——
+    # 于是"发布了但一个都没标记上"仍然是静默的，正是本轮要修的那个坑。
+    return {
+        "code": 0,
+        "message": result["message"],
+        "data": {
+            "doc_id": result.get("doc_id", doc_id),
+            "route_sync": result.get("route_sync"),
+        },
+    }
 
 
 @router.post("/fmea/documents/{doc_id}/revise")

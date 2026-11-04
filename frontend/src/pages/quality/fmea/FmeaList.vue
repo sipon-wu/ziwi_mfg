@@ -129,8 +129,25 @@ async function handleCreate() {
 
 async function handlePublish(item: FmeaDocument) {
   try {
-    await post(`/fmea/documents/${item.id}/publish`)
-    showToast('已发布')
+    const res: any = await post(`/fmea/documents/${item.id}/publish`)
+    // 发布顺带会把高风险节点标记到工序主数据的「关键工序」上。
+    // 这段结果必须摆给用户看 —— 尤其是"有节点没关联工序被跳过"，
+    // 否则用户只会看到"已发布"，然后疑惑为什么工序上没打上关键标记。
+    const sync = res?.route_sync
+    const marked = (sync?.critical_operation_ids || []).length
+    const skipped = sync?.skipped_without_operation || 0
+    if (sync && !sync.skipped && skipped > 0) {
+      showDialog({
+        title: '已发布',
+        message: `已标记 ${marked} 个关键工序。\n`
+          + `另有 ${skipped} 个高风险节点没有关联工序，已跳过 —— `
+          + '请回结构树给这些节点选择对应工序后重新发布。',
+      })
+    } else if (sync && !sync.skipped) {
+      showToast(`已发布 · 标记 ${marked} 个关键工序`)
+    } else {
+      showToast('已发布')
+    }
     loadData()
   } catch {
     showToast('发布失败')
