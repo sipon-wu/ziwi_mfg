@@ -2,6 +2,10 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from app.core.transaction import posting_scope, PostingError
+# ★ 凡「今天」用于**日历比较**（效期 / 逾期天数 / 单号前缀 / 到货预测）一律走业务日历日：
+# 容器跑 UTC、业务在 CST，UTC 16:00–24:00 这 8 小时里 date.today() 会比业务日早一天 ——
+# 实测导致过期批次被自动拣选照常出库。详见 app/core/business_time.py。
+from app.core.business_time import business_today
 from app.constants.wms_constants import (
     RECEIPT_PENDING, RECEIPT_INSPECTING, RECEIPT_PARTIALLY_STORED, RECEIPT_STORED,
     RECEIPT_CANCELLED, RECEIPT_TRANSITION,
@@ -770,7 +774,7 @@ class ReceiptOrderService:
         与质检模块的 QC- 前缀区分：来料检验要能在列表里一眼认出，
         混用同一前缀会让"今天检了几批来料"查不出来。
         """
-        prefix = f"IQC-{date.today().strftime('%Y%m%d')}-"
+        prefix = f"IQC-{business_today().strftime('%Y%m%d')}-"
         row = await qc_repo.query_one(
             "SELECT order_no FROM inspection_order WHERE order_no LIKE :p "
             "ORDER BY order_no DESC LIMIT 1",
@@ -974,7 +978,7 @@ class IssueOrderService:
             raise PostingError("WMS_404_ISSUE_ORDER", f"未找到出库单：{code}")
 
         items = await self.item_repo.list_by_issue(order["id"])
-        today = date.today()
+        today = business_today()
         # 拣货建议一次查回（不做 N+1）
         try:
             picks = await self.inv_repo.suggest_picks(
@@ -1202,7 +1206,7 @@ class IssueOrderService:
         # 取法：显式指定的批次 / 自动拣选命中的批次，在**扣减之前**统一校验；
         # 自动拣选的 SQL（``find_available_batches``）同步排除过期批次，
         # 否则它会把过期批排到最前面（FIFO 恰恰按入库时间排，越老越可能过期）。
-        today = date.today()
+        today = business_today()
         await self._assert_batch_issuable(item, batch_no, today)
         warehouse_id = order["warehouse_id"] if order else None
         # 本次实际出库的批次（跨批次时会有多条）。过账后回写到单据行，见下方说明。
@@ -1916,7 +1920,7 @@ class InventoryAlertService:
             target = reorder if reorder > safety else safety * 2
             suggested = max(0.0, target - current)
             lead_days = int(mat.get("lead_time_days") or 0)
-            eta = (date.today() + timedelta(days=lead_days)).isoformat() if lead_days else None
+            eta = (business_today() + timedelta(days=lead_days)).isoformat() if lead_days else None
 
             message = (
                 f"物料 {mat['code']}-{mat['name']} 可用库存 {current:g} "

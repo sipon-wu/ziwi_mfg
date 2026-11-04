@@ -1,8 +1,11 @@
 """M20 仓储管理（WMS）模块 — Repository 层"""
 from typing import Optional, Dict, List
-from datetime import date
 
 from app.repositories.base import MultiTenantRepository
+# ★ 效期判断必须用**业务日历日**，不能 `date.today()`：容器跑 UTC、业务在 CST，
+# UTC 16:00–24:00 这 8 小时里两者差一天 → 过期批次会被判成未过期照常出库。
+# 详见 app/core/business_time.py 的实测记录。
+from app.core.business_time import business_today
 
 
 # ============================================
@@ -670,7 +673,7 @@ class InventoryRepository(MultiTenantRepository):
             "      OR (expiry_date IS NOT NULL AND expiry_date < :today))) "
             "ORDER BY (quantity - locked_qty) DESC",
             {"mid": material_id, "wid": warehouse_id,
-             "today": date.today()},
+             "today": business_today()},
         )
 
     async def find_available_batches(self, material_id: int, warehouse_id: int,
@@ -706,7 +709,7 @@ class InventoryRepository(MultiTenantRepository):
         # SQLite 会安静地把字符串按文本比较，所以本地永绿 —— 但那条路在 staging 上
         # 让整个 WMS 拣选出库 500。
         return await self.query(sql, {"mid": material_id, "wid": warehouse_id,
-                                      "today": date.today()})
+                                      "today": business_today()})
 
     async def resolve_inspection_location(self, tenant_id: str, warehouse_id: int) -> int:
         """解析（必要时惰性创建）待检区库位，返回 location_id。

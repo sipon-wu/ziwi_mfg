@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     APP_DEBUG: Optional[bool] = None
     APP_SECRET_KEY: str = "change_me_in_production_32_chars_min"
     APP_CORS_ORIGINS: str = "*"
+    # 业务时区偏移（小时）。容器跑 UTC、业务在 CST，用 ``date.today()`` 取"今天"
+    # 会在 UTC 16:00–24:00 这 8 小时里比业务日**早一天**（详见 core/business_time.py）。
+    # 需要别的时区时只改这个值，不要改业务代码。
+    BUSINESS_UTC_OFFSET_HOURS: int = 8
 
     # 数据库 - 默认使用 SQLite（aiosqlite），.env 中设 DB_DRIVER=postgresql 可切换
     DB_DRIVER: str = "sqlite"
