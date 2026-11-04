@@ -248,14 +248,25 @@ class RoleRepository(MultiTenantRepository):
         return int((row or {}).get("n") or 0)
 
     async def find_permission_ids_by_codes(self, codes: List[str]) -> List[int]:
-        """根据权限编码列表批量查询权限 ID（B13：POST /roles 传 codes → ids）。"""
+        """根据权限编码列表批量查询权限 ID（B13：POST /roles 传 codes → ids）。
+
+        ★ 必须走裸 session：``permissions`` 是**全局字典表、没有 tenant_id 列**，
+        走基类 ``query`` 会被注入 ``permissions.tenant_id`` → SQLite/PG 同样报
+        ``no such column`` → 整个 ``POST /roles``（带权限码建角色）500。
+        同文件 ``find_permissions_by_codes`` 早就是这个写法，这里是改造时漏掉
+        的一处，2026-11-04 由契约闸 C 类查出（闸不认识"谁是全局表"，
+        只认识"这张表有没有 tenant_id 列"，正好就是这条判据）。
+        """
         if not codes:
             return []
-        rows = await self.query(
-            f"SELECT id FROM permissions WHERE code IN ({','.join(f':c{i}' for i in range(len(codes)))})",
+        result = await self._session.execute(
+            text(
+                f"SELECT id FROM permissions WHERE code IN "
+                f"({','.join(f':c{i}' for i in range(len(codes)))})"
+            ),
             {f"c{i}": code for i, code in enumerate(codes)},
         )
-        return [r["id"] for r in rows]
+        return [row[0] for row in result.fetchall()]
 
     async def find_permissions_by_codes(self, codes: List[str]) -> List[Dict]:
         """按权限码批量取 ``{id, code}``，供按编码授权时**回报拼错/失效的码**。

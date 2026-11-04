@@ -293,7 +293,14 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 
 **首跑结果：22 处存量（21 条签名）+ 死代码 11 处。** 已录入 `scripts/contracts_baseline.json`，闸只拦**新增**。用基线而不是"全绿才过"的理由很实际：这 22 处全是存量，一个第一天就永远红的闸，两周后没人再看。签名不含行号（`A3|lab_repo.py|lab_requests`），否则改一次 import 顺序就整片失配。
 
-存量分布：A3 ×16（`lab_requests.created_at`、`dictionaries.is_system`、`employees.status` 这类"可空 + Python default"漏写，写进去是 NULL）、A1/A2/D ×3（全在 `production_repo.RouteStepRepository`，见下）、C ×3（`excel_import_repo` 打 `import_templates` 2 次、`role_repo` 打 `permissions` 1 次 —— 注入后 `no such column`）。
+存量分布：A3 ×16（`lab_requests.created_at`、`dictionaries.is_system`、`employees.status` 这类"可空 + Python default"漏写，写进去是 NULL）、A1/A2/D ×3（全在 `production_repo.RouteStepRepository`，见 §10.3）、C ×3（`excel_import_repo` 打 `import_templates` 2 次、`role_repo` 打 `permissions` 1 次 —— 注入后 `no such column`）。
+
+> **C 类已于 2026-11-04 修完，基线 21 → 19 条。** 两处都是"全局表走了会注入的基类方法"，改法照抄同文件既有写法（裸 `self._session.execute(text(...))`）：
+> `RoleRepository.find_permission_ids_by_codes`（`POST /roles` 带权限码）、`ExcelImportRepository.get_template/list_templates`（`GET /excel-import/templates`）。
+> 回归用例 `app/tests/test_no_tenant_tables.py`（3 条，全部**显式 `set_tenant_id`** —— 不设租户就测不到这类问题）。证伪：直接调旧路径 → `no such column: import_templates.tenant_id` / `permissions.tenant_id`；新路径正常返回。
+>
+> 修的时候还发现第二层坑：`import_templates.is_active` 在模型里是 **Integer 不是 Boolean**，原 SQL 写的 `is_active = true` 在 PG 上报 `operator does not exist: integer = boolean`。也就是说这个接口是**两处错误叠加**，只是 SQLite 把两者都容忍了。改成 `= 1`（列类型是 integer 时该写 1，别被"别给 boolean 列写 0/1"那条经验带偏）。
+> **闸在这里各漏一半**：`check_pg_bool_literals` 只查"boolean 列被写 0/1"，方向相反的不查；`check_contracts` 只查列是否存在，不查类型能不能比。按列名做规则又会误伤（`is_active` 在几十张表里既可能是 Boolean 也可能是 Integer），要拦得住必须带**表上下文**——列为后续项，本轮没做。
 
 **顺带查出的、本轮之前没人知道的 3 处活缺陷（未修，待拍板）**：
 
@@ -365,4 +372,4 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
 5. **`full_module_scan.js` 详情页别写死 `id=1`** —— staging 真实 id 是 518/101，5 个 WARN 全来自这里；`/andon/1` 路径也是错的（应为 `/andon/calls/{id}` 一类）。改成先查列表取首条 id 就能把 WARN 清零，让门禁不再需要人工判读。
 6. **`energy_threshold_e2e` 在 staging 只跑 2 条** —— mfg 侧无能耗写入口（ECMS 归独立产品线），阈值告警链路端到端只能在 ECMS 侧验。这条要不要补、补在哪一侧，待定。
-7. **契约闸查出的 3 处活缺陷**（`route_steps` 三连）+ 2 处可达性待确认（`/excel-import/templates`、`POST /roles` 带 codes）—— 已录基线，闸不会因此变红。其中 `route_steps` 直接卡死 **PFMEA 发布**（设了 `process_id` 就 500），有四个修法待选，**建议方案 A（关键工序落到 `operations`）**，详见 §10.3。
+7. **契约闸查出的 5 处活缺陷**：其中 **2 处已修**（2026-11-04，`POST /roles` 带 codes、`GET /excel-import/templates` —— 全局表被注入 `tenant_id`；顺带修掉 `is_active = true` 打在 Integer 列上的方言错，详见 §10.2）；剩下 3 处是 `route_steps` 三连，直接卡死 **PFMEA 发布**（设了 `process_id` 就 500），有四个修法待选，**建议方案 A（关键工序落到 `operations`）**，详见 §10.3。

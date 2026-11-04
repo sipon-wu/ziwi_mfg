@@ -1,3 +1,5 @@
+from sqlalchemy import text
+
 from app.repositories.base import MultiTenantRepository
 from typing import Optional, List, Dict
 
@@ -32,13 +34,27 @@ class ExcelImportRepository(MultiTenantRepository):
         params = {**data, "id": id}
         return await self.execute(f"UPDATE excel_import_tasks SET {sets} WHERE id = :id", params)
 
+    # ── 导入模板：import_templates 是**全局模板表、没有 tenant_id 列** ──
+    # 两个坑叠在同一个接口上，SQLite 都容忍，PG 都不容忍：
+    #   ① 走基类 query/query_one 会被注入 import_templates.tenant_id → no such column；
+    #   ② `is_active` 在这张表上是 **Integer**（不是 Boolean），写 `is_active = true`
+    #      在 PG 上报 `operator does not exist: integer = boolean`。
+    # 所以：裸 session + 用 `= 1`。注意别被"别给 boolean 列写 0/1"那条经验带偏 ——
+    # boolean 与 integer 的判断要看**具体这张表的列类型**（静态闸
+    # check_pg_bool_literals 也帮不上，它只知道 boolean 列不能写 0/1）。
+
     async def get_template(self, import_type: str) -> Optional[Dict]:
-        return await self.query_one(
-            "SELECT * FROM import_templates WHERE import_type = :import_type AND is_active = true",
-            {"import_type": import_type}
+        result = await self._session.execute(
+            text("SELECT * FROM import_templates "
+                 "WHERE import_type = :import_type AND is_active = 1"),
+            {"import_type": import_type},
         )
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     async def list_templates(self) -> List[Dict]:
-        return await self.query(
-            "SELECT import_type, template_name, description, version FROM import_templates WHERE is_active = true ORDER BY import_type"
-        )
+        result = await self._session.execute(text(
+            "SELECT import_type, template_name, description, version "
+            "FROM import_templates WHERE is_active = 1 ORDER BY import_type"
+        ))
+        return [dict(row._mapping) for row in result.fetchall()]

@@ -19,8 +19,6 @@
     "A3|app/repositories/organization_repo.py|employees",
     "A3|app/repositories/ppap_repo.py|ppap_submissions",
     "A3|app/repositories/quality_repo.py|inspection_item",
-    "C|app/repositories/excel_import_repo.py|import_templates",
-    "C|app/repositories/role_repo.py|permissions",
     "D|app/repositories/production_repo.py|route_steps"
   ]
 }
