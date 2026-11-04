@@ -17,6 +17,11 @@
 可选：
     --only a,b,c     只跑指定探针（省时间）
     --skip a,b       跳过指定探针
+    --skip-coverage  不跑覆盖棘轮（探针全跑但本轮只想看断言结果时用）
+
+跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
+探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
+全落在没人跑的端点上。棘轮判据是未覆盖条数只许降不许升，新增端点必须同时补探针。
 """
 
 import argparse
@@ -216,6 +221,8 @@ def main():
     ap.add_argument("--only", default="")
     ap.add_argument("--skip", default="")
     ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--skip-coverage", action="store_true",
+                    help="跳过覆盖棘轮检查（只跑探针）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -256,7 +263,27 @@ def main():
         print("未输出可识别汇总（需人工确认是否真跑完）：")
         for n in nosum:
             print(f"  - {n}")
-    return 1 if (bad_probes or nosum) else 0
+    # ── 覆盖棘轮 ────────────────────────────────────────────────────
+    # 探针全绿只证明"跑到的都是好的"，证明不了"该跑的都跑到了"。后者正是
+    # 这一轮检验挖出 17 个缺陷的原因 —— 它们全落在没人跑的端点上。
+    # 棘轮判的就是后者：未覆盖条数只许降不许升。
+    cov_fail = False
+    if not a.skip_coverage:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        cov = subprocess.run(
+            [py, os.path.join(root, "scripts", "coverage_matrix.py"), "--check"],
+            capture_output=True, text=True, cwd=os.path.join(root, "backend"))
+        out = (cov.stdout or "") + (cov.stderr or "")
+        # coverage_matrix 会 import app.main，启动期会打一串 [INFO]（权限自检之类）。
+        # 全量打出来会把门禁结论淹掉，只留结论行与"未覆盖清单"的缩进行。
+        for line in out.strip().splitlines():
+            s = line.strip()
+            if s.startswith(("✅", "❌", "⚠️")) or line.startswith(("  - ", "    ")):
+                print(line)
+        cov_fail = cov.returncode != 0
+
+    return 1 if (bad_probes or nosum or cov_fail) else 0
 
 
 if __name__ == "__main__":

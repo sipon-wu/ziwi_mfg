@@ -182,7 +182,7 @@ class TestAssertBatchIssuable:
         svc, _ = self._svc(None)
         with patch("app.repositories.wms_repo.BatchRepository") as BR:
             BR.return_value.get_by_batch_no = AsyncMock(
-                return_value={"is_locked": 1, "lock_reason": "IQC 判 REJ",
+                return_value={"is_locked": True, "lock_reason": "IQC 判 REJ",
                               "expiry_date": TOMORROW})
             with pytest.raises(ValueError) as e:
                 await svc._assert_batch_issuable(
@@ -190,12 +190,17 @@ class TestAssertBatchIssuable:
         assert "锁定" in str(e.value) and "IQC 判 REJ" in str(e.value)
 
     async def test_locked_false_does_not_block(self):
-        """解锁后（is_locked=0）必须放行 —— 别把"解锁"也一起拦掉。"""
+        """解锁后（is_locked=False）必须放行 —— 别把"解锁"也一起拦掉。
+
+        ★mock 里必须写 ``False`` 而不是 ``0``：PG 的 boolean 列读出来是
+        True/False，SQLite 读出来是 0/1 —— 写 0 等于拿 SQLite 的形状去测
+        一段在 PG 上跑的逻辑，两边类型根本不同。PG 方言静态闸会拦这一处。
+        """
         from unittest.mock import patch
         svc, _ = self._svc(None)
         with patch("app.repositories.wms_repo.BatchRepository") as BR:
             BR.return_value.get_by_batch_no = AsyncMock(
-                return_value={"is_locked": 0, "expiry_date": TOMORROW})
+                return_value={"is_locked": False, "expiry_date": TOMORROW})
             await svc._assert_batch_issuable({"material_id": 1}, "B1", date.today())
 
 
