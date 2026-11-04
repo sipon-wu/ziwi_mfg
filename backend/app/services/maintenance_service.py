@@ -31,6 +31,8 @@
 import calendar
 import logging
 from datetime import datetime, timedelta, timezone
+
+from app.core.business_time import business_day_str
 from typing import Dict, Optional
 
 from app.repositories.tpm_repo import EquipmentDowntimeRepository, TpmRepository
@@ -110,7 +112,8 @@ class MaintenanceService:
         """扫描到期计划并生成保养任务（同日同计划幂等）。"""
         now = datetime.now(timezone.utc)
         plans = await self.repo.list_due_plans(now)
-        day = now.strftime("%Y%m%d")
+        # ★ 单号日期是给现场看的业务日；now 仍是 UTC 时刻（用于和 next_execute_at 比）。
+        day = business_day_str()
         created, skipped = [], []
         for plan in plans:
             task_no = f"MT-{plan['id']}-{day}"

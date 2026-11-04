@@ -115,3 +115,84 @@ async def test_find_available_batches_passes_business_today():
 
     assert session.calls
     assert session.calls[0]["today"] == SENTINEL
+
+
+# ── 3. 单号前缀：`business_day_str` 跨日 ────────────────────
+
+def test_day_str_rolls_with_business_day():
+    """单号里嵌的日期必须是业务日 —— 否则纸面"单号 20261104 / 打印时间 11-05"。"""
+    from app.core.business_time import business_day_str
+
+    now = datetime(2026, 11, 4, 16, 58, tzinfo=timezone.utc)  # = CST 11-05 00:58
+    assert now.strftime("%Y%m%d") == "20261104", "容器（UTC）口径"
+    assert business_day_str("%Y%m%d", now) == "20261105", "业务（CST）口径"
+    assert business_day_str("%Y%m%d%H%M%S", now) == "20261105005800"
+
+
+def test_day_str_same_day_when_daytime():
+    from app.core.business_time import business_day_str
+
+    now = datetime(2026, 11, 4, 2, 0, tzinfo=timezone.utc)  # = CST 10:00
+    assert business_day_str("%Y%m%d", now) == "20261104"
+
+
+# ── 4. 服务层：单号生成走业务日（哨兵证明） ─────────────────
+
+@pytest.mark.asyncio
+async def test_lab_request_no_uses_business_day():
+    """LAB-YYYYMM 的月份段来自 business_today，不是 UTC 日。"""
+    from unittest.mock import AsyncMock
+
+    from app.services.lab_service import LabService
+
+    svc = LabService.__new__(LabService)
+    svc.request_repo = AsyncMock()
+    svc.request_repo.get_max_request_no.return_value = None   # 当月第一单
+
+    sentinel = date(2030, 1, 2)
+    with patch("app.services.lab_service.business_today", return_value=sentinel):
+        no = await svc._generate_request_no("t1")
+
+    assert no == "LAB-203001-0001", f"单号应按业务日生成，实际 {no}"
+
+
+# ── 5. 仓储层：SQL 不再用 CURRENT_DATE（UTC 口径） ──────────
+
+@pytest.mark.asyncio
+async def test_fmea_list_overdue_passes_business_today():
+    from app.repositories.fmea_repo import FmeaActionRepository
+
+    session = _CapturingSession()
+    repo = FmeaActionRepository(session)
+    repo.set_tenant_id("t1")
+
+    with patch("app.repositories.fmea_repo.business_today", return_value=SENTINEL):
+        await repo.list_overdue()
+
+    assert session.calls, "应当执行了一条 SQL"
+    assert session.calls[0]["today"] == SENTINEL, (
+        "逾期判断必须按业务日；SQL 的 CURRENT_DATE 是 UTC 口径，凌晨会把今天到期判成逾期")
+
+
+# ── 6. 「今日采集数」的起点是业务日零点 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_today_record_count_starts_at_business_midnight():
+    """容器 UTC 00:00 = CST 08:00；按 UTC 零点算会把凌晨 0–8 点的数据划到昨天。
+
+    起点正确值 = 业务日 00:00(CST) 换算成 naive-UTC = 前一日 16:00。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.repositories.data_collection_repo import DataCollectionRepository
+
+    repo = DataCollectionRepository.__new__(DataCollectionRepository)
+    repo.query_one = AsyncMock(return_value={"cnt": 0})
+
+    with patch("app.repositories.data_collection_repo.business_today",
+               return_value=date(2026, 11, 5)):
+        await repo.get_today_record_count()
+
+    params = repo.query_one.await_args[0][1]
+    assert params["today"] == datetime(2026, 11, 4, 16, 0), (
+        f"起点应是 2026-11-04T16:00 naive-UTC（=CST 11-05 00:00），实际 {params['today']}")

@@ -2,6 +2,10 @@ from app.repositories.energy_repo import EnergyRepository
 from typing import Optional, Dict, List
 from datetime import date, datetime, timedelta, timezone
 
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
+
 
 class EnergyService:
     def __init__(self, repo: EnergyRepository):
@@ -124,7 +128,7 @@ class EnergyThresholdService:
         2. **不拿数据缺失冒充结论**：区间内一条记录都没有时跳过判定
            （actual=0 会让下限阈值误报"用得太少"）。
         """
-        check_date = check_date or date.today()
+        check_date = check_date or business_today()
         thresholds = await self.repo.list_active_thresholds(threshold_code)
 
         results: List[Dict] = []

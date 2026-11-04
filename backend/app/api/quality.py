@@ -1,5 +1,9 @@
 from datetime import date, datetime, timezone
 
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
+
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.core.dependencies import get_tenant_repo, get_current_user
 from app.repositories.ncr_repo import NcrRepository
@@ -513,7 +517,7 @@ async def create_order(
                 "message": f"关联的试产单不存在: {data['trial_order_id']}"})
     data = await _resolve_sampling_plan(repo, data)
     # 自动生成检验单号: QC-YYYYMMDD-NNNN
-    today_prefix = f"QC-{date.today().strftime('%Y%m%d')}-"
+    today_prefix = f"QC-{business_today().strftime('%Y%m%d')}-"
     max_no = await repo.get_max_order_no(today_prefix)
     if max_no and len(max_no) > len(today_prefix):
         last_seq = int(max_no[len(today_prefix):])

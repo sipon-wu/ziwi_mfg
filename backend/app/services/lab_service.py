@@ -9,6 +9,10 @@ M15 实验室管理业务服务
 """
 import json
 from datetime import datetime, date
+
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
 from typing import Optional, Dict, List
 from app.repositories.lab_repo import (
     LabRequestRepository,
@@ -56,7 +60,7 @@ class LabService:
 
     async def _generate_request_no(self, tenant_id: str) -> str:
         """生成实验委托编号：LAB-YYYYMM-NNNN"""
-        today = date.today()
+        today = business_today()
         prefix = f"LAB-{today.strftime('%Y%m')}-"
         max_no = await self.request_repo.get_max_request_no(prefix)
         if max_no and len(max_no) > len(prefix):
@@ -284,7 +288,7 @@ class LabService:
         if existing_report:
             raise ValueError("该委托已发布报告")
 
-        today = date.today()
+        today = business_today()
         prefix = f"REP-{today.strftime('%Y%m')}-"
         max_no = await self.request_repo.get_max_request_no(prefix)
         if max_no and len(max_no) > len(prefix):

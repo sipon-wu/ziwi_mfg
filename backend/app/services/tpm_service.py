@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from app.core.business_time import business_day_str
+
 from app.repositories.tpm_repo import (
     MaintenanceTaskItemRepository, TpmRepository,
 )
@@ -501,7 +503,9 @@ class ChecklistService:
         from app.services.andon_service import AndonService
 
         andon_repo = self._derived(AndonRepository)
-        call_no = f"ANDON-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        # ★ 单号里嵌的日期是给现场看的业务日：容器跑 UTC，用 UTC 时间戳会让
+        # 凌晨 0–8 点生成的安灯号写成前一天。
+        call_no = f"ANDON-{business_day_str('%Y%m%d%H%M%S')}"
         data = {
             "tenant_id": self.repo.tenant_id or task.get("tenant_id") or "default",
             "call_no": call_no,

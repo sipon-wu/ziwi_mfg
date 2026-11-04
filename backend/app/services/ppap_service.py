@@ -8,6 +8,8 @@ PPAP 提交管理业务服务
 """
 from typing import Optional, Dict, List
 from datetime import datetime, date, timezone
+
+from app.core.business_time import business_today
 from app.repositories.ppap_repo import (
     PpapLevelRepository,
     PpapElementRepository,
@@ -53,7 +55,7 @@ class PpapService:
             {"submission_id": int, "submission_no": str, "items_count": int}
         """
         # 自动生成提交编号
-        today_prefix = f"PPAP-{date.today().strftime('%Y%m%d')}-"
+        today_prefix = f"PPAP-{business_today().strftime('%Y%m%d')}-"
         max_no = await self.sub_repo.get_max_submission_no(today_prefix)
         if max_no and len(max_no) > len(today_prefix):
             last_seq = int(max_no[len(today_prefix):])

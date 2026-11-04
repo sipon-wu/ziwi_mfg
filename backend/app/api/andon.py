@@ -11,6 +11,10 @@ from app.schemas.andon import (
 )
 from datetime import datetime, timezone
 
+from app.core.business_time import business_day_str
+
+from app.core.business_time import business_day_str
+
 router = APIRouter(prefix="/api/v1/andon", tags=["M05-安灯系统"])
 
 
@@ -37,7 +41,7 @@ async def create_call(
     data["tenant_id"] = current_user.get("tenant_id", "default")
     data["caller_id"] = current_user["id"]
     # 生成呼叫编号：ANDON-YYYYMMDD-序号 (简化为时间戳)
-    data["call_no"] = f"ANDON-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    data["call_no"] = f"ANDON-{business_day_str('%Y%m%d%H%M%S')}"
     # 走 Service 而不是 repo：设备类安灯要联动物备状态、工单暂停、停机记录
     result = await AndonService(repo).create_call(data)
     msg = "安灯呼叫已创建"

@@ -16,6 +16,8 @@
 import json
 import logging
 from datetime import datetime, timezone
+
+from app.core.business_time import business_day_str
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +54,7 @@ class ComplaintService:
     # ==================== 受理 ====================
 
     async def _next_no(self, prefix: str) -> str:
-        day = datetime.now().strftime("%Y%m%d")
+        day = business_day_str()
         like = f"{prefix}-{day}-"
         row = await self.repo.query_one(
             "SELECT complaint_no FROM customer_complaints WHERE complaint_no LIKE :p "
@@ -235,7 +237,7 @@ class RecallService:
         return repo
 
     async def _next_no(self) -> str:
-        day = datetime.now().strftime("%Y%m%d")
+        day = business_day_str()
         like = f"RC-{day}-"
         row = await self.repo.query_one(
             "SELECT recall_no FROM recall_orders WHERE recall_no LIKE :p "

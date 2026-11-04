@@ -10,6 +10,10 @@ FMEA 失效模式分析业务服务
 """
 from typing import Optional, Dict, List
 from datetime import datetime, date, timezone
+
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
 from app.repositories.fmea_repo import (
     FmeaDocumentRepository,
     FmeaHierarchyRepository,
@@ -58,7 +62,7 @@ class FmeaService:
         # 自动生成文档编号
         fmea_type = data.get("fmea_type", "DFMEA")
         type_prefix = "DF" if fmea_type == "DFMEA" else "PF"
-        today = date.today()
+        today = business_today()
 
         # 查询当日已创建的文档数
         count_result = await self.doc_repo.query_one(

@@ -1,6 +1,10 @@
 """M02 BOM 版本锁定 — Service 层"""
 import json
 from datetime import date
+
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
 from typing import Optional, Dict, List
 
 from app.repositories.bom_repo import BomRepository
@@ -178,7 +182,7 @@ class BomService:
                 "SELECT id FROM products WHERE code = :code", {"code": product_code})
             if product:
                 boms = await self.repo.get_active_by_date(
-                    product["id"], date.today())
+                    product["id"], business_today())
                 if boms:
                     bom_version = boms[0].get("version")
 
@@ -219,5 +223,5 @@ class BomService:
         if version:
             return await self.repo.get_boms_by_product_and_version(product_id, version)
         # 取最高版本
-        boms = await self.repo.get_active_by_date(product_id, date.today())
+        boms = await self.repo.get_active_by_date(product_id, business_today())
         return boms

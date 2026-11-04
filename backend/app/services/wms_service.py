@@ -5,7 +5,7 @@ from app.core.transaction import posting_scope, PostingError
 # ★ 凡「今天」用于**日历比较**（效期 / 逾期天数 / 单号前缀 / 到货预测）一律走业务日历日：
 # 容器跑 UTC、业务在 CST，UTC 16:00–24:00 这 8 小时里 date.today() 会比业务日早一天 ——
 # 实测导致过期批次被自动拣选照常出库。详见 app/core/business_time.py。
-from app.core.business_time import business_today
+from app.core.business_time import business_day_str, business_today
 from app.constants.wms_constants import (
     RECEIPT_PENDING, RECEIPT_INSPECTING, RECEIPT_PARTIALLY_STORED, RECEIPT_STORED,
     RECEIPT_CANCELLED, RECEIPT_TRANSITION,
@@ -355,7 +355,7 @@ class InventoryService:
 
         # 记录流水
         tx_repo = InventoryTransactionRepository(self.repo._session).inherit_context_from(self.repo)
-        voucher = f"MV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        voucher = f"MV-{business_day_str('%Y%m%d%H%M%S')}"
         common = {
             "tenant_id": tenant_id,
             "transaction_type": "transfer",

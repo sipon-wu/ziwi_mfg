@@ -2,6 +2,8 @@
 import json
 from typing import Any, Optional, Dict, List
 from datetime import datetime, time, timezone
+
+from app.core.business_time import business_today, business_tz
 from app.repositories.base import MultiTenantRepository
 
 
@@ -242,8 +244,12 @@ class DataCollectionRepository(MultiTenantRepository):
            当天零点的 datetime，两端都干净：PG 走 timestamptz 比较，
            SQLite 走 ISO 字符串比较，语义一致。
         """
-        today_start = datetime.combine(
-            datetime.now(timezone.utc).date(), time.min)
+        # ★"当日"必须是**业务日**：容器 UTC 的 00:00 是 CST 08:00，按 UTC 零点算
+        # 会把凌晨 0–8 点采的数据划到"昨天"，夜班时段的当日 KPI 直接少一截。
+        # 绑定值仍是 naive-UTC（与全库时间戳口径一致），只是起点挪到业务日零点。
+        start_utc = datetime.combine(business_today(), time.min,
+                                     tzinfo=business_tz()).astimezone(timezone.utc)
+        today_start = start_utc.replace(tzinfo=None)
         sql = "SELECT COUNT(*) as cnt FROM collect_data_record WHERE data_time >= :today"
         result = await self.query_one(sql, {"today": today_start})
         return result["cnt"] if result else 0

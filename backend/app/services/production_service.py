@@ -23,6 +23,8 @@ from app.services.bom_service import BomService
 from app.services.material_check_service import MaterialCheckService
 from typing import Optional
 from datetime import date, datetime
+
+from app.core.business_time import business_today
 from fastapi import HTTPException
 
 
@@ -1095,7 +1097,7 @@ class ProductionService:
             if write_org_id:
                 repo.set_write_org_id(write_org_id)
 
-        prefix = f"PRD-{date.today().strftime('%Y%m%d')}-"
+        prefix = f"PRD-{business_today().strftime('%Y%m%d')}-"
         row = await self.repo.query_one(
             "SELECT receipt_no FROM receipt_orders WHERE receipt_no LIKE :p "
             "ORDER BY receipt_no DESC LIMIT 1",

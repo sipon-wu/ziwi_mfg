@@ -22,6 +22,10 @@
 """
 import json
 from datetime import date
+
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
 from typing import Dict, List, Optional
 
 from app.repositories.bom_repo import BomRepository
@@ -181,7 +185,7 @@ class MaterialCheckService:
         product = await self.product_repo.get_product_by_code(product_code)
         if not product:
             return [], f"产品编码 {product_code} 在产品档案中不存在，无法定位 BOM"
-        boms = await self.bom_repo.get_active_by_date(product["id"], date.today())
+        boms = await self.bom_repo.get_active_by_date(product["id"], business_today())
         if not boms:
             return [], f"产品 {product_code} 未配置生效 BOM，无法判断齐套"
         return boms, None

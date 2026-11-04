@@ -54,3 +54,13 @@ def business_today(now: datetime | None = None) -> date:
     新写入的时间戳与历史数据差 8 小时。
     """
     return business_now(now).date()
+
+
+def business_day_str(fmt: str = "%Y%m%d", now: datetime | None = None) -> str:
+    """业务日历上"今天"的字符串形态，供**单号前缀**使用。
+
+    单号里嵌的日期是给现场和纸质单据看的，必须是业务日 —— 用
+    ``datetime.now().strftime(...)`` 在 UTC 容器里会得到前一天的日期，
+    于是同一张单据上"单号 20261104 / 打印时间 2026-11-05"。
+    """
+    return business_now(now).strftime(fmt)

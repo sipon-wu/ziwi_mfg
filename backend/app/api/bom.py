@@ -7,6 +7,10 @@ from app.schemas.production import ProductBomCreate, ProductBomUpdate
 from typing import Optional
 from datetime import date
 
+from app.core.business_time import business_today
+
+from app.core.business_time import business_today
+
 router = APIRouter(prefix="/api/v1/boms", tags=["M02-BOM管理"])
 
 
@@ -59,7 +63,7 @@ async def get_active_bom(
     repo: BomRepository = Depends(get_tenant_repo(BomRepository, require_auth=True)),
 ):
     """获取指定产品当前生效的 BOM 版本物料清单。"""
-    d = date.fromisoformat(effective_date) if effective_date else date.today()
+    d = date.fromisoformat(effective_date) if effective_date else business_today()
     svc = BomService(repo)
     data = await svc.get_active_bom_by_date(product_id, d)
     return {"code": 0, "message": "success", "data": data}

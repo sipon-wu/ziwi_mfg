@@ -10,6 +10,8 @@
   → 因此**每次状态变更必须写通用流水**（`entity_status_logs`，entity_type=ncr）。
 """
 from datetime import datetime, timezone
+
+from app.core.business_time import business_today
 from typing import Optional, Dict
 
 import logging
@@ -367,7 +369,7 @@ class NcrService:
         if dup:
             return {"id": dup["id"], "order_no": dup["order_no"], "created": False}
 
-        prefix = f"QC-{_date.today().strftime('%Y%m%d')}-"
+        prefix = f"QC-{business_today().strftime('%Y%m%d')}-"
         max_no = await repo.get_max_order_no(prefix)
         if max_no and len(max_no) > len(prefix):
             seq = int(max_no[len(prefix):]) + 1

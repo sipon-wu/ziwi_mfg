@@ -7,6 +7,8 @@ M16 试产管理业务服务
 """
 import json
 from datetime import datetime, date, timezone
+
+from app.core.business_time import business_today
 from typing import Optional, Dict, List
 from app.repositories.trial_repo import (
     TrialOrderRepository,
@@ -54,7 +56,7 @@ class TrialService:
 
     async def create_trial_order(self, data: dict) -> Dict:
         """创建试产工单 + 自动生成工单号"""
-        today = date.today()
+        today = business_today()
         prefix = f"NP-{today.strftime('%Y%m')}-"
         max_no = await self.order_repo.get_max_order_no(prefix)
         if max_no and len(max_no) > len(prefix):

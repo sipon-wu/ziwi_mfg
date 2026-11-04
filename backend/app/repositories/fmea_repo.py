@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+
+from app.core.business_time import business_today
 from typing import Optional, Dict, List
 from app.repositories.base import MultiTenantRepository
 
@@ -247,9 +249,12 @@ class FmeaActionRepository(MultiTenantRepository):
         )
 
     async def list_overdue(self) -> List[Dict]:
+        # ⚠️ 不能用 SQL 的 CURRENT_DATE：它是 UTC 口径，业务日比它早的地方会
+        # 把"今天到期"判成"已逾期"或反之。日期由调用方按业务日传入。
         return await self.query(
             "SELECT * FROM fmea_actions WHERE status IN ('open', 'in_progress') "
-            "AND target_date < CURRENT_DATE"
+            "AND target_date < :today",
+            {"today": business_today()},
         )
 
     async def delete_by_doc_id(self, doc_id: int) -> int:

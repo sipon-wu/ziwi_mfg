@@ -255,6 +255,8 @@ def main():
                     help="跳过覆盖棘轮检查（只跑探针）")
     ap.add_argument("--skip-contracts", action="store_true",
                     help="跳过契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）")
+    ap.add_argument("--skip-business-date", action="store_true",
+                    help="跳过业务日历日闸（裸 date.today() / SQL CURRENT_DATE / UTC 单号日期）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -331,7 +333,21 @@ def main():
         print(((con.stdout or "") + (con.stderr or "")).rstrip())
         con_fail = con.returncode != 0
 
-    return 1 if (bad_probes or nosum or cov_fail or con_fail) else 0
+    # ── 业务日历日闸 ────────────────────────────────────────────────
+    # 契约闸管"名字对不对"，管不了"日期口径对不对"。容器跑 UTC、业务在 CST，
+    # 裸 `date.today()` 在 UTC 16:00–24:00 会早一天 —— 而这段时间恰好没人跑测试。
+    # E-B3-1 就是靠这条在凌晨漏了 40 件过期品出库，白天跑一直绿。
+    bd_fail = False
+    if not a.skip_business_date:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        bd = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_business_date.py")],
+            capture_output=True, text=True, cwd=os.path.join(root, "backend"))
+        print(((bd.stdout or "") + (bd.stderr or "")).rstrip())
+        bd_fail = bd.returncode != 0
+
+    return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail) else 0
 
 
 if __name__ == "__main__":
