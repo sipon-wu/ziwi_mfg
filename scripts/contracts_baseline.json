@@ -1,0 +1,26 @@
+{
+  "说明": "契约闸基线：已知存量，只拦新增。修完用 --update-baseline 缩减。",
+  "sigs": [
+    "A1|app/repositories/production_repo.py|route_steps",
+    "A2|app/repositories/production_repo.py|route_steps",
+    "A3|app/repositories/data_collection_repo.py|collect_task",
+    "A3|app/repositories/data_collection_repo.py|iot_device",
+    "A3|app/repositories/data_collection_repo.py|iot_gateway",
+    "A3|app/repositories/data_collection_repo.py|link_monitor",
+    "A3|app/repositories/dictionary_repo.py|dictionaries",
+    "A3|app/repositories/dictionary_repo.py|dictionary_items",
+    "A3|app/repositories/energy_repo.py|energy_device",
+    "A3|app/repositories/excel_import_repo.py|excel_import_tasks",
+    "A3|app/repositories/lab_repo.py|lab_calibrations",
+    "A3|app/repositories/lab_repo.py|lab_reports",
+    "A3|app/repositories/lab_repo.py|lab_requests",
+    "A3|app/repositories/lab_repo.py|lab_test_results",
+    "A3|app/repositories/lab_repo.py|test_standards",
+    "A3|app/repositories/organization_repo.py|employees",
+    "A3|app/repositories/ppap_repo.py|ppap_submissions",
+    "A3|app/repositories/quality_repo.py|inspection_item",
+    "C|app/repositories/excel_import_repo.py|import_templates",
+    "C|app/repositories/role_repo.py|permissions",
+    "D|app/repositories/production_repo.py|route_steps"
+  ]
+}

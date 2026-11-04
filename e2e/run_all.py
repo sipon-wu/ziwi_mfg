@@ -18,10 +18,15 @@
     --only a,b,c     只跑指定探针（省时间）
     --skip a,b       跳过指定探针
     --skip-coverage  不跑覆盖棘轮（探针全跑但本轮只想看断言结果时用）
+    --skip-contracts 不跑契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）
 
 跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
 探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
 全落在没人跑的端点上。棘轮判据是未覆盖条数只许降不许升，新增端点必须同时补探针。
+
+最后是**契约闸**（`scripts/check_contracts.py`）：覆盖管"跑到没跑到"，管不了
+"跑到的那条路上，代码两侧的名字对不对"。17 个缺陷里有 9 个是同一个形状 ——
+写的列名/方法名在另一侧不存在，类型检查看不见、SQLite 也未必报错。
 """
 
 import argparse
@@ -248,6 +253,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--skip-coverage", action="store_true",
                     help="跳过覆盖棘轮检查（只跑探针）")
+    ap.add_argument("--skip-contracts", action="store_true",
+                    help="跳过契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -308,7 +315,23 @@ def main():
                 print(line)
         cov_fail = cov.returncode != 0
 
-    return 1 if (bad_probes or nosum or cov_fail) else 0
+    # ── 契约闸 ──────────────────────────────────────────────────────
+    # 覆盖棘轮管"该跑的都跑到了"，管不了"跑到的那些，代码两侧名字对不对"。
+    # 17 个缺陷里有 9 个是同一个形状：代码里写的一个列名/方法名，在另一侧
+    # 根本不存在。SQL 全在 text() 的字符串里，类型检查看不见；终点也没被探针
+    # 走到过。这个闸做的是**纯静态**对账（不连库、不起服务，约 4 秒）。
+    # 存量已录基线，只拦新增。
+    con_fail = False
+    if not a.skip_contracts:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        con = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_contracts.py")],
+            capture_output=True, text=True, cwd=os.path.join(root, "backend"))
+        print(((con.stdout or "") + (con.stderr or "")).rstrip())
+        con_fail = con.returncode != 0
+
+    return 1 if (bad_probes or nosum or cov_fail or con_fail) else 0
 
 
 if __name__ == "__main__":

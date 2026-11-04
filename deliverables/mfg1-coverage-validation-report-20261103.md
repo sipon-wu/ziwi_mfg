@@ -276,6 +276,55 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 
 5 个 WARN 全部可解释：都是写死 `id=1` 的详情页，staging 真实首条 id 是 518/101，`/work-orders/1` 确实 404；`/andon/1` 另有路径写错（`ROUTE_NOT_FOUND`）。属探针口径，不是产品缺陷。
 
+### 10.2 契约闸 `scripts/check_contracts.py`（2026-11-04 新增）
+
+17 个缺陷里有 **9 个是同一个形状**：代码里写的一个列名/方法名，在另一侧不存在。SQL 全在 `text()` 的字符串里，类型检查看不见；终点也没被探针走到过 —— 所以本地 1408 个单测、458 个端点全绿，它们依然在。这类账机器每次都能对，人只会对一次。
+
+闸做的是**纯静态对账**（不连库、不起服务，约 4 秒）：
+
+| 编号 | 判据 | 对应根因 |
+|---|---|---|
+| A1 | 手写 INSERT 的列清单里有模型没有的列 | R4 列不存在 |
+| A2 | 模型里 NOT NULL 且无 `server_default` 的列没写进 INSERT | R3 运行期 StatementError |
+| A3 | 模型里"可空 + Python `default`"的列没写进 INSERT | R3 静默写 NULL |
+| D | 单表 `UPDATE ... SET 列 = ?` 的列在模型里不存在 | R4 列不存在 |
+| B | `self.<repo>.<method>()` 在仓储类（含父类）上必须存在 | R4 方法不存在 |
+| C | `MultiTenantRepository` 子类用基类 `query/query_one/query_page/execute` 打一张无 `tenant_id` 表 | R1 租户注入 |
+
+**首跑结果：22 处存量（21 条签名）+ 死代码 11 处。** 已录入 `scripts/contracts_baseline.json`，闸只拦**新增**。用基线而不是"全绿才过"的理由很实际：这 22 处全是存量，一个第一天就永远红的闸，两周后没人再看。签名不含行号（`A3|lab_repo.py|lab_requests`），否则改一次 import 顺序就整片失配。
+
+存量分布：A3 ×16（`lab_requests.created_at`、`dictionaries.is_system`、`employees.status` 这类"可空 + Python default"漏写，写进去是 NULL）、A1/A2/D ×3（全在 `production_repo.RouteStepRepository`，见下）、C ×3（`excel_import_repo` 打 `import_templates` 2 次、`role_repo` 打 `permissions` 1 次 —— 注入后 `no such column`）。
+
+**顺带查出的、本轮之前没人知道的 3 处活缺陷（未修，待拍板）**：
+
+1. `production_repo.RouteStepRepository.create_step` 往 `route_steps` 写 `product_id / process_code / process_name / sort_order / workcenter / standard_time`，而这张表的真实列是 `route_id / operation_id / step_seq / wc_id` → 必 500；
+2. 同类的 `update_is_critical`：`UPDATE route_steps SET is_critical = ...`，该表从来没有 `is_critical` 列；
+3. `fmea_service` 找工序用 `SELECT id FROM route_steps WHERE product_id = :pid AND process_name = :pname` → 两个列都不存在。只有「有高风险项被标成关键工序」时才执行，所以一直没被撞见。
+
+另有两处可达性待确认：`GET /excel-import/templates`（打 `import_templates`，注入 `tenant_id` 后 500）、`POST /roles` 带 permission codes（打 `permissions`，同上）。
+
+**闸自身的 4 个缺陷（都是被证伪/回归逼出来的，记在这里免得后人重犯）**：
+
+| 问题 | 表现 | 修法 |
+|---|---|---|
+| docstring 当代码 | `base.py` 文档里的 `INSERT INTO t (a, b)` 被当成真 SQL → "表 t 不存在" | 跳过 Module/Class/Function 的首个字符串节点 |
+| `"{}".format` 占位 | `INSERT INTO t ({}) VALUES ({})` 被读成"写了 0 列，全漏" | 列清单必须**纯标识符**才参与对账，否则整条跳过 |
+| 同名类覆盖 | `RouteStepRepository` 有两个（`basic_data_repo` / `production_repo`），按类名建字典互相覆盖 → 5 处合法调用被报成"方法不存在" | 候选不唯一时**按 import 来源**解析 |
+| **解析失败静默放行** | 语法坏掉的文件只打一行"跳过"，退出码仍 0 —— **闸 fail-open** | 解析失败计入 `PARSE_ERRORS`，一律退出码 1 |
+
+最后一条是自己证伪时撞上的：造了一处违规，闸没红。查下来是探针文件被工具写坏了半个换行，`ast.parse` 失败 → 该文件在闸眼里等于不存在。闸的第一属性是不能漏，第二才是不能误报，已改为 fail-closed。
+
+**证伪记录**（`闸不能是空壳`纪律）：
+
+- 造 A1/A2/A3/D/B/C 六类违规各一处 → 六段全红、`新增 8 处`、退出码 **1**；删掉探针 → `无新增`、退出码 **0**。
+- 造一个语法坏文件 → `❌ 1 个文件解析失败，本次校验不完整`、退出码 **1**；删掉 → **0**。
+- 同一套验证在 pytest 门禁上再跑一遍（`app/tests/test_contract_gate.py`），确认包装层也能红。
+
+**接入位置**（两处，少一处就等于没接）：
+
+1. `e2e/run_all.py` 末尾，紧跟覆盖棘轮，结果计入总退出码；`--skip-contracts` 可单独跳过。覆盖管"该跑的都跑到了"，契约管"跑到的那条路上名字对不对"，两件事不能互相替代。
+2. `backend/app/tests/test_contract_gate.py` —— 日常改代码只跑 pytest，不跑 `run_all.py`；闸只在合并前跑一次，就拦不住日常提交。
+
 ---
 
 ## 11. 下一步
@@ -286,3 +335,4 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
 5. **`full_module_scan.js` 详情页别写死 `id=1`** —— staging 真实 id 是 518/101，5 个 WARN 全来自这里；`/andon/1` 路径也是错的（应为 `/andon/calls/{id}` 一类）。改成先查列表取首条 id 就能把 WARN 清零，让门禁不再需要人工判读。
 6. **`energy_threshold_e2e` 在 staging 只跑 2 条** —— mfg 侧无能耗写入口（ECMS 归独立产品线），阈值告警链路端到端只能在 ECMS 侧验。这条要不要补、补在哪一侧，待定。
+7. **契约闸查出的 3 处活缺陷**（`route_steps` 三连：`create_step` 列名全错、`update_is_critical` 列不存在、`fmea_service` 的 SELECT 用 `product_id/process_name`）+ 2 处可达性待确认（`/excel-import/templates`、`POST /roles` 带 codes）—— 已录基线，闸不会因此变红；修不修、什么时候修，待拍板（详见 §10.2）。
