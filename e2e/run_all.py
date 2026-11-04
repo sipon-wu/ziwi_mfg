@@ -137,12 +137,37 @@ def _child_env() -> dict:
     看上去像"业务挂了"，其实是探针打错了地址。
 
     这里以 API_BASE 为准推出站点根，两个变量一起下发。
+
+    另外把**目标主机加进 NO_PROXY**。本机常挂着工作代理
+    （``https_proxy=http://127.0.0.1:1293x``），httpx 会照 env 走代理去打
+    mfg1.ziwi.cn，代理偶尔回 502 —— 表现为 ``httpx.ProxyError: 502 Bad Gateway``
+    死在某个探针里，看着像服务端挂了。实测 closed_loop_test 就这么假红过：
+    带 NO_PROXY 复跑，0 bugs 全通过。
+    打自己的服务器本来就不该过代理。
     """
     env = dict(os.environ)
     api = env.get("API_BASE", "").rstrip("/")
+    if api:
+        # ★把去掉尾斜杠的值写回去。探针都是 f"{API}/auth/login" 拼路径，
+        #   传 https://host/api/v1/ 就会拼出 //auth/login → 全站 405
+        #   Method Not Allowed。实测一次就 48 个探针全体"[FATAL] 登录失败"，
+        #   看着像认证挂了，其实是多了一个斜杠。
+        env["API_BASE"] = api
     if api and not env.get("BASE_URL"):
         root = api[:-len("/api/v1")] if api.endswith("/api/v1") else api
         env["BASE_URL"] = root
+
+    host = ""
+    for v in (env.get("BASE_URL", ""), api):
+        m = re.match(r"https?://([^/:]+)", v or "")
+        if m:
+            host = m.group(1)
+            break
+    if host:
+        bypass = {"localhost", "127.0.0.1", host}
+        for k in ("NO_PROXY", "no_proxy"):
+            cur = {x.strip() for x in (env.get(k) or "").split(",") if x.strip()}
+            env[k] = ",".join(sorted(cur | bypass))
     return env
 
 
