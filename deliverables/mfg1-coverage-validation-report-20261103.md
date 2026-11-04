@@ -400,15 +400,24 @@ fmea_hierarchies.operation_id  →  operations.is_critical
 
 `skipped_without_operation` 是关键：老实现"查不到就 continue"，于是"词表对不上"和"真的没有高风险工序"在日志上长得一模一样。
 
-验证（三层，从假到真）：
+验证（四层，从假到真）：
 
 | 层 | 证据 |
 |---|---|
 | 单测（假仓储） | `test_fmea_critical_sync.py` 5 条：标记落点 / 跳过计数 / 非 PFMEA 不动 / 重复发布幂等 / 无 `process_id` 也触发。含**「一条 SQL 都不碰 `route_steps`」**断言 —— 老代码正是打这张表 |
-| 真库集成（一次性脚本，已删） | `create_all` 建真 SQLite → 造工序/结构树/两条高风险项 → `publish_document` 返回「发布成功」；`operations` 回读 `(1,true) (2,false)`；跳过数 1 如实上报；`PRAGMA table_info(route_steps)` 确认**无 `is_critical` 列**；重复发布幂等 |
-| 全量回归 | pytest **1417 passed / 0 failed**；契约闸基线 19→16（`--update-baseline` 收缩，A1/A2/D 三条随死类消失）；insert_defaults 基线 64→63；`vue-tsc` 错误数 **76→76（零新增）** |
+| 真库集成（本地 SQLite，一次性脚本） | `create_all` 建真表 → 造工序/结构树/两条高风险项 → `publish_document` 返回「发布成功」；`operations` 回读 `(1,true) (2,false)`；跳过数 1 如实上报；`PRAGMA table_info(route_steps)` 确认**无 `is_critical` 列**；重复发布幂等 |
+| **staging PG 实测（2026-11-05）** | `20261104_operation_critical.py` 在 PG 上 `[apply]` 两列、复跑 `[skip]` 幂等；**14 条断言全 PASS**：发布 200、`route_sync.critical_operation_ids=[65]`、`skipped_without_operation=1`、`operations.is_critical` 回读 true（Boolean 写入成立）、`GET /routes/43/steps` 的 `op_is_critical=true`（BIGINT + 左连接取值成立）、清理后还原 |
+| 真浏览器（staging） | 9 条全 PASS：工序页表头出现「关键」且**列数 8/8 与 colspan 一致**；路线编辑页步骤卡出现「关键」标签（API 先标记再验、验完还原）；FMEA 结构树 3 个节点显示「关联工序: 未关联（点此行关联）」；点节点弹出下拉且含「（不关联）」哨兵项；全程无 pageerror |
+| 回归 | pytest **1417 passed / 0 failed**；契约闸基线 19→16；insert_defaults 64→63；`vue-tsc` **76→76（零新增）**；staging M10 全场景探针 **46/46 PASS**；staging 全模块浏览器扫描 **PASS 72 / WARN 0 / FAIL 0 / OUT 0** |
 
-⚠️ **staging 未部署**：`git push` 被 GitHub 拒绝（`git@github.com: Permission denied (publickey)`）。已核实本机 `~/.ssh/ziwi_mfg_deploy_key` 私钥/公钥配对正常，且同机 `github-ziwi-contracts` 密钥能通过认证 —— 是 `sipon-wu/ziwi_mfg` 仓库侧这把部署密钥被移除/轮换了，不是本机配置问题。补回密钥后 `git push origin main` + CVM `./deploy.sh` 即可；**PG 方言层因此尚未实测**（`= true` 打在 Boolean 列、`operation_id` BIGINT 两处风险最低但未证）。
+**PG 实测当场抓出的两个新缺陷（都是"静默"复辟）**：
+
+1. `9e8ba44` —— 发布返回 200、`operations.is_critical` 也确实写成 true，但响应体只有 `{code,message}`，`api/fmea.py` 的 publish 处理器把 `route_sync` 整个丢掉了。也就是说「标记了几个关键工序 / 几个高风险节点因没关联工序被跳过」用户永远看不到，**本轮要消灭的"静默"在接口层又长回来了**。已改为返回 `data:{doc_id, route_sync}`，前端按结果提示（有跳过节点时用 dialog 明说"请回结构树补关联工序"）。
+2. `edcdc0e` —— 全模块扫描抓到 `#/quality/fmea/{id}/edit` 有 422 console error。根因是我上一版 `fetchOperations` 传了 `page_size=200`，而 `GET /operations` 是 `Query(20, ge=1, le=100)`。更糟的是 `catch` 只清空列表不报错 → 页面照常渲染、**关联工序下拉是空的但用户看不出为什么**。已改 100 + 超上限提示 + 失败时明说"下拉不可用"。
+
+这两条都只有打到真环境、真点一次才会暴露 —— 单测、mock 仓储、SQLite 三处都不会报。
+
+⚠️ **staging 部署路径**（2026-11-05 已打通）：`git push` 曾被 GitHub 拒绝（仓库侧部署密钥被移除），补回 Deploy key 后恢复。backend 走 `cd /opt/ziwi/mfg && ./deploy.sh`；前端是独立一步（tar → scp → `mv /opt/mfg1/frontend /opt/mfg1/frontend_bak_<日期>` → 换新 → chown），校验首页引用的 `assets/index-*.js` 与产物同名、且新代码确实在里面（grep 文案）。
 
 ---
 
