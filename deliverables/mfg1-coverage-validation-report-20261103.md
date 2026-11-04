@@ -221,9 +221,12 @@
 ```bash
 # ① 覆盖账本
 backend/.venv/Scripts/python.exe scripts/coverage_matrix.py
-#   → deliverables/coverage-matrix-20261103.md
+#   → deliverables/coverage-matrix-<日期>.md
+# ①' 覆盖棘轮（未覆盖条数只许降不许升 → 退出码 1）
+backend/.venv/Scripts/python.exe scripts/coverage_matrix.py --check
+#   补探针/确认接受后更新基线：--update-baseline
 
-# ② 全量 E2E 门禁（48 探针）
+# ② 全量 E2E 门禁（48 探针，末尾自动带覆盖棘轮）
 NO_PROXY=localhost,127.0.0.1 BASE_URL=http://127.0.0.1:8000 \
   backend/.venv/Scripts/python.exe e2e/run_all.py
 
@@ -264,5 +267,5 @@ python scripts/verify_ah_thruster.py   # → deliverables/ah-thruster-validation
 
 1. **推 staging 并做全模块浏览器回归**（阶段④⑤）—— 17 个缺陷目前只过了本地单测 + E2E，staging 的 PG 方言才是真考场（`text()` 路径下 JSON/boolean/TIMESTAMPTZ 的坑在 SQLite 上全被吞了）。
 2. **`scripts/probe_artifacts.py`** —— 探针造数归档清理。本地库已被污染到物料 671+ / 工单 1538，本轮已两次导致探针跨轮污染。
-3. **覆盖矩阵接入 `run_all.py` 前置** —— 现在要手动跑，容易忘。
+3. ~~**覆盖矩阵接入 `run_all.py` 前置**~~ —— **已完成（`a45041b`）**：探针跑完自动跑覆盖棘轮，未覆盖条数只许降不许升，结果计入门禁退出码；`--skip-coverage` 可单独跳过。棘轮已证伪过一次（伪基线 hit=460 → 退出码 1），不是空壳闸。
 4. **数据追溯补 GAP** —— 需产品先拍 G1 序列号方案。
