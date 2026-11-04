@@ -469,7 +469,7 @@ fmea_hierarchies.operation_id  →  operations.is_critical
 
 ⚠️ **这次还撞出一个工具坑**：编辑 `wms_repo.py` 时文件被整体从 CRLF 刷成 LF，产生 2615 行伪 diff（仓库 `core.autocrlf=false`，backend 下 66 个 CRLF + 215 个 LF 混存，git 按字节存）。已用 `a82c226` 还原行尾，还原后相对父提交的真实差异是 6 增 3 删。**以后改这批 CRLF 文件后要 `git show --stat` 看一眼改动行数是否离谱。**
 
-**同一类问题还剩 6 处未迁**（本轮按范围纪律只改已实证有伤害的 WMS 链）：`lab_service.py`(2) / `bom_service.py`(2) / `trial_service.py`(1) / `production_service.py`(1) / `ppap_service.py`(1)。这些还没有证据表明造成过实际伤害，先记录不动。
+**同一类问题当时还剩 6 处未迁**（本轮按范围纪律只改已实证有伤害的 WMS 链）：`lab_service.py`(2) / `bom_service.py`(2) / `trial_service.py`(1) / `production_service.py`(1) / `ppap_service.py`(1)。**这一批已在 §10.6 全部处理，且实际不止 6 处 —— 全仓共 21 处。**
 
 ---
 
