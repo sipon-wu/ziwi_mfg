@@ -196,3 +196,60 @@ async def test_today_record_count_starts_at_business_midnight():
     params = repo.query_one.await_args[0][1]
     assert params["today"] == datetime(2026, 11, 4, 16, 0), (
         f"起点应是 2026-11-04T16:00 naive-UTC（=CST 11-05 00:00），实际 {params['today']}")
+
+
+# ── 7. 时区偏移只有**一个**真源 ────────────────────────────
+
+def test_legacy_tz_keys_conflict_fails_loudly():
+    """旧的 PRINT_/COPILOT_TZ_OFFSET_HOURS 与主开关不一致 → 启动即失败。
+
+    为什么必须响：Settings 是 extra="ignore"，若只删键不校验，一个把
+    PRINT_TZ_OFFSET_HOURS 设成 6 的现场升级后会**无声**变成 8 ——
+    接口全 200，只有纸面时间错了 2 小时。
+    """
+    from app.core.config import Settings
+
+    with pytest.raises(Exception) as e:
+        Settings(PRINT_TZ_OFFSET_HOURS=6)
+    assert "BUSINESS_UTC_OFFSET_HOURS" in str(e.value), "错误信息要直接告诉运维改哪个键"
+
+    with pytest.raises(Exception):
+        Settings(COPILOT_TZ_OFFSET_HOURS=9)
+
+
+def test_legacy_tz_keys_equal_is_accepted():
+    """与主开关同值时不拦 —— 存量部署不必先改配置才能升级。"""
+    from app.core.config import Settings
+
+    s = Settings(PRINT_TZ_OFFSET_HOURS=8, COPILOT_TZ_OFFSET_HOURS=8)
+    assert s.BUSINESS_UTC_OFFSET_HOURS == 8
+
+
+def test_print_time_follows_the_single_offset():
+    """纸面「打印时间」跟着 BUSINESS_UTC_OFFSET_HOURS 走，不是自己那份。"""
+    from datetime import timedelta
+
+    from app.core.config import Settings
+    from app.services.print_service import _now_local
+
+    with patch("app.core.business_time.get_settings",
+               return_value=Settings(BUSINESS_UTC_OFFSET_HOURS=6)):
+        assert _now_local().utcoffset() == timedelta(hours=6)
+
+    with patch("app.core.business_time.get_settings",
+               return_value=Settings(BUSINESS_UTC_OFFSET_HOURS=9)):
+        assert _now_local().utcoffset() == timedelta(hours=9)
+
+
+def test_copilot_today_follows_business_today():
+    """Copilot 的"今天"必须就是 `business_today()`，不是自己再算一遍偏移。
+
+    分叉的实际后果：Copilot 说"本月"的口径和报表里"本月"的口径会差一个区间，
+    而两边接口都 200、都不报错 —— 用户只会觉得"这个助手算数字不太准"。
+    """
+    from app.copilot.metric_query_service import MetricQueryService
+
+    svc = MetricQueryService.__new__(MetricQueryService)
+    with patch("app.copilot.metric_query_service.business_today",
+               return_value=date(2026, 11, 5)):
+        assert svc._today() == date(2026, 11, 5)

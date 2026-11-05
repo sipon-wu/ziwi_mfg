@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.business_time import business_today
 from app.copilot.metric_registry import MetricDefinition, MetricRegistry
 from app.copilot.schemas import IntentSlot, QueryResult
 
@@ -84,8 +84,6 @@ class MetricQueryService:
     def __init__(self, db: AsyncSession, registry: Optional[MetricRegistry] = None):
         self._db = db
         self._registry = registry or MetricRegistry.instance()
-        settings = get_settings()
-        self._tz_offset = timedelta(hours=settings.COPILOT_TZ_OFFSET_HOURS)
 
     # ── 公共入口 ───────────────────────────────────────────────────
     async def query(self, user: Dict[str, Any], slot: IntentSlot) -> QueryResult:
@@ -296,9 +294,10 @@ class MetricQueryService:
 
     # ── 时间预设计算（租户本地时区语义）────────────────────────────
     def _today(self) -> date:
-        # 取当前 UTC 再叠加租户时区偏移（naive UTC 语义）。
-        # 用 timezone-aware 写法，规避 Py3.12+ 对 datetime.utcnow() 的弃用告警。
-        return (datetime.now(timezone.utc).replace(tzinfo=None) + self._tz_offset).date()
+        # ★ 不要在这里自己算偏移：时区偏移的唯一真源是 BUSINESS_UTC_OFFSET_HOURS。
+        # 曾经 Copilot 单独读 COPILOT_TZ_OFFSET_HOURS，与业务日历日各存一份 ——
+        # 分叉后"Copilot 说本月"和报表里的本月会是两个区间，而两边都不报错。
+        return business_today()
 
     def _preset_start(self, preset: str, metric: Optional[MetricDefinition] = None) -> Any:
         today = self._today()

@@ -32,13 +32,14 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import select, update
 
 from app.core.config import get_settings
+from app.core.business_time import business_now
 from app.models.print import PrintArtifact
 from app.services.audit_service import AuditAction, AuditService
 from app.services.print import (
@@ -73,9 +74,14 @@ PAPERS = (PAPER_A4, PAPER_LABEL)
 
 
 def _now_local() -> datetime:
-    """车间当地时间（容器默认 UTC，纸面时间不能用 UTC）。"""
-    offset = get_settings().PRINT_TZ_OFFSET_HOURS
-    return datetime.now(timezone(timedelta(hours=offset)))
+    """车间当地时间（纸面上印的「打印时间」）。
+
+    ★ 不要在这里自己算偏移：时区偏移的唯一真源是
+    ``BUSINESS_UTC_OFFSET_HOURS``（见 ``core/business_time.py``）。
+    曾经这里单独读一个 ``PRINT_TZ_OFFSET_HOURS``，与业务日历日各存一份 ——
+    改一处漏一处就会出现"纸面按 +9 打、拣选效期按 +8 判"，而两处都不报错。
+    """
+    return business_now()
 
 
 def _jsonable(value: Any) -> Any:

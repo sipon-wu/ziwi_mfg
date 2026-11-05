@@ -1,6 +1,6 @@
 # Pydantic Settings 读取环境变量
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 from typing import Optional
 from functools import lru_cache
 
@@ -63,10 +63,21 @@ class Settings(BaseSettings):
     # ⚠️ 部署到 staging / 生产时必须设 `PUBLIC_WEB_URL=https://mfg1.ziwi.cn`，
     # 否则二维码指向 localhost:5173，扫出来是打不开的地址（纸已印发，改不了）。
     PUBLIC_WEB_URL: str = "http://localhost:5173"
-    # 纸面上的「打印时间」必须是**车间当地时间**：容器默认 UTC，直接用
-    # datetime.now() 会让每张纸的时间比车间墙上的钟少 8 小时——纸质记录
-    # 上的时间错了，整张纸的证据价值就没了。
-    PRINT_TZ_OFFSET_HOURS: int = 8
+
+    # ── 已废弃的时区配置（只剩启动期冲突检测）───────────────────────────
+    # 曾经有三个同义开关：PRINT_TZ_OFFSET_HOURS（纸面打印时间）、
+    # COPILOT_TZ_OFFSET_HOURS（Copilot 的"今天/昨天/本月"）、
+    # BUSINESS_UTC_OFFSET_HOURS（业务日历日）。三者都是"+8，业务当地时间"，
+    # 各存一份 → 改一处漏一处就会分叉：纸面按 +9 打、拣选效期按 +8 判，
+    # 而两处都不会报错。
+    #
+    # 现在**唯一真源是 BUSINESS_UTC_OFFSET_HOURS**，下面两个只为"不让旧部署静默失效"
+    # 而保留：`:class:`Settings` 是 extra="ignore"，直接删键的话，
+    # 一个把 PRINT_TZ_OFFSET_HOURS 设成 6 的现场（新疆一类）会在升级后
+    # **无声地**变成 8 —— 纸面时间偏 2 小时，纸质记录的证据价值就没了。
+    # 所以键留着，值只要与主开关不一致就在启动期直接抛错（见 _check_legacy_tz_keys）。
+    PRINT_TZ_OFFSET_HOURS: Optional[int] = None
+    COPILOT_TZ_OFFSET_HOURS: Optional[int] = None
 
     # 热敏标签纸实际规格。不同客户现场的标签纸与模切刀具尺寸不同，且无法提前
     # 穷举（用户原话：「标签纸好像也不好提前穷举」），所以不在代码里建规格库 ——
@@ -98,7 +109,6 @@ class Settings(BaseSettings):
 
     # ── AI Copilot（E1 只读 MVP）────────────────────────────────────────
     COPILOT_ENABLED: bool = True                       # Copilot 总开关
-    COPILOT_TZ_OFFSET_HOURS: int = 8                   # 租户本地时区偏移（"今天/昨天/本月" 语义）
     COPILOT_MIN_CONFIDENCE: float = 0.6                # 低于该阈值触发澄清反问（R7）
     AI_GATEWAY_URL: str = "http://localhost:8100"      # ai-gateway 服务地址（OpenAI 兼容）
     AI_CHAT_MODEL: str = "qwen-plus"                   # 话术组织模型
@@ -108,6 +118,29 @@ class Settings(BaseSettings):
     AI_GATEWAY_TIMEOUT: float = 15.0                   # 调用 ai-gateway 超时（秒）
 
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def _check_legacy_tz_keys(self) -> "Settings":
+        """旧时区开关与主开关冲突时**启动即失败**，不要静默走默认值。
+
+        为什么必须响亮：``extra="ignore"`` 会把未声明的环境变量直接丢掉。若删键后
+        一个把 ``PRINT_TZ_OFFSET_HOURS`` 设成别的值的现场升级，纸面打印时间会从
+        "+6" 悄悄变成 "+8"，而系统一切正常、接口全 200 —— 只有纸质记录上的时间
+        错了。这类"看得见的纸、看不见的错"必须用启动失败拦住。
+        """
+        conflicts = []
+        for name in ("PRINT_TZ_OFFSET_HOURS", "COPILOT_TZ_OFFSET_HOURS"):
+            legacy = getattr(self, name, None)
+            if legacy is not None and int(legacy) != int(self.BUSINESS_UTC_OFFSET_HOURS):
+                conflicts.append(f"{name}={legacy}")
+        if conflicts:
+            raise ValueError(
+                f"时区配置冲突：{' / '.join(conflicts)} 已废弃，"
+                f"与 BUSINESS_UTC_OFFSET_HOURS={self.BUSINESS_UTC_OFFSET_HOURS} 不一致。"
+                "纸面打印时间、Copilot 的「今天/昨天/本月」与业务日历日必须共用同一个偏移 —— "
+                "请删掉这些旧环境变量，只保留 BUSINESS_UTC_OFFSET_HOURS。"
+            )
+        return self
 
     @property
     def IS_DEBUG(self) -> bool:

@@ -30,6 +30,10 @@ A. `date.today()` / `datetime.now().date()` —— 日历日比较与单号前�
 B. SQL 字符串里的 `CURRENT_DATE` —— 数据库按 UTC 求值，与 A 同错
 C. `datetime.now(...).strftime(...)` / `datetime.utcnow().strftime(...)`
    —— 把 UTC 时刻直接格式化成单号里的日期段
+D. 读 `PRINT_TZ_OFFSET_HOURS` / `COPILOT_TZ_OFFSET_HOURS` —— 已废弃的同义开关
+   （曾与 `BUSINESS_UTC_OFFSET_HOURS` 各存一份，改一处漏一处就分叉：
+   纸面按 +9 打、拣选效期按 +8 判，两处都不报错）。只允许在 `core/config.py`
+   里出现（定义 + 启动期冲突检测）。
 
 正确的写法
 ----------
@@ -71,6 +75,9 @@ NOQA = re.compile(r"#\s*noqa:\s*business-day")
 
 RULE_A = re.compile(r"\bdate\.today\(\)|\bdatetime\.now\([^)]*\)\.date\(\)")
 RULE_C = re.compile(r"\bdatetime\.(?:now|utcnow)\([^)]*\)\s*\.strftime\(")
+# 旧的时区开关：只允许出现在 core/config.py（定义与冲突检测）里。
+RULE_D = re.compile(r"\b(?:PRINT|COPILOT)_TZ_OFFSET_HOURS\b")
+CONFIG_PY = APP / "core" / "config.py"
 
 SQL_KW = re.compile(r"\b(SELECT|UPDATE|INSERT|DELETE)\b", re.I)
 CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -153,6 +160,9 @@ def main() -> int:
                 hits.append((py, lineno, "A 裸日历日（应 business_today()）"))
             elif RULE_C.search(line):
                 hits.append((py, lineno, "C UTC 时刻被格式化成单号日期（应 business_day_str()）"))
+            if py != CONFIG_PY and RULE_D.search(line):
+                hits.append((py, lineno,
+                             "D 读了已废弃的时区分支开关（唯一真源是 BUSINESS_UTC_OFFSET_HOURS）"))
 
         for lineno, s in sql_strings(raw):
             if re.search(r"\bCURRENT_DATE\b", s, re.I):

@@ -17,13 +17,14 @@ import json
 import os
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.business_time import business_now
 from app.core.database import Base, get_db
 from app.core.dependencies import get_current_user
 from app.main import app
@@ -55,8 +56,6 @@ _TABLES = [
     MaintenanceTask.__table__,
     MaintenancePlan.__table__,
 ]
-
-_TZ = timedelta(hours=8)
 
 
 def _parse_sse(body: str) -> list:
@@ -100,10 +99,11 @@ async def env():
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=_TABLES))
 
-    # 时间基准须与服务端一致：MetricQueryService._today() = UTC+租户偏移 → 本地墙钟日期。
-    # 本机 tz 已是 UTC+8，若用 datetime.now()+8h 会重复叠加（跨 16:00 错日导致假失败）；
-    # 这里以 timezone-aware 方式取 UTC 再叠加偏移，得到与服务同一基准的 naive 本地时间。
-    now_local = datetime.now(timezone.utc).replace(tzinfo=None) + _TZ
+    # 时间基准须与服务端**完全同一来源**：MetricQueryService._today() 已改为
+    # business_today()，这里就直接调 business_now() 取 naive 值 —— 不再自己算偏移。
+    # ★ 曾经这里写死 timedelta(hours=8)：一旦业务偏移改成 +6/+9，测试会与实现
+    # 一起漂移到两个不同基准，跑出来的红是假的、绿也是假的。
+    now_local = business_now().replace(tzinfo=None)
     today = now_local.date()
     yesterday = today - timedelta(days=1)
 
