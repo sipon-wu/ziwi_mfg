@@ -7,7 +7,7 @@
 
 ---
 
-## 0. 已完成 / 未完成（2026-11-05 22:40 更新：**已执行完毕**）
+## 0. 已完成 / 未完成（2026-11-05 11:50 更新：**全部完成，库内只剩一个租户**）
 
 | 项 | 状态 |
 |---|---|
@@ -20,11 +20,15 @@
 | 艾华场景 `seed_thruster_staging.py` | ✅ 已跑，`OK 122 / ERR 0 / SKIP 0` |
 | 艾华补数 `seed_thruster_supplement.py` | ✅ 已跑，`OK 7 / ERR 0 / SKIP 0` |
 | 艾华场景校验 `validate_thruster_scenario.py` | ✅ `PASS 14 / FAIL 0 / GAP 1`（G-4 已知缺口） |
+| 探针造数回收 `scripts/probe_artifacts.py` | ✅ 已提交（`e8dfa82`），清掉 39 行，见 §9 |
+| **删除 `mfg_demo` 租户** | ✅ **已完成**（清 1,162 行），见 §9.6 |
+| 重建链去掉演示租户 | ✅ §3 已改写，演示/回归种子从链上摘掉 |
 
-**最终库状态**：`mfg` 14 MB / 123 表 / 4,277 行 / 2 个租户（`mfg_demo`、`AH-THR`）/ 86 工序 /
-72 工单 / 12 用户 / 2,005 条 `role_permissions`。
-脏值三项全 0：`op_type='production'` 0、探针租户（`E2E*`/`RP*`）0、`OP-S3-*` 0。
-回滚副本：`mfg_legacy_20261105`（29 MB，清库前原样）。
+**最终库状态**：`mfg` / 123 表 / **1 个租户**（`t_1692982c9cb7 / AH-THR / 艾华推进器（A厂）`）/
+43 工序 / 3 路线 / 10 工单 / 3 产品 / 21 物料 / 33 工作中心 / 11 员工 / 15 账号。
+脏值三项全 0：`op_type='production'` 0、探针租户（`E2E*`/`RP*`）0、探针后缀残留 0。
+回滚副本：`mfg_legacy_20261105`（29 MB，清库前原样）；
+`mfg_pre_purge_20261105_1140.sql.gz`（304 KB，删租户前）。
 
 
 ---
@@ -81,38 +85,59 @@ dry-run 实测：123 张表、98 张有数据、合计 **84,564 行**。
 
 ## 3. 重建顺序（顺序不能换）
 
+**目标状态：库里只有一个租户 `AH-THR`（艾华推进器）。**
+`mfg_demo` 已于 2026-11-05 删除（§9.6），重建链因此改成「先建 bootstrap 身份 →
+建艾华 → 授权 → 收尾清掉 bootstrap」。
+
 ```bash
 C="docker exec -e DB_NAME=mfg -w /app mfg1-backend"
 
-# ① 租户 + admin 用户 + admin 角色 + 绑定
+# ① bootstrap 身份（唯一目的：让 `POST /tenants` 有个平台管理员可调）
+#    它建出来的 mfg_demo 会在 ⑥ 被清掉，不要往里灌演示数据
 $C python -m seeds.mfg1_seed
 
-# ② 权限字典（373 条）+ 按 ROLE_GRANTS 给角色授权
-$C python scripts/seed_permissions.py mfg_demo
+# ② 权限字典（373 条）+ 按 ROLE_GRANTS 给现有租户授权
+$C python scripts/seed_permissions.py
 
-# ③ mfg_demo 拟真演示数据（物料/产品/工序/路线/工单/日历/安灯）
-$C python -m seeds.mfg1_demo_data
-
-# ④ 扩充演示数据（更多安灯/检验/SPC 等长尾）
-$C python -m seeds.mfg1_demo_data_expanded
-
-# ⑤ E2E 角色与用户（test_dept_head / test_proc_eng / …）
-$C python -m seeds.mfg1_e2e_seed_data
-
-# ⑥ 供应商主数据
-$C python -m seeds.suppliers_seed
-
-# ⑦ 艾华推进器厂完整场景（走 HTTP API，需后端在线）
+# ③ 艾华推进器厂完整场景（走 HTTP API，需后端在线）
 cd backend && ./.venv/Scripts/python.exe ../scripts/seed_thruster_staging.py
 cd backend && ./.venv/Scripts/python.exe ../scripts/seed_thruster_supplement.py
 
-# ⑧ 回归固定账号（幂等；漏了这一步，E2E 套件登录不上艾华）
+# ④ 回归固定账号（幂等；漏了这一步，E2E 套件登录不上艾华）
 cd backend && ./.venv/Scripts/python.exe ../scripts/migrate_regression_to_ah.py
+
+# ⑤ 再授权一次 —— ③ 刚建出艾华的角色，不跑这步艾华全员 403
+$C python scripts/seed_permissions.py
+
+# ⑥ 收尾：清掉 bootstrap 租户，只留艾华
+#    --skip-backup-check 是因为此时库刚建完、还没有备份；
+#    --if-exists 让这一步可重复执行
+$C python scripts/purge_tenant.py --tenant mfg_demo --yes --skip-backup-check --if-exists
 ```
 
-**为什么顺序不能换**：`seed_permissions` 要按"库里已有的租户 + 角色"授权，
-所以必须在 ① 之后；`mfg1_e2e_seed_data` 依赖 ③ 建的物料/工序；⑦ 走 HTTP，
-必须等后端连上重建后的库；⑧ 依赖 ⑦ 建出来的租户与 admin 角色。
+**为什么顺序不能换**：
+- ① 是**鸡生蛋**：`POST /tenants` 要平台管理员身份，而平台管理员只能由种子脚本直连库创建；
+- ② 必须在 ① 之后（要按"库里已有的租户 + 角色"授权），且必须在 ③ 之前（否则 ① 建的角色
+  一个权限都没有）；
+- ③ 走 HTTP，必须等后端连上重建后的库；
+- ④ 依赖 ③ 建出来的租户与 admin 角色；
+- ⑤ 必须晚于 ③（艾华的角色在 ③ 才存在）；
+- ⑥ 必须最后（① 的身份在 ④ 之后就已经被 `mfg_admin@AH-THR` 取代了）。
+
+**演示/回归数据（`mfg1_demo_data` / `mfg1_demo_data_expanded` / `mfg1_e2e_seed_data` /
+`suppliers_seed`）已经从链上摘掉**：它们全部写进 `mfg_demo`，而 `mfg_demo` 现在会被 ⑥ 删掉，
+跑了等于白跑。只在需要单独搭一套演示环境时才手动执行，且**不要再往 ⑥ 之前加回去**。
+
+⚠️ **根目录 `scripts/` 不在容器里**：`deploy.sh` 只 rsync `backend/` → `/app`，所以
+`purge_tenant.py` / `probe_artifacts.py` / `reset_staging_db.py` 这三个根级脚本**必须先
+`docker cp` 进去**再用：
+
+```bash
+docker cp scripts/purge_tenant.py mfg1-backend:/app/scripts/
+```
+
+（`backend/scripts/` 下的那些——`seed_permissions.py` 等——跟着 rsync 走，不用 cp。）
+
 
 ---
 
@@ -309,18 +334,24 @@ cd /opt/ziwi/mfg && python3 scripts/validate_thruster_scenario.py
 打 staging → `PASS 31 / FAIL 0`；`ah_admin@AH-THR` 与 `mfg_admin@AH-THR` 均能登录，
 归一后 `tenant_id=t_1692982c9cb7`。
 
-### 8.2 第二步（未做）：删租户
+### 8.2 第二步（已完成 2026-11-05）：删租户
 
-**前置阻塞：已解除**（`scripts/probe_artifacts.py` 已做，见 §9）。
+原计划四步：① 做完 `probe_artifacts.py` 并清掉已有探针残留 → ② 跑回归确认绿 →
+③ 删除 `mfg_demo` 的租户行与全部业务数据 → ④ 从 seeds 与 runbook 里摘掉演示租户。
 
-阻塞原因回顾：实测一个探针就会在艾华留下十几行带时间戳后缀的测试数据
-（`PA-1105111153` / `RT-E6-1105111153` / `M-BB1-1105111153` 等）。回收工具不做，
-删掉 `mfg_demo` 之后照样被造脏 —— 等于白清两次。
+实际执行：
+- ① 已完成（§9，清了 39 行探针残留）；
+- ② `pytest 1447 passed / 0 failed`（删租户后重跑，确认无代码依赖）；接口回归
+  `/products`=3、`/operations`=43、`/work-orders`=10 均正常；
+- ③ 用新写的 `scripts/purge_tenant.py` 执行，见 §9.6；
+- ④ 重建链已改写（§3），演示/回归种子从链上摘掉。
 
-顺序：① 做完 `probe_artifacts.py` 并清掉已有探针残留 → ② 跑全量
-`e2e/run_all.py` 确认回归绿（此时若仍有探针造数，应在跑完立即回收）→
-③ 删除 `mfg_demo` 的租户行与全部业务数据 → ④ 从 `seeds/mfg1_seed.py`
-与 runbook 步骤 ①②③④ 里摘掉演示租户（否则下次重建又建回来）。
+**没有采用"改代码"的路线**：`seeds/mfg1_seed.py` 里的 `TENANT_ID = "mfg_demo"` 是
+**bootstrap 身份**的常量，不是"演示数据"的开关。空库里 `POST /tenants` 需要先有一个
+平台管理员，而平台管理员只能由种子脚本直连库创建 —— 所以这个脚本必须留着，
+只是它建出来的租户会在重建链最后一步被 `purge_tenant.py` 清掉。改常量反而会破坏
+新环境首次部署（第一个租户的 `tenant_id` 会变成非 `t_xxxx` 格式）。
+
 
 ---
 
@@ -397,6 +428,64 @@ docker exec mfg1-backend python /app/scripts/probe_artifacts.py --suffix 1105111
 `/products`（3）、`/work-orders`（10）、`/operations`（43）都是过滤后的正确条数，
 只有 `/routes` 是 19（= 全库）。这是**跨租户越权读**。
 
-⚠️ 删掉 `mfg_demo` 会让这个 bug "看不见"（没有别的租户可泄漏），但这只是掩盖。
-真上多租户时它会直接暴露别家工艺路线。建议在 §8.2 第三步之前先修掉。
+**删掉 `mfg_demo` 之后已实测确认：`/routes` 现在返回 3 条 —— bug 还在，只是没有
+第二个租户可泄漏了。** 这是最容易骗人的一种"修好"：库里只剩一个租户，任何过滤缺失
+都看不出来。**下次新增第二个租户（哪怕只是测试租户）时它会立刻复现。**
+修法在 `backend/app/api/` 的 routes 列表端点，补上与其他三个端点一致的租户注入即可。
+
+---
+
+## 9.6 删租户（2026-11-05，已完成）
+
+### 9.6.1 工具
+
+`scripts/purge_tenant.py`，默认 dry-run。
+
+```bash
+# 看影响面
+docker exec mfg1-backend python /app/scripts/purge_tenant.py --tenant mfg_demo
+# 真删
+docker exec mfg1-backend python /app/scripts/purge_tenant.py --tenant mfg_demo --yes
+# 重建链里的幂等收尾（库刚建完没有备份，所以要跳过备份闸）
+docker exec mfg1-backend python /app/scripts/purge_tenant.py \
+    --tenant mfg_demo --yes --skip-backup-check --if-exists
+```
+
+### 9.6.2 为什么不能只删 tenants 那一行
+
+各业务表都存 `tenant_id` 但**没有外键**（本库 123 张表只有 7 条 FK）。删租户行不会带掉
+任何业务数据，只会留下大量"查不到归属"的孤儿 —— 而多租户仓储按 `tenant_id` 过滤，
+孤儿永远看不见、永远没人清，等于把垃圾埋进库底。
+
+三类表的处理：
+1. **有 `tenant_id` 的**：直接删，表清单从 `information_schema` 现取（写死必漏）；
+2. **没有 `tenant_id` 但通过角色关联的**：`role_permissions`，必须先按该租户的
+   `roles.id` 反查删掉，否则删 `roles` 会被外键挡住（这是全库仅有的 7 条 FK 之一）；
+3. **完全没有归属线索的**：`change_log`（只有 `table_name`/`row_id`）。同步日志，删了不
+   影响业务，留着也不会被任何按租户过滤的查询读到 —— 脚本不动它，只在报告里说明。
+
+### 9.6.3 安全闸
+
+- 默认 dry-run，`--yes` 才删；
+- ★ **拒绝删掉最后一个租户**：删完库里必须还有别的租户，否则整个平台登录不了；
+- PG 上要求 24 小时内的 `mfg_pre_*.sql.gz`（宿主机 `/opt/mfg1/backups/` 或容器 `/tmp/`）。
+  ⚠️ **容器里看不到宿主机的备份目录** —— 这条闸第一次跑就拦住了自己，得先
+  `docker cp` 进容器 `/tmp/`（与 `reset_staging_db.py` 同一个坑）；
+- 单事务；删完回读断言：该租户在**所有**表里归 0、**其他租户的行数与删前逐表一致**。
+
+### 9.6.4 实际结果
+
+| | 值 |
+|---|---|
+| 删除行数 | **1,162**（`role_permissions` 373 + 17 张表的 789） |
+| 涉及表 | 17 张带 `tenant_id` 的 + 1 张旁路（`role_permissions`） |
+| 删后 `tenants` | 1 条：`t_1692982c9cb7 / AH-THR / 艾华推进器（A厂）` |
+| 孤儿检查 | `products` / `work_orders` 中无归属租户行 **0** |
+| 接口回归 | `/products`=3、`/routes`=3、`/operations`=43、`/work-orders`=10 |
+| 旧租户登录 | `mfg_admin@MFG1` → **401**（预期） |
+| 备份 | `/opt/mfg1/backups/mfg_pre_purge_20261105_1140.sql.gz`（304 KB） |
+
+执行前在本地 SQLite 副本上做过全路径演练（`mfg_demo` 副本删 32,777 行，其他 99 个
+探针租户行数一行不差）。
+
 
