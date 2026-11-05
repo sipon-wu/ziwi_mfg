@@ -72,9 +72,17 @@ async def seed():
         print(f"[seed] tenant '{TENANT_ID}' 就绪（已存在则跳过）")
 
         # 2) 管理员用户（tenant_id + username 唯一；cloud_uuid 占位）
+        #
+        # ⚠️ must_change_password 必须**显式写**：模型上它是 `Boolean, default=False,
+        # nullable=False` —— `default` 是 ORM 层 Python 默认，这条是原生 SQL，编译期
+        # 就要绑值。漏掉的后果不是"取默认值 false"，而是
+        # `NotNullViolationError: null value in column "must_change_password"`，
+        # 空库重建时第一步就断在这里（2026-11-05 在 mfg_rebuild_test 上实测到）。
+        # 历史上没暴露，是因为列是后加的迁移、老库已被 backfill 过。
         await session.execute(text("""
-            INSERT INTO users (tenant_id, username, password_hash, real_name, email, status, cloud_uuid)
-            VALUES (:tid, :uname, :pw, :rname, :email, 'active', :cuuid)
+            INSERT INTO users (tenant_id, username, password_hash, real_name, email,
+                               status, cloud_uuid, must_change_password)
+            VALUES (:tid, :uname, :pw, :rname, :email, 'active', :cuuid, false)
             ON CONFLICT (tenant_id, username) DO NOTHING
         """), {
             "tid": TENANT_ID,

@@ -26,8 +26,17 @@ class User(Base):
     # 由「初始化管理员」与「管理员重置他人密码」两条路径置 True；改密成功后清 False。
     # 判定时机：get_current_user 每次请求读库判定（不进 JWT）——改密后立刻生效，无需重新登录。
     # 之所以不放 JWT：放了就必须"改密后强制重登"才能让标志失效，凭白增加一轮登录摩擦。
+    #
+    # ★ 必须带 `server_default`（2026-11-05 补）：`default=False` 只是 ORM 层 Python
+    # 默认，**裸 SQL 的 INSERT 不会带它**。缺 server_default 时会出现这种分裂：
+    #   - 生产库（迁移加的列）→ 列可空、无默认 → 裸 INSERT 侥幸通过（存成 NULL）；
+    #   - 按模型 create_all 建的新库 → NOT NULL 无默认 → 同一个 INSERT 直接
+    #     `NotNullViolationError`，清库重建第一步就断。
+    # 实测两库 `information_schema` 对比：nullable 一个 YES 一个 NO —— 这就是漂移。
+    # 本项目的 seed 脚本（mfg1_seed / mfg1_demo_data / mfg1_e2e_seed_data /
+    # seed_organizations）全是裸 INSERT，所以默认值必须在**库**里，不能只写在模型上。
     must_change_password = Column(
-        Boolean, default=False, nullable=False,
+        Boolean, default=False, nullable=False, server_default=text("false"),
         comment="是否必须修改密码（初始密码首登强制改密）",
     )
 
