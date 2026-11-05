@@ -205,3 +205,14 @@ cd backend && ./.venv/Scripts/python.exe ../scripts/check_capacity_consistency.p
 
 指向 staging 时 `run_all.py` 会**如实 SKIP** 这道闸（它直接读库，远端目标下本地
 SQLite 与线上不是一份数据，跑了也是假结论），并在输出里给出容器内的跑法。
+
+**两侧都验过**：
+
+| 环境 | 基线 | 命中 | 新增 | 未命中 | 退出码 |
+|---|---|---|---|---|---|
+| 本地 SQLite | 3 | 1 | 0 | 2 | 0 |
+| staging PG（容器内） | 3 | 3 | 0 | 0 | 0 |
+
+staging 三条全命中、零未命中 —— 说明手工录进基线的签名与描述文本和线上实算**逐字一致**。
+本地只命中 1 条，是因为**本地 `ziwi.db` 落后于 staging 种子**（这批工位的
+`capacity_per_shift` 本地还是 NULL），不是闸判错。
