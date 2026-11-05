@@ -5,7 +5,7 @@
 //   BASE_URL=http://127.0.0.1:5173 node e2e/browser_test/cockpit_overview_e2e.js
 //
 // 断的是"这页是否真的更丰富了"，不是"DOM 里有没有这个东西"：
-// - KPI 卡 23 张、8 个模块、0 个「未接入」
+// - KPI 卡 24 张、8 个模块、0 个「未接入」
 // - 今日摘要条 5 项且数值**可读**（不是 '—'）
 // - 占比条真的画出来了（宽度 > 0）
 // - 卡片不再是等高拉伸（M11 比 M01 矮 —— 原来两列等高，短卡下半张全空）
@@ -66,7 +66,7 @@ const EXPECT_MODULES = ['M00', 'M01', 'M02', 'M03', 'M04', 'M05', 'M11', 'M12']
   chk('模块编号齐全', EXPECT_MODULES.every((c) => mods.includes(c)), mods.join(','))
 
   const kpiCount = await page.$$eval('.mod .ck', (els) => els.length)
-  chk('KPI 卡 23 张', kpiCount === 23, `实际 ${kpiCount}`)
+  chk('KPI 卡 24 张', kpiCount === 24, `实际 ${kpiCount}`)
 
   // ── 2. 有没有「未接入」 ──
   const unavailableLabels = await page.$$eval('.mod .ck', (els) =>
@@ -145,6 +145,13 @@ const EXPECT_MODULES = ['M00', 'M01', 'M02', 'M03', 'M04', 'M05', 'M11', 'M12']
   chk('同一模块内 KPI 卡等宽', ragged.length === 0,
     ragged.length ? ragged.map((m) => `${m.code} 差${m.spread}px`).join(' ')
       : widthSpread.map((m) => `${m.code}:${m.ws.join('/')}`).join(' '))
+
+  // 块状表达的前提是"块一样大"。只要有一张模块卡少了/多了项，
+  // 它那几块就会比别人宽，整面矩阵立刻塌成"大小不一的色块"。
+  const allW = widthSpread.flatMap((m) => m.ws)
+  const gMin = Math.min(...allW)
+  const gMax = Math.max(...allW)
+  chk('全页 KPI 块宽度统一（矩阵不塌）', gMax - gMin <= 2, `${gMin}~${gMax}px`)
 
   // ── 7. 触控目标实测（外框，不看令牌文本） ──
   const geo = await page.evaluate(() => {

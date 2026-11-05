@@ -115,7 +115,8 @@ const modules = ref<ModuleInfo[]>([
     name: '安灯系统', code: 'M05', to: '/andon', perm: 'M05:andon_call:read',
     kpis: [
       blank('呼叫', '', '安灯呼叫总数（累计）'),
-      blank('未处理', '', '不含已解决/已关闭/已取消'),
+      blank('未处理', '', '待响应/待处理/已确认/响应中/处理中'),
+      blank('已升级', '', '超时升级，> 0 说明响应跟不上'),
     ],
   },
   {
@@ -264,11 +265,14 @@ async function load() {
   // ── M05 安灯 ──
   await feed('M05', 0, () => total('/andon/calls'))
   await feed('M05', 1, () =>
-    // 未处理 = 待响应/待处理/已确认/响应中/已升级（resolved/closed/cancelled 已终结）
+    // 未处理 = 待响应/待处理/已确认/响应中/处理中
+    // ★ 这里**不含 escalated**：已升级单独一项，两项互斥才不会把同一张单数两遍
     totalByStatus('/andon/calls',
-      ['pending', 'open', 'acknowledged', 'responding', 'in_progress', 'escalated']))
+      ['pending', 'open', 'acknowledged', 'responding', 'in_progress']))
+  await feed('M05', 2, () => totalByStatus('/andon/calls', ['escalated']))
   withRatio('M05', 1, num('M05', 1), num('M05', 0))
   withSeverity('M05', 1, num('M05', 1), 'warn')
+  withSeverity('M05', 2, num('M05', 2), 'danger')
 
   // ── M11 能碳（外部产品线，失败即未接入，不重试）──
   await feed('M11', 0, () => total('/energy/devices'))
@@ -556,7 +560,9 @@ onMounted(load)
   border: 1px solid var(--ziwi-border-card);
   border-radius: var(--ziwi-radius-card);
   box-shadow: var(--ziwi-shadow-card);
-  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg) var(--ziwi-gap-lg);
+  /* 内边距收紧一档：KPI 已经是带底色的块，再留 20px 白边就成了
+     "白框里套色块"的三层嵌套，块面反而不成片 */
+  padding: var(--ziwi-gap-sm) var(--ziwi-gap-md) var(--ziwi-gap-md);
 }
 
 .mod__head {
