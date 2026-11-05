@@ -19,6 +19,8 @@
     --skip a,b       跳过指定探针
     --skip-coverage  不跑覆盖棘轮（探针全跑但本轮只想看断言结果时用）
     --skip-contracts 不跑契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）
+    --skip-business-date 不跑业务日历日闸（裸 date.today() / CURRENT_DATE）
+    --skip-capacity  不跑产能自洽闸（`capacity_per_shift` / 纲领 45 台每月）
 
 跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
 探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
@@ -27,6 +29,10 @@
 最后是**契约闸**（`scripts/check_contracts.py`）：覆盖管"跑到没跑到"，管不了
 "跑到的那条路上，代码两侧的名字对不对"。17 个缺陷里有 9 个是同一个形状 ——
 写的列名/方法名在另一侧不存在，类型检查看不见、SQLite 也未必报错。
+
+以及**产能自洽闸**（`scripts/check_capacity_consistency.py --check`）：前三道闸
+都不读 `capacity_per_shift`。这个字段从建表起就**零消费方**——填 11（实算 2）
+不会报错、不会告警、页面也看不出。判据同样是棘轮：已知偏差入基线，只拦新增。
 """
 
 import argparse
@@ -257,6 +263,8 @@ def main():
                     help="跳过契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）")
     ap.add_argument("--skip-business-date", action="store_true",
                     help="跳过业务日历日闸（裸 date.today() / SQL CURRENT_DATE / UTC 单号日期）")
+    ap.add_argument("--skip-capacity", action="store_true",
+                    help="跳过产能自洽闸（capacity_per_shift ↔ 设计纲领 45 台每月）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -347,7 +355,48 @@ def main():
         print(((bd.stdout or "") + (bd.stderr or "")).rstrip())
         bd_fail = bd.returncode != 0
 
-    return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail) else 0
+    # ── 产能自洽闸 ──────────────────────────────────────────────────
+    # 前三道闸分别管"跑到没跑到""名字对不对""日期口径对不对"，**没有一道闸读过
+    # `capacity_per_shift`**。这个字段从建表起就零消费方：灌胶区填 11（实算 2）、
+    # 轴承压入填 48（实算 18），不报错、不告警、页面也看不出——躺了半年。
+    #
+    # 判据是棘轮不是"零偏差"：存量偏差（含转子线过配 8.8×）已入
+    # `scripts/capacity_baseline.json`，只拦新增。写成"零偏差"会让闸从接上那天
+    # 就恒红，恒红的闸等于没有闸。
+    #
+    # ⚠️ 这道闸**直接读库**、不读 API。所以只在"被测库就是本地库"时有意义：
+    #    目标指向 staging 时本地 SQLite 与线上不是一份数据，结论是假的，不如如实
+    #    SKIP（线上改在容器里跑，见 annex K）。
+    cap_fail = False
+    if not a.skip_capacity:
+        root = os.path.dirname(HERE)
+        api = os.environ.get("API_BASE", "").rstrip("/")
+        _m = re.match(r"https?://([^/:]+)", api)
+        host = _m.group(1) if _m else ""
+        print("=" * 62)
+        if host and host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+            print(f"⏭️  产能自洽闸 SKIP：目标是远端 {host}，而本闸直接读库 ——"
+                  f"本地 SQLite 与线上不是同一份数据，跑了也是假结论")
+            print("    线上这样跑：docker cp scripts/check_capacity_consistency.py "
+                  "mfg1-backend:/app/scripts/ && docker exec mfg1-backend python "
+                  "/app/scripts/check_capacity_consistency.py --check")
+        else:
+            cap = subprocess.run(
+                [py, os.path.join(root, "scripts", "check_capacity_consistency.py"), "--check"],
+                capture_output=True, text=True, cwd=os.path.join(root, "backend"),
+                env=_child_env())
+            cout = (cap.stdout or "") + (cap.stderr or "")
+            # 逐路线明细太长（每条路线 8 行），门禁只要棘轮结论。真红了再用不带
+            # --check 的方式看明细 —— 所以从"产能闸（棘轮）"那行往下一刀切。
+            lines = cout.strip().splitlines()
+            idx = next((i for i, l in enumerate(lines) if "产能闸（棘轮）" in l), None)
+            if idx is None:                      # 崩了/租户不存在，原样打尾部
+                print("\n".join(lines[-15:]))
+            else:
+                print("\n".join(lines[idx - 1:]).rstrip())
+            cap_fail = cap.returncode != 0
+
+    return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail or cap_fail) else 0
 
 
 if __name__ == "__main__":

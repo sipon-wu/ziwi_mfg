@@ -1,0 +1,15 @@
+{
+  "说明": "产能闸基线：已知存量偏差，只拦新增。修完用 --update-baseline --prune 缩减。基线是本地 SQLite 与 staging PG 的**并集**——两套数据不同（本地 capacity_per_shift 还是 NULL），按覆盖写会抹掉另一套已接受的条目。known 里的文本必须与脚本算出来的一致，否则每轮都会报「描述变化」；给人看的理由写在「备注」里。",
+  "设计纲领": 45.0,
+  "已知偏差": 3,
+  "known": {
+    "design:RTE-AH-ROTOR": "RTE-AH-ROTOR 单班 396 台/月 vs 纲领 45（+780%）",
+    "field:RTE-AH-STATOR/WC-AH-CW040": "RTE-AH-STATOR WC-AH-CW040 capacity_per_shift 11 实算 2（高估 450%）",
+    "field:RTE-AH-ROTOR/WC-AH-RT050": "RTE-AH-ROTOR WC-AH-RT050 capacity_per_shift 48 实算 18（高估 167%）"
+  },
+  "备注": {
+    "design:RTE-AH-ROTOR": "零件线快于总装线属正常，但 8.8 倍意味着利用率约 11%。待拍板：下调配置，还是注明「共线/备用」。",
+    "field:RTE-AH-STATOR/WC-AH-CW040": "灌胶区一个工位挂 7 道工序（预热/混合抽真空/灌胶/固化/冷却），字段按单道工序填的，必然高估。待拍板 11→2。",
+    "field:RTE-AH-ROTOR/WC-AH-RT050": "轴承压入 2 道工序合计 40 分/件，实算 18 件/班。待拍板 48→18。"
+  }
+}
