@@ -443,9 +443,11 @@ def main() -> int:
     wo_id = wo.get("id")
 
     verify_code = None
+    print_at = None
     if wo_id:
         r = c.post(f"{API}/print/work_order/{wo_id}", params={"paper": "a4"})
         verify_code = r.headers.get("X-Print-Verify-Code")
+        print_at = r.headers.get("X-Print-At")
         report("P8-1 工单可出 A4 归档件（PDF + 留痕头）",
                r.status_code == 200 and (r.headers.get("content-type") or "").startswith("application/pdf")
                and bool(verify_code),
@@ -465,6 +467,15 @@ def main() -> int:
         report("P8-3 留痕码可反查（含单号/版本/副本号）",
                r.status_code == 200 and v.get("doc_no") and v.get("copy_no") is not None,
                f"HTTP {r.status_code} doc_no={v.get('doc_no')} rev={v.get('doc_revision')}")
+
+        # ★ 同一张纸上的两个时间必须一致：纸上印的 X-Print-At 是业务当地时间，
+        # 核验页 printed_at 若直接 strftime 一个 timestamptz，会印出 UTC 墙钟 ——
+        # 实测 2026-11-05 staging：纸上 08:49:11、核验页 00:49:11，差 8 小时。
+        # 这条断言守的就是"纸质记录与数字留痕不许互相打架"。
+        got = (v.get("printed_at") or "")[:19]
+        report("P8-3b 核验页打印时间与纸面一致（同口径，不是 UTC）",
+               bool(print_at) and got == print_at[:19],
+               f"纸面 X-Print-At={print_at} / 核验页 printed_at={v.get('printed_at')}")
 
         aid = art.get("id")
         if aid:
