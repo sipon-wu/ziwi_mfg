@@ -234,7 +234,13 @@ def _split_top(text: str) -> list:
 
 
 INSERT_RE = re.compile(
-    r"INSERT\s+INTO\s+(?P<table>\w+)\s*\((?P<cols>[^()]*)\)\s*VALUES\s*\((?P<vals>[^()]*)",
+    r"INSERT\s+INTO\s+(?P<table>\w+)\s*\((?P<cols>[^()]*)\)"
+    # 列括号与 VALUES 之间允许出现**字符串字面量拼接**的痕迹：
+    #   "INSERT INTO t (a, b) "     ← 引号收尾
+    #   "VALUES (:a, 1)"            ← 下一行另起一个引号
+    # 真实代码大量这么写，旧正则要求 VALUES 紧跟 `)`，于是整条 INSERT 被漏掉
+    # （实测：把一个真违规样本写成两行，闸一声不吭）。
+    r"\s*[\"']?\s*(?:\n\s*[\"']?\s*)?VALUES\s*\((?P<vals>[^()]*)",
     re.I | re.S)
 
 
