@@ -1,0 +1,86 @@
+{
+  "tenant": "AH-THR",
+  "api": "https://mfg1.ziwi.cn/api/v1",
+  "start": "2026-05-01",
+  "end": "2026-10-31",
+  "calendar": {
+    "days": 184,
+    "workdays": 133
+  },
+  "half_year": {
+    "total_output": 772.0,
+    "total_wip_output": 11052.0,
+    "total_scrap": 5.0,
+    "total_hours": 4377.68,
+    "total_machine_hours": 4377.68
+  },
+  "derived": {
+    "capacity_basis": {
+      "per_shift": 2,
+      "wo_per_unit": 3,
+      "cap": 798
+    },
+    "achievement_rate_pct": 96.74,
+    "scrap_rate_pct": 0.64,
+    "labor_hours_per_unit": 5.67
+  },
+  "months": [
+    {
+      "month": "2026-05",
+      "total_output": 118,
+      "total_wip_output": 1598,
+      "total_scrap": 1,
+      "total_hours": 629.8,
+      "total_machine_hours": 629.8,
+      "orders": 11
+    },
+    {
+      "month": "2026-06",
+      "total_output": 132,
+      "total_wip_output": 1892,
+      "total_scrap": 0,
+      "total_hours": 749.5,
+      "total_machine_hours": 749.5,
+      "orders": 15
+    },
+    {
+      "month": "2026-07",
+      "total_output": 147,
+      "total_wip_output": 2107,
+      "total_scrap": 1,
+      "total_hours": 834.6700000000001,
+      "total_machine_hours": 834.6700000000001,
+      "orders": 15
+    },
+    {
+      "month": "2026-08",
+      "total_output": 144,
+      "total_wip_output": 2064,
+      "total_scrap": 1,
+      "total_hours": 817.63,
+      "total_machine_hours": 817.63,
+      "orders": 18
+    },
+    {
+      "month": "2026-09",
+      "total_output": 133,
+      "total_wip_output": 1973,
+      "total_scrap": 2,
+      "total_hours": 783.9,
+      "total_machine_hours": 783.9,
+      "orders": 15
+    },
+    {
+      "month": "2026-10",
+      "total_output": 98,
+      "total_wip_output": 1418,
+      "total_scrap": 0,
+      "total_hours": 562.18,
+      "total_machine_hours": 562.18,
+      "orders": 10
+    }
+  ],
+  "ok": 18,
+  "fail": 0,
+  "fails": []
+}
