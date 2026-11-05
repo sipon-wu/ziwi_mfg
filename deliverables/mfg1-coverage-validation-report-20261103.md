@@ -606,6 +606,93 @@ POST /print/work_order/{id}   →  HTTP 200
 
 ---
 
+## 10.9 工序类型值域：三份副本都不全，页面直接印英文（2026-11-05）
+
+> 触发：用户打开 `#/basics/operations` 问「工序可以用中文不」。
+
+### 先回答：可以，而且早就是中文
+
+`operations.code` 是 `String(100)`、`name` 是 `String(200)`，schema 里都是裸 `str`，
+**没有任何 pattern 限制**；艾华租户里 43 条工序的名称本来就是中文
+（`CW010 槽绝缘插入` / `MA020 合装定转子与端盖（赋成品码）`）。
+
+用户看到「不像中文」，真实原因是两件事叠在一起：
+
+1. 他打开的是 **`mfg_demo`**（MFG1 演示租户），那里的 65 条工序全是探针造的垃圾
+   （`OP-S3-1103163145` / `OP-E2-…` / `OPA-…` / `OPB-…`），名字就是 `"工序"+编码`；
+2. 「工序类型」列显示 `production` / `process_qc` 这类**英文原文**。
+
+### 根因：一份值域被抄成三份，三份都和库里对不上
+
+| 位置 | 内容 |
+|---|---|
+| `models/basic_data.py` 的列注释 | 11 个值，一个 `*_qc` 都没有 |
+| `OperationList.vue::OP_TYPE_OPTIONS` | 同上 11 个（抄注释） |
+| `searchFields.ts::OP_TYPE` | 又同上 11 个（第二份副本） |
+| **库里实际** | 上面 11 个 + `incoming_qc` / `process_qc` / `final_qc` + 脏值 `production` |
+
+三条用户可见后果：
+
+- 「类型」列对未知值 `|| v` 兜底 → 直接印英文原文。艾华租户 10 条检验工序
+  （`process_qc`×6 / `final_qc`×4）全部中招；
+- 编辑弹窗下拉里没有当前值 → 用户一保存就把类型静默改成别的（改数据，不报错）；
+- 接口对 `op_type` 零校验 → 两处探针把 `route_steps.step_type` 的 `production`
+  塞进了 `op_type`，在 `mfg_demo` 攒下 **65 条**垃圾工序，藏了三轮没人发现
+  （因为兜底回显让脏数据看起来像正常值）。
+
+### 修法
+
+- 新增 `backend/app/core/enums.py` 作为唯一真源（14 值），schema 改
+  `op_type: OpType`（`Literal`）→ 非法值 422；
+- 新增 `frontend/src/config/enums.ts`，删掉前端两份 11 项副本；
+- 未知值显示「未知（原文）」而不是原文 —— 宁可难看，也不能让脏值冒充正常值；
+- `operations.equip_req` 加 `collect-spec` 渲染：方案书 §3.3 的采集点本来就存成了
+  `[{equip_type, capability, collect_method}]`，行展开直接吐 JSON 等于没展示，
+  现在渲染成 `槽绝缘折纸机 · 完成标志 · 人工确认`；
+- 修两处探针写错的 `op_type`（`e2e/basic_data_edge_e2e.py`、`e2e/trial_edge_e2e.py`）。
+
+### 证据
+
+```text
+新增单测 8 条：app/tests/test_op_type_domain.py          8 passed
+全量 pytest                                            1445 passed / 0 failed
+vue-tsc                                                76 errors（= 既有基线，未新增）
+vite build --outDir dist_optype_1105                    ✓ built in 18.86s
+```
+
+一致性闸做过**证伪**（不做证伪的闸等于没有闸）：把前端 `label: '过程检'` 改成
+「过程检验」→ 测试红（"代码一致但中文标签不一致"）；删掉 `process_qc` 那一项 →
+测试红（"代码序列不一致"）。
+
+staging 容器内自检（不依赖凭据，`docker exec mfg1-backend python`）：
+
+```text
+[1] 值域个数: 14
+[3] Literal 与标签表一致: True
+[4] label(process_qc) = 过程检
+[5] label(production) = 未知（production）
+[6] production 被拒: ValidationError | err_count= 1
+[7] incoming_qc / process_qc / final_qc 通过
+[9] Update 拒绝 production: ValidationError
+```
+
+前端已按「后端 → tar → scp → 整目录替换」独立部署，线上首页引用
+`assets/index-CovzxmMn.js`，`/opt/mfg1/frontend/assets` 内命中
+`来料检` / `终检` / `未知（` / `collect-spec` 各 1 个文件（`searchFields-*.js`）。
+
+### 附带查清的两件事（本轮不动）
+
+1. **`mfg_demo` 的 65 条工序删不掉，也不需要现在删**：它们被 **104 条 `route_steps`**
+   引用，背后还有 **125 条工艺路线 / 798 张工单 / 184 个产品**，全是探针跨轮灌的。
+   清理属于 `scripts/probe_artifacts.py` 那条线，需要单独一轮并先确认可不可逆。
+   **推进器厂的真实实例在 `AH-THR`（`t_af6dfe17d206`）租户，43 条工序 / 3 条路线 /
+   10 张工单 / 3 个产品，干净且与方案书对齐**，不受这批垃圾影响。
+2. **`operations` 表缺 `UniqueConstraint(tenant_id, code)`**（`suppliers` 有）：
+   并发/重复导入会产生重复工序码。目前 `OperationService.create` 靠
+   `get_op_by_code` 先查后插兜着，单线程够用，但不是数据库级保证。
+
+---
+
 ## 11. 下一步
 
 1. ~~**推 staging 并做全模块浏览器回归**（阶段④⑤）~~ —— **已完成（2026-11-04）**：`origin/main` @ `7d8cc42` 已部署，API 1542/0、浏览器 FAIL 0、PG 冒烟 5xx=0。17 个修复在 PG 上确认有效（见 §10.1）。
@@ -618,3 +705,12 @@ POST /print/work_order/{id}   →  HTTP 200
 8. **补回 `ziwi_mfg` 仓库的部署密钥** —— 本机这把 key 已被 GitHub 侧移除，`git push` 全挂；恢复后 §10.4 才能上 staging 做 PG 实测。
 9. **`product_routes` 有表无 API** —— 0 行数据、全项目零读写。将来做「产品默认路线」时必须补，现在不补也不算缺（`route_steps` 直接挂 `route_id`）。
 10. **按列名判 boolean/integer 需带表上下文** —— 两个静态闸各漏一半（`check_pg_bool_literals.py` 认 `= 1`，挡不住 `= true` 打在 Integer 上；`check_insert_defaults.py` 只管缺列）。本轮 `import_templates.is_active` 就是撞在中间。
+    ⚠️ **2026-11-05 复跑实测：`check_pg_bool_literals.py` 退出码 1，唯一命中
+    `app/repositories/excel_import_repo.py:58` 的 `import_templates WHERE is_active = 1`。
+    这是既有假阳性，不是本轮引入**：`excel_import.py:34` 明确写的是
+    `is_active = Column(Integer, default=1)`，`= 1` 对它是对的；闸只看列名
+    （`is_active` 在别的表里是 Boolean），判不出表上下文。这条闸自 `0a4f6dc`
+    起就恒红 —— **恒红的闸等于没有闸**，与脚本 docstring 里"14 处误报的闸等于
+    没有闸"的自我约束相矛盾，应改成按 `col → {表: 类型}` 映射判定，或像
+    `ALLOW_TIME_ISO` 那样给白名单。本轮未动（属探针/闸自身那条线）。
+11. **`operations` 补 `UniqueConstraint(tenant_id, code)`** —— 与 `suppliers` 对齐（见 §10.9）。要连带一个去重迁移：`mfg_demo` 里 65 条探针工序的编码本身唯一，加约束前先跑一遍 `GROUP BY tenant_id, code HAVING count(*)>1` 确认无冲突。
