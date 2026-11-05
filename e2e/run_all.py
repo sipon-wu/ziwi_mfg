@@ -265,6 +265,8 @@ def main():
                     help="跳过业务日历日闸（裸 date.today() / SQL CURRENT_DATE / UTC 单号日期）")
     ap.add_argument("--skip-capacity", action="store_true",
                     help="跳过产能自洽闸（capacity_per_shift ↔ 设计纲领 45 台每月）")
+    ap.add_argument("--skip-pg-literals", action="store_true",
+                    help="跳过 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -288,7 +290,11 @@ def main():
     print("=" * 62)
     total_ok = sum(r["ok"] for r in results)
     total_bad = sum(r["bad"] for r in results)
-    bad_probes = [r["name"] for r in results if r["bad"] or r["status"] in ("ERROR", "TIMEOUT")]
+    # ⚠️ `MISSING` 必须算失败。原先只拦 bad/ERROR/TIMEOUT，于是**探针被改名或删掉
+    # 就等于它永远通过** —— 实测 `--only __none__` 退出码 0。这与"只跑了一部分就
+    # 汇报全绿"是同一个形状：一个不存在的东西，不能当作通过。
+    bad_probes = [r["name"] for r in results
+                  if r["bad"] or r["status"] in ("ERROR", "TIMEOUT", "MISSING")]
     nosum = [r["name"] for r in results if r["status"] == "NOSUMMARY"]
     print(f"合计：断言通 {total_ok} / 断 {total_bad}")
     if bad_probes:
@@ -396,7 +402,23 @@ def main():
                 print("\n".join(lines[idx - 1:]).rstrip())
             cap_fail = cap.returncode != 0
 
-    return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail or cap_fail) else 0
+    # ── PG 方言闸 ───────────────────────────────────────────────────
+    # 这一族的共同点是**SQLite 全接、PG 全拒**，本地 pytest 一条都测不出来，
+    # 每次都要部署到 staging 才炸。它长期处于"恒红"状态（`import_templates.is_active`
+    # 是 Integer，被按列名误判），而恒红的闸等于没有闸 —— 所以先修准再上闸。
+    # 现在按**表**判列类型，正反两个方向都拦。
+    pg_fail = False
+    if not a.skip_pg_literals:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        pg = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_pg_bool_literals.py")],
+            capture_output=True, text=True, cwd=os.path.join(root, "backend"))
+        print(((pg.stdout or "") + (pg.stderr or "")).rstrip())
+        pg_fail = pg.returncode != 0
+
+    return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
+                 or cap_fail or pg_fail) else 0
 
 
 if __name__ == "__main__":

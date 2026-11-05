@@ -53,21 +53,107 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
 
-from sqlalchemy import Boolean, Date, DateTime  # noqa: E402
+from sqlalchemy import Boolean, Date, DateTime, Integer  # noqa: E402
 
 import app.models  # noqa: F401,E402  注册全部模型
 from app.core.database import Base  # noqa: E402
 
 
 def collect_types() -> tuple:
+    """按**表**收集列类型，同时给一份全局列名集合。
+
+    为什么必须按表：`is_active` 在 `users`/`roles` 里是 `Boolean`，在
+    `import_templates` 里是 `Integer`（`models/excel_import.py:34`）。只按列名
+    收集会得到"is_active 是 boolean"，于是 `import_templates` 里正确的
+    `is_active = 1` 被判成违规 —— 这就是这道闸长期恒红的原因
+    （`excel_import_repo.py:49/58` 两处），而**恒红的闸等于没有闸**。
+
+    ：「同名多态列」是本项目已知的一类坑（`priority` 在 `work_orders` 是 Integer、
+    在 `lab_requests` 是 String）。凡是这类列，判定都必须落到表上。
+    """
     bool_cols, time_cols = set(), set()
-    for table in Base.metadata.tables.values():
+    by_table: dict = {}
+    for tname, table in Base.metadata.tables.items():
+        cols = {}
         for col in table.columns:
             if isinstance(col.type, Boolean):
+                cols[col.name] = "bool"
                 bool_cols.add(col.name)
             elif isinstance(col.type, (DateTime, Date)):
+                cols[col.name] = "time"
                 time_cols.add(col.name)
-    return bool_cols, time_cols
+            elif isinstance(col.type, Integer):
+                cols[col.name] = "int"
+            else:
+                cols[col.name] = "other"
+        by_table[tname.lower()] = cols
+    return bool_cols, time_cols, by_table
+
+
+#: 在同一条 SQL 里认出表名，用来给"列名"补上表的上下文。
+_TABLE_REF = re.compile(
+    r"\b(?:FROM|UPDATE|INSERT\s+INTO|JOIN)\s+(?P<t>[A-Za-z_]\w*)", re.I)
+
+
+def _window(lines, lineno: int, upto: int) -> str:
+    """命中点**之前**的窗口（含本行 ``upto`` 之前的部分）。
+
+    不能把整行都给进去：同一行里可能并排两条 SQL，或者窗口里下一行就是另一条
+    语句 —— 那样"最近的表"会取到后面那条语句的表。
+    """
+    head = "\n".join(lines[max(0, lineno - 13):lineno - 1])
+    return head + "\n" + lines[lineno - 1][:upto]
+
+
+def _nearest_table(window: str) -> str:
+    """取窗口里**最靠后**的那个表名 —— 也就是离命中行最近的那条语句。
+
+    取全部表名会把上一条语句的表也掺进来：一段 13 行的窗口里常并排放着两条
+    SQL，`is_active` 在 `import_templates` 是 Integer、在别的表是 Boolean，
+    混在一起判就成了随机结论。
+    """
+    tables = [m.group("t").lower() for m in _TABLE_REF.finditer(window)]
+    return tables[-1] if tables else ""
+
+
+def _resolved_non_bool(by_table: dict, window: str, col: str) -> bool:
+    """这条 SQL 上下文里的表，是否把 ``col`` 定义成**非** boolean。
+
+    返回 True = 能定位到表且该列不是 boolean → 这是个误报，跳过。
+    定位不到表、或该表里没有这一列，都返回 False（保守起见仍然报出来）。
+    """
+    table = _nearest_table(window)
+    cols = by_table.get(table)
+    if not cols or col not in cols:
+        return False
+    return cols[col] != "bool"
+
+
+def scan_bool(patterns, roots, bool_cols, by_table, hits):
+    """在源码里找「boolean 列 + int 字面量」的组合。"""
+    for root in roots:
+        for py in root.rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                text = py.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            lines = text.splitlines()
+            for lineno, line in enumerate(lines, 1):
+                if _is_prose(line):
+                    continue
+                for pat, desc in patterns:
+                    for m in pat.finditer(line):
+                        name = m.group("col")
+                        if name not in bool_cols:
+                            continue
+                        # ★ 往回看 12 行找表名：手写 SQL 常是跨行字符串，
+                        #   `WHERE ... is_active = 1` 的 FROM 往往在上面几行。
+                        window = _window(lines, lineno, m.end())
+                        if _resolved_non_bool(by_table, window, name):
+                            continue
+                        hits.append((py, lineno, desc, line.strip()[:110]))
 
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -90,8 +176,18 @@ def _is_prose(line: str) -> bool:
     return False
 
 
-def scan_bool(patterns, roots, bool_cols, hits):
-    """在源码里找「boolean 列 + int 字面量」的组合。"""
+#: 「整数列被写 true/false」—— 与 A 组**方向相反**的那一半。
+#:
+#: 报告里记着"两个静态闸各漏一半"：`check_pg_bool_literals` 只认 `is_x = 0/1`，
+#: 挡不住 `is_x = true` 打在 **Integer** 列上；而 PG 对后者的报错一模一样
+#: （`column "x" is of type integer but expression is of type boolean`）。
+#: 补齐的前提是**表上下文**——`is_active` 在 `users` 是 Boolean、在
+#: `import_templates` 是 Integer，按列名判必错。所以只在能定位到表、且该表里
+#: 该列确为 Integer 时才报；定位不到就不报（宁可漏，不可误报）。
+_INT_AS_BOOL = re.compile(r'(?P<col>"?\w+"?)\s*=\s*(?:true|false)\b', re.I)
+
+
+def scan_int_as_bool(roots, by_table, hits):
     for root in roots:
         for py in root.rglob("*.py"):
             if "__pycache__" in py.parts:
@@ -100,15 +196,17 @@ def scan_bool(patterns, roots, bool_cols, hits):
                 text = py.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            for lineno, line in enumerate(text.splitlines(), 1):
+            lines = text.splitlines()
+            for lineno, line in enumerate(lines, 1):
                 if _is_prose(line):
                     continue
-                for pat, desc in patterns:
-                    for m in pat.finditer(line):
-                        name = m.group("col")
-                        if name not in bool_cols:
-                            continue
-                        hits.append((py, lineno, desc, line.strip()[:110]))
+                for m in _INT_AS_BOOL.finditer(line):
+                    name = m.group("col").strip('"')
+                    window = _window(lines, lineno, m.end())
+                    cols = by_table.get(_nearest_table(window)) or {}
+                    if cols.get(name) == "int":
+                        hits.append((py, lineno, "SQL 里给 Integer 列赋 true/false",
+                                     line.strip()[:110]))
 
 
 def _split_top(text: str) -> list:
@@ -140,7 +238,7 @@ INSERT_RE = re.compile(
     re.I | re.S)
 
 
-def scan_insert_values(roots, bool_cols, hits):
+def scan_insert_values(roots, bool_cols, by_table, hits):
     """兜住 `INSERT INTO t (.., is_x) VALUES (.., 1)` 这种位置参数写法。
 
     ★这一条是补漏补出来的：先前只认 `col = 0/1`，于是
@@ -162,7 +260,12 @@ def scan_insert_values(roots, bool_cols, hits):
                 if len(cols) != len(vals):
                     continue
                 for col, val in zip(cols, vals):
-                    if col not in bool_cols:
+                    # 能从 INSERT 语句里拿到表名，就**按表判**；拿不到再退回列名集合。
+                    tcols = by_table.get(m.group("table").lower())
+                    if tcols is not None:
+                        if tcols.get(col) != "bool":
+                            continue
+                    elif col not in bool_cols:
                         continue
                     if val.strip("'") in ("0", "1"):
                         lineno = text[:m.start()].count("\n") + 1
@@ -330,7 +433,7 @@ def scan_bare_dict_body(roots, hits):
 
 
 def main() -> int:
-    bool_cols, time_cols = collect_types()
+    bool_cols, time_cols, by_table = collect_types()
 
     sql_assign = re.compile(
         r'(?P<col>"?\w+"?)\s*=\s*(?P<val>[01])\b')
@@ -347,9 +450,11 @@ def main() -> int:
         [(sql_assign, "SQL 里给 boolean 列赋 int"),
          (coalesce, "COALESCE 兜底值给 boolean 列写 int"),
          (py_param, "Python 参数给 boolean 列传 int")],
-        roots, bool_cols, hits)
+        roots, bool_cols, by_table, hits)
     # D：INSERT 位置参数
-    scan_insert_values(roots, bool_cols, hits)
+    scan_insert_values(roots, bool_cols, by_table, hits)
+    # J：反向 —— Integer 列被写 true/false
+    scan_int_as_bool(roots, by_table, hits)
     # E：isoformat 字符串塞给时间列
     scan_time_as_str(roots, time_cols, hits)
     # F：时间降级后存变量（变量中转，前几条规则看不见）

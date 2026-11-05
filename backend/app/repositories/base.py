@@ -8,6 +8,74 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants.modules import ORG_AUTO_OWNED_TABLES, ORG_SCOPED_TABLES
 
+
+def scan_top_level(sql: str, keywords) -> Dict[str, int]:
+    """返回各关键字**在最外层括号层级**第一次出现的位置，找不到为 -1。
+
+    为什么不能直接用 `re.search(r'\\bFROM\\b', sql)`
+    --------------------------------------------------
+    业务 SQL 里常见标量子查询 / 派生表，正则命中的"第一个 FROM / WHERE"
+    很可能在**子查询里面**。`RouteRepository.list_routes` 就是活例：
+
+        SELECT r.*, (SELECT COUNT(*) FROM route_steps WHERE route_id = r.id) AS step_count
+        FROM process_routes r WHERE 1=1
+
+    旧实现取第一个 `FROM`（`route_steps`）与第一个 `WHERE`（也在子查询里）注入，
+    于是租户条件加到了子查询上，主表 `process_routes` **一条都没过滤** ——
+    表现为 `GET /api/v1/routes` 用一个租户的 token 能读到别的租户的路线
+    （2026-11-05 实测：AH-THR 的 token 拿到 19 条，含已删租户的 RT-001…016）。
+
+    实现要点：
+    - 按 ``(`` / ``)`` 计层级，只在 depth==0 认关键字；
+    - 单引号字符串整段跳过（``'...FROM...'`` 不是关键字）；
+    - 双词关键字 ``GROUP BY`` / ``ORDER BY`` 按词序列识别，避免把
+      ``ORDER`` 单独当命中。
+    """
+    want = {k.upper() for k in keywords}
+    found: Dict[str, int] = {k: -1 for k in want}
+    depth = 0
+    i, n = 0, len(sql)
+    in_str = False
+    while i < n:
+        c = sql[i]
+        if in_str:
+            if c == "'":
+                if i + 1 < n and sql[i + 1] == "'":   # '' 转义
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if c == "'":
+            in_str = True
+            i += 1
+            continue
+        if c == "(":
+            depth += 1
+            i += 1
+            continue
+        if c == ")":
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0 and (c.isalpha() or c == "_"):
+            j = i
+            while j < n and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            word = sql[i:j].upper()
+            key = word
+            if word in ("GROUP", "ORDER"):
+                m = re.match(r"\s+BY\b", sql[j:], re.IGNORECASE)
+                if m:
+                    key = f"{word} BY"
+            if key in want and found.get(key, -1) == -1:
+                found[key] = i
+            i = j
+            continue
+        i += 1
+    return found
+
+
 class Repository(ABC):
     """数据访问抽象接口"""
     
@@ -232,10 +300,13 @@ class MultiTenantRepository(Repository):
     @staticmethod
     def _inject_tenant_where(sql: str) -> str:
         """在 UPDATE/DELETE 的 WHERE 子句中注入 tenant_id 过滤条件。"""
-        match = re.search(r'\bWHERE\b', sql, re.IGNORECASE)
-        if match:
-            pos = match.end()
-            return f"{sql[:pos]} tenant_id = :_tenant_id AND {sql[pos:].lstrip()}"
+        # ★ 用**最外层**的 WHERE：`UPDATE t SET x = (SELECT ... WHERE ...) WHERE id=:id`
+        #   这种写法里，正则命中的第一个 WHERE 在子查询里 —— 注进去就成了
+        #   "子查询限租户、主表全量更新"。见 scan_top_level 的说明。
+        pos = scan_top_level(sql, ["WHERE"])["WHERE"]
+        if pos >= 0:
+            end = pos + len("WHERE")
+            return f"{sql[:end]} tenant_id = :_tenant_id AND {sql[end:].lstrip()}"
         # 防御性兜底：没有 WHERE 子句时直接追加
         return f"{sql.rstrip()} WHERE tenant_id = :_tenant_id"
     
@@ -248,13 +319,20 @@ class MultiTenantRepository(Repository):
         数据范围（S1）：仅当 FROM 主表在 ``ORG_SCOPED_TABLES`` 白名单内、
         且 ``_org_scope`` 不为 None 时，追加 ``{alias}.{org_col} IN (...ids)``。
         组织 id 来自数据库自增主键，强制 int 转换后内联，不存在注入风险。
+
+        ⚠️ FROM 与 WHERE 都必须取**最外层**位置。取"第一个"会落到子查询里，
+        租户条件被加到子查询上、主表反而全量返回 —— `RouteRepository.list_routes`
+        就因此跨租户可见（详见 ``scan_top_level``）。
         """
-        # 解析主表（FROM 之后的第一张表）及其别名，用于限定 tenant_id 列
-        from_match = re.search(
-            r'\bFROM\s+([a-zA-Z_][\w]*)(?:\s+(?:AS\s+)?([a-zA-Z_][\w]*))?',
-            sql,
-            re.IGNORECASE,
-        )
+        # 解析主表（最外层 FROM 之后的第一张表）及其别名，用于限定 tenant_id 列
+        pos_from = scan_top_level(sql, ["FROM"])["FROM"]
+        from_match = None
+        if pos_from >= 0:
+            from_match = re.match(
+                r'FROM\s+([a-zA-Z_][\w]*)(?:\s+(?:AS\s+)?([a-zA-Z_][\w]*))?',
+                sql[pos_from:],
+                re.IGNORECASE,
+            )
         table_ref = None
         raw_table = None
         if from_match:
@@ -289,18 +367,19 @@ class MultiTenantRepository(Repository):
 
         combined = f"{tenant_filter}{extra_filter}"
 
-        match = re.search(r'\bWHERE\b', sql, re.IGNORECASE)
-        if match:
-            pos = match.end()
-            return f"{sql[:pos]} {combined} AND {sql[pos:].lstrip()}"
-        # 无 WHERE 子句：插到第一个聚合/排序子句**之前**。
+        pos_where = scan_top_level(sql, ["WHERE"])["WHERE"]
+        if pos_where >= 0:
+            end = pos_where + len("WHERE")
+            return f"{sql[:end]} {combined} AND {sql[end:].lstrip()}"
+        # 无 WHERE 子句：插到最外层聚合/排序子句**之前**。
         # 必须先于 GROUP BY/HAVING —— 否则会生成 "GROUP BY x WHERE ..." 这种非法 SQL
         # （例：roles 列表的 GROUP BY r.id + COUNT(...) 就命中过这个坑）。
-        for keyword in ['GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT']:
-            kw_match = re.search(rf'\b{keyword}\b', sql, re.IGNORECASE)
-            if kw_match:
-                pos = kw_match.start()
-                return f"{sql[:pos].rstrip()} WHERE {combined} {sql[pos:]}"
+        # 取**位置最靠前**的那个，而不是固定顺序的第一个命中。
+        marks = scan_top_level(sql, ["GROUP BY", "HAVING", "ORDER BY", "LIMIT"])
+        hits = [p for p in marks.values() if p >= 0]
+        if hits:
+            pos = min(hits)
+            return f"{sql[:pos].rstrip()} WHERE {combined} {sql[pos:]}"
         return f"{sql.rstrip()} WHERE {combined}"
 
     async def query(self, sql: str, params: Dict = None) -> List[Dict]:
