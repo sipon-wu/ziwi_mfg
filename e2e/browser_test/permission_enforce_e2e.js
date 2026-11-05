@@ -135,15 +135,15 @@ function matchPermission(perms, required) {
       const r = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, tenant_id: 'mfg_demo' }),
+        body: JSON.stringify({ username, password, tenant_id: 'AH-THR' }),
       });
       const data = await r.json().catch(() => null);
       if (!r.ok) return { ok: false, status: r.status };
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token || '');
-      localStorage.setItem('tenant_id', 'mfg_demo');
+      localStorage.setItem('tenant_id', 'AH-THR');
       const raw = await fetch('/api/v1/auth/me', {
-        headers: { Authorization: 'Bearer ' + data.access_token, 'X-Tenant-Id': 'mfg_demo' },
+        headers: { Authorization: 'Bearer ' + data.access_token, 'X-Tenant-Id': 'AH-THR' },
       }).then(x => x.json());
       const me = raw && raw.data ? raw.data : raw;   // /auth/me 走 {code,message,data} 包装
       localStorage.setItem('user_info', JSON.stringify(me));

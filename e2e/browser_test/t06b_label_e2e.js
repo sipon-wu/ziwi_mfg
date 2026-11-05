@@ -65,7 +65,7 @@ function check(name, ok, detail) {
     const loginResp = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: USER, password: PASS, tenant_code: 'mfg_demo' }),
+      body: JSON.stringify({ username: USER, password: PASS, tenant_code: 'AH-THR' }),
     })
     const loginBody = await loginResp.json()
     const tok = loginBody.access_token || (loginBody.data && loginBody.data.access_token)

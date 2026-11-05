@@ -76,7 +76,7 @@ def main():
     d = data(r)
     report("A-S1-4 建号同时绑了 admin 角色", bool(d.get("role_id")),
            f"user_id={d.get('user_id')} role_id={d.get('role_id')}")
-    # 注：角色**归属**的跨租户校验无法用操作者(mfg_demo)的会话读 —— 多租户隔离
+    # 注：角色**归属**的跨租户校验无法用操作者(AH-THR)的会话读 —— 多租户隔离
     # 本来就不该让他看到别的租户的角色（GET /roles/11 返回空是正确的）。
     # 归属已由查库确认（role 11 tenant_id=t_xxx is_system=1），这里改用
     # 新管理员自己的身份验证"角色确实继承下来了"，见下方 A-S1-8b。
@@ -146,7 +146,7 @@ def main():
                f"must_change_password={body(r).get('must_change_password')}")
 
     # ── A-S1-15 审计留痕（本轮已建通用审计表 audit_logs）──
-    # 用操作者(mfg_demo)会话查：审计按租户硬过滤，只有本租户的轨迹可见。
+    # 用操作者(AH-THR)会话查：审计按租户硬过滤，只有本租户的轨迹可见。
     seen = set()
     for act in ("tenant.create", "admin.init"):
         rr = c.get(f"{API}/audit-logs", params={"action": act, "page_size": 50})

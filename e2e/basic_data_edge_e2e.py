@@ -25,7 +25,7 @@ from datetime import datetime, date, timedelta
 import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
-TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
@@ -61,7 +61,7 @@ def main():
     def mk_operation(code):
         # op_type 走 app/core/enums.py 的值域（Literal 校验）。原写 "production"
         # 是把 route_steps.step_type 的值塞错了列 —— 2026-11-05 之前接口不校验，
-        # 于是在 mfg_demo 攒下 65 条 op_type=production 的垃圾工序。
+        # 于是在 AH-THR 攒下 65 条 op_type=production 的垃圾工序。
         r = c.post(f"{API}/operations", json={
             "code": code, "name": f"工序{code}", "op_type": "machining"})
         return r.json()["data"]["id"] if r.status_code == 200 else None

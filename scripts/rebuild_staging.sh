@@ -6,7 +6,7 @@
 # 把「清空 + 9 步重建 + 校验」收成一条命令，避免手工敲错顺序。
 #
 # 顺序不能换：
-#   ① 必须最先，它建出 mfg_demo 租户和 mfg_admin —— 后面所有步骤和 HTTP 造数都用它登录；
+#   ① 必须最先，它建出 AH-THR 租户和 mfg_admin —— 后面所有步骤和 HTTP 造数都用它登录；
 #   ② 权限必须在 ① 之后、在「用 admin 调接口」之前，否则 POST /tenants 直接 403；
 #   ⑧ 艾华场景走 HTTP，必须在后端已连上重建后的库之后；
 #   ⑨ 艾华租户的角色是 ⑧ 才建出来的，权限得再补一遍，否则 ah_admin 登录进去满屏 403。
@@ -27,7 +27,7 @@ if [ "${1:-}" != "--yes" ]; then
   0) 把重置脚本与备份放进容器
   1) 清空库 mfg —— 全部业务表 + 租户/用户/角色/权限，回到空表
   2) seeds.mfg1_seed              租户 MFG1 + mfg_admin + admin 角色 + 绑定
-  3) seed_permissions mfg_demo    权限字典 373 条 + 角色授权
+  3) seed_permissions AH-THR    权限字典 373 条 + 角色授权
   4) seeds.mfg1_demo_data         精密机械加工厂演示数据
   5) seeds.mfg1_demo_data_expanded 扩充演示数据
   6) seeds.mfg1_e2e_seed_data     E2E 角色与用户
@@ -62,9 +62,9 @@ step "2/9 租户 + admin"
 dc python -m seeds.mfg1_seed || exit 1
 
 step "3/9 权限字典"
-dc python scripts/seed_permissions.py mfg_demo || exit 1
+dc python scripts/seed_permissions.py AH-THR || exit 1
 
-step "4/9 mfg_demo 演示数据"
+step "4/9 AH-THR 演示数据"
 dc python -m seeds.mfg1_demo_data || exit 1
 
 step "5/9 扩充演示数据"

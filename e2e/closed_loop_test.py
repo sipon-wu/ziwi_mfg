@@ -7,7 +7,7 @@ import os, json, datetime, uuid, traceback
 import httpx as requests
 
 BASE = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1").rstrip("/")
-TENANT = "mfg_demo"
+TENANT = "AH-THR"
 PW = "test123456"
 TS = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 RND = uuid.uuid4().hex[:6]

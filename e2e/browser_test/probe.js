@@ -28,7 +28,7 @@ async function apiProbe() {
     const r = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'test_admin', password: 'test123456', tenant: 'mfg_demo' })
+      body: JSON.stringify({ username: 'test_admin', password: 'test123456', tenant: 'AH-THR' })
     });
     const j = await r.json();
     results.login = { status: r.status, code: j.code, msg: j.message, hasToken: !!(j.data && j.data.token) };
@@ -105,7 +105,7 @@ async function uiExplore(token) {
     // 租户（如有）
     for (const sel of ['input[name="tenant"]', 'input[name="tenant_id"]', 'input[placeholder*="租户" i]']) {
       const el = await page.$(sel);
-      if (el) { await el.fill('mfg_demo'); log('填租户 via', sel); break; }
+      if (el) { await el.fill('AH-THR'); log('填租户 via', sel); break; }
     }
   };
 

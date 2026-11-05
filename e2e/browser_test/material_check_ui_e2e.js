@@ -16,7 +16,7 @@ const path = require('path');
 const BASE = process.env.UI_BASE || 'http://127.0.0.1:5181';
 const USER = process.env.E2E_USER || 'mfg_admin';
 const PWD = process.env.E2E_PWD || 'admin123';
-const TENANT = process.env.E2E_TENANT || 'mfg_demo';
+const TENANT = process.env.E2E_TENANT || 'AH-THR';
 
 const SHOT = path.join(__dirname, 'screenshots', 'material_check_ui');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });

@@ -18,7 +18,7 @@ const path = require('path');
 const BASE = (process.env.BASE_URL || 'https://mfg1.ziwi.cn').replace(/\/$/, '');
 const USER = process.env.E2E_USER || 'mfg_admin';
 const PASS = process.env.E2E_PASSWORD || 'admin123';
-const TENANT = process.env.E2E_TENANT || 'mfg_demo';
+const TENANT = process.env.E2E_TENANT || 'AH-THR';
 
 const NEW = '知微智造';
 const OLD = '知微制造';

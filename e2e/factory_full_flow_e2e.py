@@ -29,7 +29,7 @@ BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 # 不能当 API 账号用，否则必 401 且看不出原因。
 USERNAME = os.environ.get("E2E_USER", "mfg_admin")
 PASSWORD = os.environ.get("E2E_PWD", "admin123")
-TENANT   = os.environ.get("TENANT", "mfg_demo")
+TENANT   = os.environ.get("TENANT", "AH-THR")
 
 API = f"{BASE_URL}/api/v1"
 

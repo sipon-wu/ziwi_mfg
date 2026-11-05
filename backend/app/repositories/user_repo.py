@@ -161,6 +161,27 @@ class UserRepository(MultiTenantRepository):
             {"cloud_uuid": cloud_uuid}
         )
 
+    async def resolve_login_tenant(self, tenant_key: str) -> Optional[str]:
+        """把用户输入的「租户」归一成 `users.tenant_id` 的取值。
+
+        `get_with_password` 是 `users.tenant_id = :tenant_id` **精确匹配**，而
+        `tenants.tenant_id` 是服务端生成的 `t_xxxx`（每次重新开通都会变），
+        客户手上只有**租户编码**（`AH-THR` / `MFG1`）。两套值混着用会出现
+        "租户编码填对了却报用户名或密码错误"——错误文案指向账号，真因是租户。
+
+        这里允许两种写法，先按 tenant_id 精确匹配、再退化到按 code 匹配：
+            resolve_login_tenant("mfg_demo") -> "mfg_demo"
+            resolve_login_tenant("AH-THR")   -> "t_1692982c9cb7"
+        查不到返回 None，由调用方保留原值走原来的 401，不改变既有的错误口径。
+        """
+        if not tenant_key:
+            return None
+        row = await self.query_one(
+            "SELECT tenant_id FROM tenants WHERE tenant_id = :k OR code = :k LIMIT 1",
+            {"k": tenant_key},
+        )
+        return row["tenant_id"] if row else None
+
     async def get_with_password(self, username: str, tenant_id: str = None) -> Optional[Dict]:
         sql = "SELECT * FROM users WHERE username = :username"
         params = {"username": username}

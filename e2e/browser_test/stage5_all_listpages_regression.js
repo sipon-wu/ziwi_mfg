@@ -84,7 +84,7 @@ const EXPECT_BOM_TH = ['物料名称', '物料编码', '类型', '用量', '版�
     await browser.close();
     process.exit(1);
   }
-  record('LOGIN', 'PASS', '登录成功，获得 access_token（tenant mfg_demo）');
+  record('LOGIN', 'PASS', '登录成功，获得 access_token（tenant AH-THR）');
 
   // ---- A 组逐页 ----
   const perPage = [];

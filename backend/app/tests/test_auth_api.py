@@ -123,3 +123,54 @@ class TestAuthAPI:
         detail = resp.json()["detail"]
         assert detail["code"] == "400-0000"
         assert "原密码错误" in detail["message"]
+
+
+class TestLoginTenantResolution:
+    """登录「租户」字段允许填 tenant_id 或租户编码。
+
+    真因背景：`get_with_password` 是 `users.tenant_id = :x` 精确匹配，而
+    `tenants.tenant_id` 是服务端生成的 `t_xxxx`（重新开通就会变），客户手上
+    只有租户编码（`AH-THR`）。只认 tenant_id 时，客户填对编码也会得到
+    「用户名或密码错误」——文案指向账号，真因在租户，极难判读。
+    """
+
+    LOGIN_USER = {
+        "id": 7, "username": "ah_admin", "tenant_id": "t_1692982c9cb7",
+        "password_hash": "$2b$12$fakehashforunittest", "status": "active",
+        "must_change_password": False,
+    }
+
+    @patch("app.api.auth.create_local_token", return_value="tok")
+    @patch("app.api.auth.verify_password", return_value=True)
+    @patch("app.api.auth.UserRepository.get_with_password")
+    @patch("app.api.auth.UserRepository.resolve_login_tenant")
+    async def test_login_accepts_tenant_code(self, mock_resolve, mock_get_pw,
+                                            mock_vpw, mock_tok, async_client):
+        """填租户编码 AH-THR → 归一成 t_xxx 再查账号"""
+        mock_resolve.return_value = "t_1692982c9cb7"
+        mock_get_pw.return_value = dict(self.LOGIN_USER)
+        resp = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "ah_admin", "password": "pw", "tenant_id": "AH-THR"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["access_token"] == "tok"
+        # ★ 断言传给账号查询的是归一后的 tenant_id，不是用户输入的编码
+        mock_get_pw.assert_called_once_with("ah_admin", "t_1692982c9cb7")
+
+    @patch("app.api.auth.create_local_token", return_value="tok")
+    @patch("app.api.auth.verify_password", return_value=True)
+    @patch("app.api.auth.UserRepository.get_with_password")
+    @patch("app.api.auth.UserRepository.resolve_login_tenant")
+    async def test_login_keeps_raw_when_unresolved(self, mock_resolve, mock_get_pw,
+                                                   mock_vpw, mock_tok, async_client):
+        """查不到的租户 → 保留原值，行为与改动前一致（不改变 401 口径）"""
+        mock_resolve.return_value = None
+        mock_get_pw.return_value = None
+        resp = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "nobody", "password": "pw", "tenant_id": "NO-SUCH"},
+        )
+        assert resp.status_code == 401
+        mock_get_pw.assert_called_once_with("nobody", "NO-SUCH")
+

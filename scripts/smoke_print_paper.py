@@ -50,7 +50,7 @@ def get(path, token):
 
 st, _, body = post(
     "/auth/login",
-    {"username": "mfg_admin", "password": "admin123", "tenant_code": "mfg_demo"},
+    {"username": "mfg_admin", "password": "admin123", "tenant_code": "AH-THR"},
 )
 assert st == 200, f"登录失败 {st} {body[:200]}"
 tok = json.loads(body)["access_token"]

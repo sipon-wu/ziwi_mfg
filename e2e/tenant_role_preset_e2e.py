@@ -20,7 +20,7 @@ from datetime import datetime
 import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
-TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
@@ -100,7 +100,7 @@ def main():
           f"inspector={granted.get('inspector')} qe={granted.get('quality_engineer')}")
 
     # ── C-77-3 内置角色不可删 ──
-    # 用平台侧（mfg_demo 管理员）读不到别租户角色，这里切到该租户管理员身份：
+    # 用平台侧（AH-THR 管理员）读不到别租户角色，这里切到该租户管理员身份：
     # 先初始化管理员 → 登录 → 删自己的内置角色。
     r = c.post(f"{API}/tenants/{tid}/init-admin", json={
         "username": f"ad_{tag}", "password": "Init@12345"})

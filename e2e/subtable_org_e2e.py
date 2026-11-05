@@ -38,7 +38,7 @@ from datetime import date, datetime
 import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
-TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 
 ADMIN = ("mfg_admin", "admin123")
 SCOPED = ("demo_ws1_leader", "admin123")

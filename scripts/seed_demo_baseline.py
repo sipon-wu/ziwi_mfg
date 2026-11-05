@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""演示租户 `mfg_demo` 的回归基线（组织树 + 仓库 + 用户组织归属）。
+"""演示租户 `AH-THR` 的回归基线（组织树 + 仓库 + 用户组织归属）。
 
 ## 为什么需要这个脚本
 
-2026-11-03 清库时 `TRUNCATE` 了 **117 张带 `tenant_id` 的表**，`mfg_demo`
+2026-11-03 清库时 `TRUNCATE` 了 **117 张带 `tenant_id` 的表**，`AH-THR`
 （MFG1 演示租户）的基线数据也被一起清掉：`organizations` / `warehouses` /
 `materials` / `work_centers` / `suppliers` 全 0，而 `users.primary_org_id`
 仍指着已不存在的 35/36。
@@ -40,7 +40,7 @@ import os
 import httpx
 
 API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
-TENANT_CODE = "mfg_demo"
+TENANT_CODE = "AH-THR"
 ADMIN_USER = "mfg_admin"
 ADMIN_PWD = "admin123"
 
@@ -274,7 +274,7 @@ def s3b_normalize_wh_types(c: httpx.Client) -> None:
 
 def main() -> int:
     print("=" * 64)
-    print("演示租户 mfg_demo · 回归基线（组织树 / 用户归属 / 仓库）")
+    print("演示租户 AH-THR · 回归基线（组织树 / 用户归属 / 仓库）")
     print("=" * 64)
 
     c = httpx.Client(timeout=40)

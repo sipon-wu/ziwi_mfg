@@ -422,7 +422,7 @@ def main() -> int:
     if r.status_code != 200:
         # tenant_id 用内部 id 才能登录：先由平台账号查一次
         pc = httpx.Client(timeout=40)
-        pr = pc.post(f"{API}/auth/login", json={"username": "mfg_admin", "password": "admin123", "tenant_id": "mfg_demo"})
+        pr = pc.post(f"{API}/auth/login", json={"username": "mfg_admin", "password": "admin123", "tenant_id": "AH-THR"})
         if pr.status_code != 200:
             print("平台账号登录失败，无法解析租户 id：", pr.status_code, pr.text[:200])
             return 2

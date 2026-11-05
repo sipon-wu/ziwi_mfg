@@ -25,7 +25,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
 #   （当前登录名），会把默认账号顶掉，登录 401 却看不出原因。
 USERNAME = os.getenv("E2E_USER", "mfg_admin")
 PASSWORD = os.getenv("E2E_PASSWORD", "admin123")
-TENANT = os.getenv("E2E_TENANT", "mfg_demo")
+TENANT = os.getenv("E2E_TENANT", "AH-THR")
 
 API = f"{BASE_URL}/api/v1"
 

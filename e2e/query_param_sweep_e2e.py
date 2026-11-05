@@ -59,7 +59,7 @@ API_ROOT = API[:-len("/api/v1")] if API.endswith("/api/v1") else API
 #   目录里其它 27 个探针都用 E2E_USER，别自创一套。
 USERNAME = os.environ.get("E2E_USER", "mfg_admin")
 PASSWORD = os.environ.get("E2E_PASSWORD", "admin123")
-TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 ONLY = os.environ.get("ONLY", "")
 
 # 每种参数类型给一个"形状正确"的样本。挑值的原则是**尽量让端点真的走到

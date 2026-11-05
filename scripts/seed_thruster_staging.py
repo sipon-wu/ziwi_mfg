@@ -44,7 +44,7 @@ ADMIN_PWD = "Ah@2026seed"
 # 平台管理员（用于开通租户）
 PLAT_USER = os.environ.get("PLAT_USER", "mfg_admin")
 PLAT_PWD = os.environ.get("PLAT_PWD", "admin123")
-PLAT_TENANT = os.environ.get("PLAT_TENANT", "mfg_demo")
+PLAT_TENANT = os.environ.get("PLAT_TENANT", "AH-THR")
 
 API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
 TS = datetime.now().strftime("%m%d%H%M")

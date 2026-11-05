@@ -33,7 +33,11 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     # ── 本地认证降级：子账号走本地 bcrypt 验密 ──
     if '@' not in req.username:
         repo = UserRepository(db)
-        user = await repo.get_with_password(req.username, req.tenant_id)
+        # 「租户」允许填 tenant_id（mfg_demo / t_xxxx）或租户编码（MFG1 / AH-THR）。
+        # 只认 tenant_id 的话，客户拿着编码登录会得到"用户名或密码错误"——文案指向
+        # 账号，真因在租户，排起来极费时间。归一后仍查不到就保留原值，错误口径不变。
+        tenant_id = await repo.resolve_login_tenant(req.tenant_id) or req.tenant_id
+        user = await repo.get_with_password(req.username, tenant_id)
         if not user:
             raise HTTPException(status_code=401, detail="用户名或密码错误")
         if not verify_password(req.password, user.get("password_hash", "")):

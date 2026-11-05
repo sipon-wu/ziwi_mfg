@@ -26,7 +26,7 @@ from datetime import datetime
 import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
-TENANT = os.environ.get("E2E_TENANT", "mfg_demo")
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 WAREHOUSE_ID = int(os.environ.get("E2E_WH", "1"))
@@ -148,7 +148,7 @@ def main():
     # 无角色用户会被权限闸 403 → 给检验员乙挂角色（优先管理员角色）
     #
     # ★ 必须翻**全量**、且优先按 code 精确命中 —— 不能用"第一页第一个"。
-    #   实测：`mfg_demo` 里历次探针自建的 `role_empty_*` / `role_ro_*` 攒到 50+ 个，
+    #   实测：`AH-THR` 里历次探针自建的 `role_empty_*` / `role_ro_*` 攒到 50+ 个，
     #   把内置的 `admin` 挤出了第一页（page_size=50），于是 `role_list[0]` 落到
     #   **空权限角色**上，新账号登录成功但 `M03:inspection_result:create` 403 ——
     #   表面看是"平台不给录明细"，实际是探针给自己挂了一个没权限的角色。

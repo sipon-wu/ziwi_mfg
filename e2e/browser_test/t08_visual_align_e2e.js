@@ -84,7 +84,7 @@ const ECMS = {
     const login = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: USER, password: PASS, tenant_code: 'mfg_demo' }),
+      body: JSON.stringify({ username: USER, password: PASS, tenant_code: 'AH-THR' }),
     })
     const lb = await login.json()
     const tok = lb.access_token || (lb.data && lb.data.access_token)

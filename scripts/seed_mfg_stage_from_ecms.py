@@ -10,7 +10,7 @@
 --------
 - **ECMS 只读**：数据来自本地快照 ``.workbuddy/ecms_ref/*.json``（由 ECMS API 导出）
 - **幂等**：先探测后写，可重复执行；只 INSERT/UPDATE，不 DROP
-- **租户隔离**：只写 ``tenant_id='mfg_stage'``；不触碰生产租户 ``mfg_demo``
+- **租户隔离**：只写 ``tenant_id='mfg_stage'``；不触碰生产租户 ``AH-THR``
 - **不碰数据卷**：仅 DML，不改表结构
 
 用法

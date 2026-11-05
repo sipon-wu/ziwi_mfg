@@ -1,7 +1,7 @@
 import requests, json
 
 BASE = "https://mfg1.ziwi.cn/api/v1"
-TENANT = "mfg_demo"
+TENANT = "AH-THR"
 PW = "test123456"
 
 def login():

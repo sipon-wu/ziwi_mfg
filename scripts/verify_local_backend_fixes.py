@@ -13,7 +13,7 @@ BASE = os.environ.get("LOCAL_BASE", "http://127.0.0.1:8000")
 API = f"{BASE}/api/v1"
 USER = os.environ.get("LOCAL_USER", "mfg_admin")
 PWD = os.environ.get("LOCAL_PWD", "admin123")
-TENANT = os.environ.get("LOCAL_TENANT", "mfg_demo")
+TENANT = os.environ.get("LOCAL_TENANT", "AH-THR")
 
 ok_n = fail_n = 0
 

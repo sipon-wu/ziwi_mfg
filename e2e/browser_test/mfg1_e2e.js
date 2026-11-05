@@ -87,7 +87,7 @@ const rid = (b) => (b && b.request_id) || '';
   try {
     const t0 = await api('GET', '/tenants');
     record('TC-01', '新建仿真工厂', 'BLOCKED',
-      `后端无独立工厂/Plant 管理模块（无 /factories、/plants 路由）；工厂/租户建档需经 cloud.ziwi.cn IdP 或 /tenants 管理员接口（test_admin 探活 /tenants → ${t0.status}）。按授权边界不在 mfg_demo 内新建租户，故未创建任何工厂数据。需主理人/用户决策建模方式。`,
+      `后端无独立工厂/Plant 管理模块（无 /factories、/plants 路由）；工厂/租户建档需经 cloud.ziwi.cn IdP 或 /tenants 管理员接口（test_admin 探活 /tenants → ${t0.status}）。按授权边界不在 AH-THR 内新建租户，故未创建任何工厂数据。需主理人/用户决策建模方式。`,
       { tenantsStatus: t0.status });
   } catch (e) { record('TC-01', '新建仿真工厂', 'FAIL', '异常: ' + e.message, null); }
 

@@ -121,7 +121,7 @@ def main() -> int:
     me_obj = data(me) or {}
     me_id = me_obj.get("id")
     # 平台里有两个"租户标识"：tenants.code（如 MFG1，登录用）和
-    # tenants.tenant_id（如 mfg_demo，几乎所有 /tenants/{x} 路由用它）。
+    # tenants.tenant_id（如 AH-THR，几乎所有 /tenants/{x} 路由用它）。
     # 混用会得到一个干净的 404，看着像接口坏了。
     real_tid = me_obj.get("tenant_id") or TENANT
     print(f"当前用户 id={me_id} tenant_id={real_tid}")

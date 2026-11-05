@@ -11,7 +11,7 @@ BASE = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
 # 且报错只显示"用户名或密码错误"，看不出是拿错了变量。
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PASS = os.environ.get("E2E_PWD", "admin123")
-TENANT = os.environ.get("TENANT", "mfg_demo")
+TENANT = os.environ.get("TENANT", "AH-THR")
 
 # 精确到秒：单号形如 PO-RCV-<TS>-001，只到分钟时同一分钟内重跑会撞唯一约束
 TS = datetime.now().strftime("%m%d%H%M%S")
