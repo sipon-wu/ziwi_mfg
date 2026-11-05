@@ -419,6 +419,34 @@ def v5_issue(c):
 
 
 # ── V6 报工 vs 工单完成量 ───────────────────────────────────────
+#
+# ★口径在 8ab4883 改过：`work_orders.completed_qty` 现在只累计**末道工序**
+#   的报工产出（合格完工数），不再是「每来一条报工就 += output_qty」。
+#   本断言原先拿「全部报工求和」去比 completed_qty，于是在多工序场景下
+#   每张在制工单都必然报红 —— 那不是平台缺陷，是断言没跟上口径。
+#
+#   正确的不变式有两条，缺一条就漏一种真缺陷：
+#     ① Σ(末道工序报工产出) == completed_qty      ← 完工量算对了
+#     ② completed_qty <= 计划量 × 1.01             ← 没有把中间工序算进完工
+#   ②就是原 B-1 的诉求：若退回旧口径，30 道工序各报一次 15，
+#   completed_qty 会变成 450（计划 15）——②会立刻红。
+
+
+def _finish_op_code(c, route_id, cache):
+    """路线的末道工序编码（step_seq 最大那步）。按 route 缓存，避免重复拉。"""
+    if route_id is None:
+        return None
+    if route_id in cache:
+        return cache[route_id]
+    steps = pages(c, f"{API}/routes/{route_id}/steps")
+    code = None
+    if steps:
+        last = max(steps, key=lambda s: int(s.get("step_seq") or 0))
+        oid = last.get("operation_id")
+        ops = {o.get("id"): o.get("code") for o in pages(c, f"{API}/operations")}
+        code = ops.get(oid)
+    cache[route_id] = code
+    return code
 
 
 def v6_reports(c, wos):
@@ -427,31 +455,49 @@ def v6_reports(c, wos):
         return
     reports = [r for r in pages(c, f"{API}/work-reports")
                if r.get("work_order_id")]
-    by_wo = defaultdict(float)
-    for r in reports:
-        by_wo[r["work_order_id"]] += num(r.get("output_qty"))
+    cache = {}
+    finish = {}
+    for w in wos:
+        code = _finish_op_code(c, w.get("route_id"), cache)
+        if code:
+            finish[w.get("id")] = code
 
-    mism, over = [], []
+    total_by_wo = defaultdict(float)
+    last_by_wo = defaultdict(float)
+    for r in reports:
+        wid = r["work_order_id"]
+        q = num(r.get("output_qty"))
+        total_by_wo[wid] += q
+        fc = finish.get(wid)
+        if fc and r.get("operation_code") == fc:
+            last_by_wo[wid] += q
+
+    mism, over, noroute = [], [], []
     for w in wos:
         wid = w.get("id")
-        su = by_wo.get(wid, 0.0)
         comp = num((data_of(c.get(f"{API}/work-orders/{wid}")) or {}).get("completed_qty"))
-        if abs(su - comp) > 0.01:
-            mism.append(f"{w.get('wo_no')} Σ报工={su:g} vs completed={comp:g}")
+        if wid not in finish:
+            noroute.append(w.get("wo_no"))
+        else:
+            su = last_by_wo.get(wid, 0.0)
+            if abs(su - comp) > 0.01:
+                mism.append(f"{w.get('wo_no')} 末道({finish[wid]})Σ={su:g} vs completed={comp:g}")
         planned = num(w.get("planned_qty"))
         if planned and comp > planned * 1.01:
             over.append(f"{w.get('wo_no')} {comp:g}/{planned:g}")
-    add("V6", "Σ 报工产出 == 工单完成量", "PASS" if not mism else "FAIL",
-        f"{len(reports)} 条报工覆盖 {len(by_wo)} 张工单，不一致 {len(mism)} 张"
-        + (f"：{mism[:2]}" if mism else ""))
+    add("V6", "末道工序报工产出 == 工单完成量", "PASS" if not mism else "FAIL",
+        f"{len(reports)} 条报工覆盖 {len(total_by_wo)} 张工单，"
+        f"按末道工序口径不一致 {len(mism)} 张"
+        + (f"：{mism[:2]}" if mism else "")
+        + (f"（{len(noroute)} 张无路线已跳过）" if noroute else ""))
     if over:
-        add("B-1", "工单完成量按「所有工序产出」累加", "BOUNDARY",
-            f"{len(over)} 张在制工单 completed_qty > 计划量：{over[:3]}",
-            "completed_qty += output_qty 是累计口径，平台没有"
-            "「工序级产出」与「工单级产出」的区分；30 工序场景下"
-            "工单完成量会变成 n×计划量，完工判定与超产告警失真")
+        add("B-1", "完工量只计末道工序，不把中间工序算进完工", "FAIL",
+            f"{len(over)} 张工单 completed_qty > 计划量：{over[:3]}",
+            "完工量退回「每条报工都累加」口径：多工序场景下"
+            "completed_qty 会变成 n×计划量，完工判定与超产告警失真")
     else:
-        add("B-1", "工单完成量按「所有工序产出」累加", "PASS", "未出现超额累加")
+        add("B-1", "完工量只计末道工序，不把中间工序算进完工", "PASS",
+            "未出现超额累加")
 
 
 # ── V7 NCR 触发 ─────────────────────────────────────────────────

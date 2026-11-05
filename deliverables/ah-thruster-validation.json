@@ -158,7 +158,7 @@
     },
     {
       "system": "QA 质量管理",
-      "count": 3,
+      "count": 5,
       "note": "检验单/项/判定/抽样通；判 REJ→自动 NCR、报工报废→自动 NCR 均成立",
       "verdict": "PASS",
       "codes": [
