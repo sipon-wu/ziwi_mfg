@@ -33,6 +33,10 @@
 以及**产能自洽闸**（`scripts/check_capacity_consistency.py --check`）：前三道闸
 都不读 `capacity_per_shift`。这个字段从建表起就**零消费方**——填 11（实算 2）
 不会报错、不会告警、页面也看不出。判据同样是棘轮：已知偏差入基线，只拦新增。
+
+最后一档是 **PG 方言闸**（`scripts/check_pg_bool_literals.py`）：boolean 列写 0/1、
+Integer 列写 true/false 这类写法 **SQLite 全接、PG 全拒**，本地 pytest 一条都
+测不出来。它曾长期恒红（按列名判、不看表），现已按表判并补上反向检查。
 """
 
 import argparse
