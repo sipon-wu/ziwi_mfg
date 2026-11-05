@@ -521,6 +521,47 @@ ANDON-20261105012921  2026-11-04 17:29:21    ← 部署后（业务时间 01:29:
 
 ---
 
+### 10.7 时区偏移：清点发现是 5 份，不是一个（2026-11-05，`aa9bb02` / `bf82a88`）
+
+§10.6 末尾留了一句"打印和业务日各存了一份 +8，改一处漏一处会分叉"。真去清点，**不是一个分叉，是五份**：
+
+| 位置 | 原来读什么 | 语义 |
+|---|---|---|
+| 业务日历日 | `BUSINESS_UTC_OFFSET_HOURS` | 效期/逾期/单号前缀 |
+| 纸面打印时间 | `PRINT_TZ_OFFSET_HOURS` | 「打印时间」那一栏 |
+| Copilot 时间预设 | `COPILOT_TZ_OFFSET_HOURS` | 「今天/昨天/本月」 |
+| 单测 `test_copilot_api` | `_TZ = timedelta(hours=8)` 写死 | 造数据的基准时刻 |
+| 探针 `copilot_smoke` | `_TZ = timedelta(hours=8)` 写死 | 同上 |
+| 单测 `test_business_time`（新增） | — | 不存偏移，只存哨兵 |
+
+五份都是同一个"业务当地时间"，各存一份就是分叉的温床。举个具体的：一个新疆现场把打印设成 +6，拣选效期还按 +8 判 —— 纸面时间与库存判断差 2 小时，**两处都不报错**。而测试与探针那份更阴：实现改了偏移，探针还按 8 造数据，跑出来的红是假的、绿也是假的。
+
+**改动**：唯一真源 = `BUSINESS_UTC_OFFSET_HOURS`。
+
+- `print_service._now_local()` → `business_now()`
+- `MetricQueryService._today()` → `business_today()`，删掉 `_tz_offset`
+- 单测与探针写死的 `_TZ` → `business_now()`（与实现同源，跟着偏移一起动）
+
+**★ 为什么旧键是"保留 + 冲突就炸"，不是直接删。** `Settings` 的 `model_config` 是 `extra="ignore"`：直接删键，一个把 `PRINT_TZ_OFFSET_HOURS` 设成 6 的现场升级后，这个环境变量会**被静默丢弃**，打印时间从 +6 悄悄变成 +8 —— 接口全 200、页面全正常，只有纸上的时间错了。这类"看得见的纸、看不见的错"必须用启动失败拦住。所以两个旧键改成 `Optional[int] = None` + `model_validator`：与主开关不一致就抛错，错误信息直接点名"请删掉旧变量、只保留 `BUSINESS_UTC_OFFSET_HOURS`"；同值则放行（存量部署不必先改配置才能升级）。
+
+**闸加规则 D**：除 `core/config.py` 外，任何地方读 `PRINT_/COPILOT_TZ_OFFSET_HOURS` 即红。已证伪：造 2 处违规 → 2 处全命中、退出码 1。
+
+**运行时验证（打印链路）**：
+
+```
+POST /print/work_order/{id}  →  HTTP 200
+X-Print-At: 2026-11-05 08:40:50
+本机时间:    2026-11-05 08:40:51     ← 一秒不差
+```
+
+纸面时间仍是车间当地时间，且这次是**跟着唯一那个开关**走的（单测里把主开关设成 +6 / +9，`_now_local()` 的 utcoffset 随之变成 6 / 9 —— 证明它不再读自己那份）。
+
+**回归**：pytest **1433 passed / 0 failed**（+4 条）；staging 51 探针 **1542 / 0**；`copilot_smoke` 单跑 **6/6**；全模块浏览器 **PASS 72 / WARN 0 / FAIL 0 / OUT 0**。
+
+⚠️ 顺手看到一个不在本轮范围内的事实：`print_artifacts.created_at` 是 **timestamptz**，而其余业务表都是 UTC-naive。当前存的是正确的瞬间（实测 17:31 UTC 那批 = CST 01:31），但两种口径混在一张库里，将来谁拿它和 naive 的 `now()` 相减就会 `TypeError`。本轮不动，记在这里。
+
+---
+
 ## 11. 下一步
 
 1. ~~**推 staging 并做全模块浏览器回归**（阶段④⑤）~~ —— **已完成（2026-11-04）**：`origin/main` @ `7d8cc42` 已部署，API 1542/0、浏览器 FAIL 0、PG 冒烟 5xx=0。17 个修复在 PG 上确认有效（见 §10.1）。
