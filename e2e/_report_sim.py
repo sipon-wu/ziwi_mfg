@@ -21,6 +21,7 @@ R5 休息日零产出（工厂日历判 rest/holiday 的日子不得有报工）
 R6 完工口径 ≤ 工序流转口径（完工只认末道工序，超过必然是口径串了）
 R7 派生指标（达产率 / 报废率 / 单台工时）落在物理合理区间
 R8 工单数：月报工单数 == 该月日报出现过的不同工单数
+R9 人工工时 ≠ 设备机时（有产出的月份两者精确相等 = 播种时两列写了同一个数）
 
 跑法（staging，数据在那里；本地库已被清空）::
 
@@ -224,6 +225,22 @@ def main() -> int:
             bad(f"R8 {mk}", f"月报 {rep.get('orders')} ≠ 日报不同工单 {len(wos)}")
     if not any(f.startswith("R8 ") for f in FAILS):
         ok("R8 工单数全月一致")
+
+    # ── R9 人工工时 vs 设备机时 ──
+    # 两个口径物理上不可能恒等：机时是设备被占住的时长，人工还要加换型/装夹。
+    # 整月精确相等只能有一个原因 —— 播种时两列写成了同一个表达式（实际发生过：
+    # 半年流水全库 labor_hours == machine_hours 逐行相等，页面上两个指标同一数）。
+    # 这条**不报错、不掉接口**，只有跨指标对账才发现得了。
+    print("\nR9 人工工时 vs 设备机时")
+    same_month = [mk for mk, r in monthly.items()
+                  if (r.get("total_output") or 0) > 0
+                  and near(r.get("total_hours"), r.get("total_machine_hours"), 0.001)]
+    (ok if not same_month else bad)(
+        "R9 两者非恒等",
+        f"人工 {round(half_day['total_hours'], 2)} h · 机时 {round(half_day['total_machine_hours'], 2)} h"
+        if not same_month
+        else f"{len(same_month)} 个月两者精确相等（{','.join(same_month)}）→ "
+             f"播种把人工工时与设备机时写成了同一个数")
 
     # ── 落盘 ──
     out_doc = {

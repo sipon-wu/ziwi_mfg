@@ -32,7 +32,7 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -317,7 +317,15 @@ class PrintService:
             page_count=page_count,
             file_bytes=pdf_bytes,
             file_size=len(pdf_bytes),
-            created_at=printed_at,
+            # ★ 这里必须写**真实时刻**，不能写纸面上的业务墙钟。
+            #   `_now_local()` 给的是 CST 墙钟（23:25），落到 timestamptz 上：
+            #     · PG：带 tzinfo，存的是正确瞬间，读回 +8 得 23:25 ✔
+            #     · SQLite：没有时区，落成 naive "23:25"，读回被 `as_business_time`
+            #       当成 UTC 再加 8 → **次日 07:25** ✘
+            #   同一份代码在本地和线上印出两个时间，P8-3b 就是靠这条抓到的。
+            #   存储列一律记 UTC 瞬时（与「库里存 UTC-naive」的约定一致），
+            #   展示层再 `as_business_time()` 换算出墙钟。
+            created_at=datetime.now(timezone.utc),
         )
         self._session.add(artifact)
         await self._session.flush()   # 取 id（asyncpg 没有 lastrowid，flush 走 RETURNING）

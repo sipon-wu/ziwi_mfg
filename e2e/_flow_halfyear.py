@@ -39,6 +39,7 @@ from datetime import date, datetime, time, timedelta
 import httpx
 
 import _factory_calendar as fc
+from _report_hours import hours_for
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
 TENANT = os.environ.get("E2E_TENANT", "AH-THR")
@@ -376,6 +377,9 @@ def report_day(c, wo_id, wo_no, steps, day, qty, tag, scrap_ops=None):
     for seg in steps:
         op = seg["op_code"]
         scrap = scrap_ops.get(op, 0)
+        # 人工工时 / 设备机时走 _report_hours 的单一口径：
+        # 原来两行是同一个表达式 → 全库两者逐行相等，报表里并排显示同一个数。
+        labor_h, machine_h = hours_for(seg, qty)
         r = c.post("/work-reports", {
             "work_order_id": wo_id,
             "report_date": day.isoformat(),
@@ -384,8 +388,8 @@ def report_day(c, wo_id, wo_no, steps, day, qty, tag, scrap_ops=None):
             "input_qty": qty + scrap,
             "output_qty": qty,
             "scrap_qty": scrap,
-            "labor_hours": round((seg.get("unit_time") or 1) * qty / 60, 2) or 0.1,
-            "machine_hours": round((seg.get("unit_time") or 1) * qty / 60, 2) or 0.1,
+            "labor_hours": labor_h,
+            "machine_hours": machine_h,
         })
         if r.status_code != 200:
             bad(f"报工 {wo_no} {day} {op}", f"{r.status_code} {msg(r)}")

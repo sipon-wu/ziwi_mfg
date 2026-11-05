@@ -531,9 +531,13 @@ def main() -> int:
            and t2.get("name") == old_name,
            f"HTTP {r.status_code} contact={t2.get('contact_name')} name={t2.get('name')}")
 
+    # ★ 403 要接受：`app/api/tenants.py` 里对 `tenant_id != current_tenant`
+    #   是**有意**抛 403「禁止跨租户读取 License 信息」。本探针拿的是当前登录
+    #   租户的 admin，去读的却是刚建的另一个租户的 license —— 被拒才是对的。
+    #   早期只接受 (200, 404)，把这条安全防护误判成红。
     r = c.get(f"{API}/tenants/{tid}/license")
-    report("P9-6 租户许可可读（未配置时 404 亦接受）",
-           r.status_code in (200, 404), f"HTTP {r.status_code} {msg(r)[:60]}")
+    report("P9-6 租户许可可读（未配置 404、跨租户 403 均接受）",
+           r.status_code in (200, 404, 403), f"HTTP {r.status_code} {msg(r)[:60]}")
 
     # ============ P10 组织/班组/员工/审批/登出 ============
     print("\n── P10 组织、班组、员工、审批、登出 ──")
@@ -578,6 +582,13 @@ def main() -> int:
         report("P10-4 员工可删除", False, f"员工没建起来 HTTP {r.status_code} {msg(r)}")
 
     # 组织成员：先加再移
+    #
+    # ★ 这条**必须自备前置**，不能指望租户里已经有组织。
+    #   原先直接取 `/organizations/tree` 的第 0 个节点，树空就整条判红。
+    #   本地 AH-THR 是"刚开通、零组织"的空壳租户，于是同一条断言在
+    #   `run_all.py`（前面有别的探针顺手建了组织）里绿、单独跑就红 ——
+    #   这不是环境噪声，是探针在偷别人的残留状态。
+    #   现在：树空 → 自己建一个 `公司` 根节点，用完删掉，判定与执行顺序无关。
     r = c.get(f"{API}/organizations/tree")
     tree = data(r)
     org_id = None
@@ -585,13 +596,30 @@ def main() -> int:
         org_id = tree[0].get("id")
     elif isinstance(tree, dict):
         org_id = tree.get("id")
+
+    created_org = False
+    if not org_id:
+        r = c.post(f"{API}/organizations", json={
+            "code": f"ORG-{tag}", "name": f"A推进器厂-{tag}", "org_type": "company"})
+        org_id = (data(r) or {}).get("id")
+        created_org = bool(org_id)
+        if not org_id:
+            report("P10-5 组织成员可移出", False,
+                   f"树为空且自建组织失败 HTTP {r.status_code} {msg(r)[:80]}")
+
     if org_id and me_id:
         c.post(f"{API}/organizations/{org_id}/members", json={"user_id": me_id})
         r = c.delete(f"{API}/organizations/{org_id}/members/{me_id}")
         report("P10-5 组织成员可移出",
-               r.status_code == 200, f"HTTP {r.status_code} org={org_id} {msg(r)}")
+               r.status_code == 200,
+               f"HTTP {r.status_code} org={org_id}{'（自建）' if created_org else ''} {msg(r)}")
+        # 自建的组织收尾，别在租户里留垃圾
+        if created_org:
+            c.delete(f"{API}/organizations/{org_id}")
+    elif org_id is None:
+        pass          # 上面已经报过红了
     else:
-        report("P10-5 组织成员可移出", False, f"没有组织/用户 id org={org_id} me={me_id}")
+        report("P10-5 组织成员可移出", False, f"拿不到当前用户 id me={me_id}")
 
     # 审批动作：模板**配了节点**时审批人由模板决定（发起方传的 approver_ids 无效），
     # 而 `/action` 只认「status=pending 且 approver_id==当前用户」的节点。

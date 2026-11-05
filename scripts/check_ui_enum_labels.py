@@ -38,6 +38,14 @@ D. ``missing_domain`` `statusDict.ts` 里登记的状态码覆盖不到真实数
 
 注意：本闸只看**模板**（`<template>` 段）。`<script>` 里的比较/赋值（
 `x.status === 'in_progress'`）是正常用法，不该拦。
+
+自测
+----
+每次运行都会先跑一段**内置样例**（`SELFTEST_TEMPLATE`），要求三类问题各抓
+到、四条"已中文化"写法各不误报。理由：这类闸最容易的死法不是没接进流水线，
+是**检测逻辑被"顺手改好"后静默失效** —— 之前那个触屏热区闸就只剩一句
+"断言 CSS 变量文本存在"，报"24/24 页读到令牌"，看着全绿，实际一个控件的
+高度都没量过。检测逻辑没有负向用例，等于没有闸。
 """
 from __future__ import annotations
 
@@ -112,8 +120,8 @@ def line_of(text: str, pos: int) -> int:
     return text[:pos].count("\n") + 1
 
 
-def scan_file(path: Path):
-    raw = path.read_text(encoding="utf-8", errors="replace")
+def scan_text(raw: str):
+    """扫一份 .vue 源码（或其片段），返回命中列表。"""
     m = TEMPLATE_RE.search(raw)
     if not m:
         return []
@@ -161,6 +169,44 @@ def scan_file(path: Path):
     return hits
 
 
+def scan_file(path: Path):
+    return scan_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+# ── 检测逻辑自测样例 ───────────────────────────────────────────────
+# 左半三条**必须抓到**，右半四条**必须放过**。任一条不符就是闸被改坏了，
+# 直接 FAIL —— 宁可在 CI 里炸，也不要"全绿但其实什么都没检查"。
+SELFTEST_TEMPLATE = """<template>
+  <div>
+    <span>{{ row.status }}</span>
+    <van-cell :value="row.receipt_type" />
+    <span>{{ MAP[row.call_type] || row.call_type || '-' }}</span>
+    <span>{{ statusTagOf('work_order', row.status).label }}</span>
+    <span>{{ enumLabel('issue_type', row.issue_type) }}</span>
+    <span>{{ row.remark }}</span>
+    <!-- <span>{{ row.status }}</span> -->
+    <van-cell title="状态" :value="getStateEntry('work_order', row.status).label" />
+  </div>
+</template>
+"""
+
+SELFTEST_EXPECT = {"bare_interp": 1, "bare_bind": 1, "raw_fallback": 1}
+
+
+def run_selftest() -> bool:
+    hits = scan_text(SELFTEST_TEMPLATE)
+    got: dict[str, int] = {}
+    for h in hits:
+        got[h["kind"]] = got.get(h["kind"], 0) + 1
+    if got != SELFTEST_EXPECT:
+        print(f"FAIL：自测不通过 —— 期望 {SELFTEST_EXPECT}，实际 {got}")
+        for h in hits:
+            print(f"  L{h['line']} [{h['kind']}] {h['detail']}")
+        return False
+    print(f"自测 OK：三类问题各抓到 1 处，四条已中文化写法未误报")
+    return True
+
+
 def iter_vue():
     if not FRONTEND.is_dir():
         return
@@ -174,7 +220,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="只列清单，不判定退出码")
     ap.add_argument("--write-baseline", action="store_true")
+    ap.add_argument("--no-selftest", action="store_true",
+                    help="跳过检测逻辑自测（只在调试本脚本时用）")
     a = ap.parse_args()
+
+    if not a.no_selftest and not run_selftest():
+        return 1
 
     findings = []
     for p in iter_vue():

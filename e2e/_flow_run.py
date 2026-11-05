@@ -31,6 +31,8 @@ from datetime import date, datetime
 
 import httpx
 
+from _report_hours import hours_for
+
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
 TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 USER = os.environ.get("E2E_USER", "mfg_admin")
@@ -573,6 +575,7 @@ def produce(c: C, m: dict, st: dict, key: str, scrap_n: int = 0, scrap_op: str =
             continue
         scrap = scrap_n if op == scrap_op else 0
         out = left - scrap
+        labor_h, machine_h = hours_for(seg, left)
         payload_ = {
             "work_order_id": wo["id"],
             "report_date": TODAY.isoformat(),
@@ -581,8 +584,9 @@ def produce(c: C, m: dict, st: dict, key: str, scrap_n: int = 0, scrap_op: str =
             "input_qty": left,
             "output_qty": out,
             "scrap_qty": scrap,
-            "labor_hours": round((seg.get("unit_time") or 1) * left / 60, 2) or 0.1,
-            "machine_hours": round((seg.get("unit_time") or 1) * left / 60, 2) or 0.1,
+            # 口径见 e2e/_report_hours.py（原来两行同一表达式 → 两者逐行相等）
+            "labor_hours": labor_h,
+            "machine_hours": machine_h,
         }
         r = c.post("/work-reports", payload_)
         if r.status_code != 200:

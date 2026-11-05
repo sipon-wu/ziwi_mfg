@@ -21,6 +21,8 @@
     --skip-contracts 不跑契约闸（手写 SQL ↔ 模型 / service ↔ 仓储 静态对账）
     --skip-business-date 不跑业务日历日闸（裸 date.today() / CURRENT_DATE）
     --skip-capacity  不跑产能自洽闸（`capacity_per_shift` / 纲领 45 台每月）
+    --skip-pg-literals 不跑 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）
+    --skip-ui-labels 不跑界面枚举中文化闸（模板裸渲染 status/type 原码）
 
 跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
 探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
@@ -37,6 +39,12 @@
 最后一档是 **PG 方言闸**（`scripts/check_pg_bool_literals.py`）：boolean 列写 0/1、
 Integer 列写 true/false 这类写法 **SQLite 全接、PG 全拒**，本地 pytest 一条都
 测不出来。它曾长期恒红（按列名判、不看表），现已按表判并补上反向检查。
+
+再一档是 **界面枚举中文化闸**（`scripts/check_ui_enum_labels.py`）：前五道闸全
+盯着后端，**没有一道看界面**。而界面上的错法最难发现——把 `in_progress` 直接
+印出来不报错、不掉接口、外面套了 van-tag 颜色还是对的，只是车间看到英文。
+`MAP[x] || x.status` 这种"看起来做了中文化"的兜底更阴：字典漏一个值就回显
+原文，脏数据于是伪装成正常值。
 """
 
 import argparse
@@ -271,6 +279,8 @@ def main():
                     help="跳过产能自洽闸（capacity_per_shift ↔ 设计纲领 45 台每月）")
     ap.add_argument("--skip-pg-literals", action="store_true",
                     help="跳过 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）")
+    ap.add_argument("--skip-ui-labels", action="store_true",
+                    help="跳过界面枚举中文化闸（模板裸渲染 status/type 原码）")
     a = ap.parse_args()
 
     py = sys.executable
@@ -421,8 +431,26 @@ def main():
         print(((pg.stdout or "") + (pg.stderr or "")).rstrip())
         pg_fail = pg.returncode != 0
 
+    # ── 界面枚举中文化闸 ────────────────────────────────────────────
+    # 前面五道闸都盯着后端：SQL 名字、日期口径、产能、方言。**没有一道闸看界面**。
+    # 而界面上的错法恰恰是最不容易被发现的一类：把 `in_progress` 直接印出来，
+    # 不报错、不掉接口、颜色还是对的（外面套了 van-tag），只是车间看到英文。
+    # 更阴的是 `MAP[x] || x.status` 这种"看起来做了中文化"的兜底 —— 字典漏一个
+    # 值就回显原文，脏数据于是伪装成正常值。
+    #
+    # 纯静态（读 .vue 的 template 段，不连库不起服务），基线只拦新增。
+    ui_fail = False
+    if not a.skip_ui_labels:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        ui = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_ui_enum_labels.py")],
+            capture_output=True, text=True, cwd=root)
+        print(((ui.stdout or "") + (ui.stderr or "")).rstrip())
+        ui_fail = ui.returncode != 0
+
     return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
-                 or cap_fail or pg_fail) else 0
+                 or cap_fail or pg_fail or ui_fail) else 0
 
 
 if __name__ == "__main__":
