@@ -76,6 +76,19 @@ dc python -m seeds.mfg1_e2e_seed_data || exit 1
 step "7/9 供应商"
 dc python -m seeds.suppliers_seed || exit 1
 
+# 清库+重建期间后端进程一直活着，可能还持有清空前读到的权限/租户映射。
+# 第 8 步全部走 HTTP（要 POST /tenants、/auth/login），带着旧映射会满屏 403，
+# 而且报错文案指向权限而不是缓存，极难判读 —— 先重启，把状态清干净。
+step "7.5/9 重启后端，丢掉清空前的缓存"
+docker restart mfg1-backend >/dev/null
+for i in $(seq 1 40); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: mfg1.ziwi.cn' https://127.0.0.1/health -k || true)
+  [ "$code" = "200" ] && break
+  sleep 2
+done
+echo "[health] $code"
+[ "$code" = "200" ] || { echo "[中止] 后端未恢复健康，停止，避免半重建状态"; exit 1; }
+
 # HTTP 造数失败不中止：让它把失败项打完，最后靠校验段判定真相
 step "8/9 艾华推进器厂场景（HTTP）"
 python3 "${REPO}/scripts/seed_thruster_staging.py" || echo "[WARN] 艾华主场景有失败项，见上方输出"
