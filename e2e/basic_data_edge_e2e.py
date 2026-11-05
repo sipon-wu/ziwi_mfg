@@ -59,8 +59,11 @@ def main():
     tag = datetime.now().strftime("%m%d%H%M%S")
 
     def mk_operation(code):
+        # op_type 走 app/core/enums.py 的值域（Literal 校验）。原写 "production"
+        # 是把 route_steps.step_type 的值塞错了列 —— 2026-11-05 之前接口不校验，
+        # 于是在 mfg_demo 攒下 65 条 op_type=production 的垃圾工序。
         r = c.post(f"{API}/operations", json={
-            "code": code, "name": f"工序{code}", "op_type": "production"})
+            "code": code, "name": f"工序{code}", "op_type": "machining"})
         return r.json()["data"]["id"] if r.status_code == 200 else None
 
     def mk_route(code):

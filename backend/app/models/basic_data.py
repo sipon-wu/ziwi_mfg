@@ -17,7 +17,10 @@ class Operation(Base):
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     code          = Column(String(100), nullable=False, comment="工序编码")
     name          = Column(String(200), nullable=False, comment="工序名称")
-    op_type       = Column(String(50), nullable=False, comment="工序类型: machining/assembly/heat_treat/surface_treat/inspect/pack/reaction/blend/separation/filling/transport")
+    # 值域唯一真源：app/core/enums.py::OP_TYPE_LABELS（14 个值，含 incoming_qc/
+    # process_qc/final_qc）。这里不再重复列一遍 —— 上一版列在注释里的 11 个值
+    # 被前端抄成两份常量，结果库里出现的 *_qc 一个都不在，页面直接印英文原文。
+    op_type       = Column(String(50), nullable=False, comment="工序类型（值域见 core/enums.py）")
     setup_time    = Column(Float, default=0, comment="准备时间(分钟)")
     unit_time     = Column(Float, default=0, comment="单件加工时间(分钟/件)")
     labor_cert    = Column(Text, comment="人员资质要求(JSON): [{cert_type, cert_level, min_count}]")

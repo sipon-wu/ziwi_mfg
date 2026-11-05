@@ -64,6 +64,38 @@ const gridStyle = computed<Record<string, string>>(() => {
 })
 
 /**
+ * 采集点渲染：`[{equip_type, capability, collect_method, count}]`
+ * → `槽绝缘折纸机 · 完成标志 · 人工确认`（多条用「；」分隔）。
+ *
+ * 后端存的是 JSON 字符串（`operations.equip_req`），直接 String() 出来就是
+ * 一坨 `[{"equip_type":"槽绝缘折纸机",...}]`，在行展开的窄格子里谁也读不下去。
+ * 解析失败就退回原文 —— 宁可难看，也不能把用户填的东西吞掉。
+ */
+function formatCollectSpec(v: any): string {
+  let arr: any = v
+  if (typeof v === 'string') {
+    try {
+      arr = JSON.parse(v)
+    } catch {
+      return v
+    }
+  }
+  const list = Array.isArray(arr) ? arr : [arr]
+  const parts = list
+    .filter((it) => it && typeof it === 'object')
+    .map((it) => {
+      const seg = [it.equip_type, it.capability, it.collect_method]
+        .filter((x) => x != null && String(x).trim() !== '')
+        .map((x) => String(x))
+      const n = Number(it.count)
+      if (Number.isFinite(n) && n > 1) seg.push(`×${n}`)
+      return seg.join(' · ')
+    })
+    .filter((s) => s !== '')
+  return parts.length ? parts.join('；') : '--'
+}
+
+/**
  * 统一的字段值格式化（保留 v2 逻辑）：
  *  - boolean -> 是/否
  *  - enum -> 选项 label
@@ -74,6 +106,7 @@ const gridStyle = computed<Record<string, string>>(() => {
 function display(f: FieldDef): string {
   const v = props.item?.[f.key]
   if (v === null || v === undefined || v === '') return '--'
+  if (f.format === 'collect-spec') return formatCollectSpec(v)
   if (f.type === 'boolean') return v === true || v === 'true' || v === 1 || v === '1' ? '是' : '否'
   if (f.type === 'enum' && f.options) {
     const opt = f.options.find((o) => String(o.value) === String(v))

@@ -9,24 +9,14 @@
  */
 import type { FieldDef, Operator, ResourceSearchConfig, SearchCondition } from '@/types/search'
 import { OPERATOR_LABELS } from '@/types/search'
+import { OP_TYPE_OPTIONS as OP_TYPE } from '@/config/enums'
 
 // ============================================================
 // 各枚举候选项（收敛自各列表页散落的 *_OPTIONS 常量）
 // ============================================================
 
-const OP_TYPE = [
-  { value: 'machining', label: '机加工' },
-  { value: 'assembly', label: '装配' },
-  { value: 'heat_treat', label: '热处理' },
-  { value: 'surface_treat', label: '表面处理' },
-  { value: 'inspect', label: '检验' },
-  { value: 'pack', label: '包装' },
-  { value: 'reaction', label: '反应' },
-  { value: 'blend', label: '混合' },
-  { value: 'separation', label: '分离' },
-  { value: 'filling', label: '灌装' },
-  { value: 'transport', label: '转运' },
-]
+// 工序类型的候选项统一放在 @/config/enums（后端真源 core/enums.py）。
+// 原来这里另存了一份 11 项副本，与 OperationList.vue 那份各漏各的。
 const PRODUCT_TYPE = [
   { value: 'final', label: '成品' },
   { value: 'semi', label: '半成品' },
@@ -196,7 +186,10 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       { key: 'unit_time', label: '单件时间(min/件)', type: 'number', group: 'basic' },
       { key: 'is_active', label: '是否启用', type: 'boolean', group: 'basic' },
       { key: 'labor_cert', label: '上岗资质', type: 'string', group: 'basic' },
-      { key: 'equip_req', label: '设备要求', type: 'string', group: 'basic' },
+      // 艾华方案书 §3.3「工序与采集设备对照表」原样落在这里（equip_req 是一个
+      // [{equip_type, capability, collect_method}] 数组）。直接吐 JSON 等于没展示，
+      // 故用 collect-spec 渲染成「设备 · 采什么 · 怎么采」。
+      { key: 'equip_req', label: '采集点（设备·数据·方式）', type: 'string', format: 'collect-spec', group: 'basic' },
       { key: 'material_reqs', label: '物料要求', type: 'string', group: 'basic' },
       { key: 'sop_refs', label: 'SOP', type: 'string', group: 'basic' },
       { key: 'env_req', label: '环境要求', type: 'string', group: 'basic' },

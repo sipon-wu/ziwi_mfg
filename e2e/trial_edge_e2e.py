@@ -62,8 +62,10 @@ def main():
     assert r.status_code == 200, r.text[:300]
     product_id = r.json()["data"]["id"]
 
+    # op_type 走 app/core/enums.py 的值域（Literal 校验）。原写 "production"
+    # 是 step_type 的值塞错了列，接口加了校验后会直接 422。
     r = c.post(f"{API}/operations", json={
-        "code": f"OP-GE-{tag}", "name": f"工序GE{tag}", "op_type": "production"})
+        "code": f"OP-GE-{tag}", "name": f"工序GE{tag}", "op_type": "machining"})
     assert r.status_code == 200, r.text[:300]
     op_id = r.json()["data"]["id"]
 

@@ -45,6 +45,15 @@ export interface FieldDef {
   hidden?: boolean
   /** 行展开分组 */
   group?: FieldGroup
+  /**
+   * 值的渲染方式（只影响**展示**，不影响类型与算子）。
+   *
+   * - `collect-spec`：`operations.equip_req` 专用 —— 值是
+   *   `[{equip_type, capability, collect_method, count}]`，渲染成
+   *   「设备 · 采什么 · 怎么采」。不新开 FieldType 是为了不动
+   *   `defaultOperatorsFor` / 高级检索面板的分支。
+   */
+  format?: 'collect-spec'
 }
 
 // ============================================================

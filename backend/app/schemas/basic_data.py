@@ -5,13 +5,17 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import date, datetime
 
+from app.core.enums import OpType
+
 
 # ==================== M04 工序定义 ====================
 
 class OperationCreate(BaseModel):
     code: str
     name: str
-    op_type: str
+    # 值域见 app/core/enums.py。用 Literal 而不是裸 str：探针曾把
+    # route_steps.step_type 的 `production` 塞进来，页面于是印出英文原文。
+    op_type: OpType
     setup_time: float = 0
     unit_time: float = 0
     labor_cert: Optional[str] = None
@@ -29,7 +33,7 @@ class OperationCreate(BaseModel):
 class OperationUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
-    op_type: Optional[str] = None
+    op_type: Optional[OpType] = None
     setup_time: Optional[float] = None
     unit_time: Optional[float] = None
     labor_cert: Optional[str] = None

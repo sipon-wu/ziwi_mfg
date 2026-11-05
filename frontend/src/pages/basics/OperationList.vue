@@ -9,6 +9,7 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import { OP_TYPE_OPTIONS, opTypeLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
 
 interface Operation {
@@ -31,20 +32,9 @@ interface Operation {
   created_at: string
 }
 
-const OP_TYPE_OPTIONS = [
-  { value: 'machining', label: '机加工' },
-  { value: 'assembly', label: '装配' },
-  { value: 'heat_treat', label: '热处理' },
-  { value: 'surface_treat', label: '表面处理' },
-  { value: 'inspect', label: '检验' },
-  { value: 'pack', label: '包装' },
-  { value: 'reaction', label: '反应' },
-  { value: 'blend', label: '混合' },
-  { value: 'separation', label: '分离' },
-  { value: 'filling', label: '灌装' },
-  { value: 'transport', label: '转运' },
-]
-
+// 工序类型候选项统一来自 @/config/enums（后端真源 core/enums.py）。
+// 原来这里自存一份 11 项常量，漏了 incoming_qc/process_qc/final_qc ——
+// 库里真有这三个值，于是列表直接印英文原文。
 const rawList = ref<Operation[]>([])
 const page = ref(1)
 const pageSize = 100
@@ -188,7 +178,9 @@ async function handleDelete(item: Operation) {
 }
 
 function getOpTypeLabel(v: string): string {
-  return OP_TYPE_OPTIONS.find(o => o.value === v)?.label || v
+  // 未知值显示「未知（原文）」而不是原文：兜底回显会让脏数据看起来像正常值，
+  // `mfg_demo` 里 65 条 op_type=production 就是这么藏了三轮没人发现。
+  return opTypeLabel(v)
 }
 
 onMounted(() => {
