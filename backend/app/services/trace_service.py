@@ -56,13 +56,20 @@ class TraceService:
         return row or {}
 
     async def _consumers(self, batch_no: str) -> List[Dict]:
-        """该批次被哪些出库单领走（批次作为**输入**的去向）。"""
+        """该批次被哪些出库单领走（批次作为**输入**的去向）。
+
+        ★ 必须排除作废单：作废的红冲只把货还回库，**不会**抹掉原始出库流水，
+          于是 ``issue`` 与 ``cancel`` 两条流水并存。不过滤就会把一张废单
+          当成"这批料真的被领走了"，正向追溯凭空多出一个受影响的工单。
+        """
         return await self.repo.query(
             "SELECT ii.batch_no, ii.material_id, ii.issued_qty, ii.required_qty, "
             "       i.id AS issue_id, i.issue_no, i.issue_type, i.status, "
             "       i.source_type, i.source_doc_no, i.work_order_id, i.created_at "
             "FROM issue_order_items ii JOIN issue_orders i ON i.id = ii.issue_id "
-            "WHERE ii.batch_no = :bn ORDER BY i.id",
+            "WHERE ii.batch_no = :bn "
+            "  AND (i.status IS NULL OR i.status <> 'cancelled') "
+            "  AND (ii.issued_qty IS NULL OR ii.issued_qty > 0) ORDER BY i.id",
             {"bn": batch_no},
         )
 
@@ -123,6 +130,7 @@ class TraceService:
             "  ON o.id = t.reference_id AND t.reference_type = 'issue_order' "
             "WHERE t.transaction_type = 'issue' "
             "  AND t.batch_no IS NOT NULL AND t.batch_no <> '' "
+            "  AND (o.status IS NULL OR o.status <> 'cancelled') "
             "  AND (o.work_order_id = :w "
             "       OR (o.work_order_id IS NULL AND o.source_doc_no = :no)) "
             "ORDER BY t.id",
@@ -133,7 +141,9 @@ class TraceService:
         return await self.repo.query(
             "SELECT ii.material_id, ii.batch_no, ii.issued_qty, i.issue_no, i.issue_type "
             "FROM issue_order_items ii JOIN issue_orders i ON i.id = ii.issue_id "
-            "WHERE ii.batch_no IS NOT NULL AND ii.batch_no <> '' AND ("
+            "WHERE ii.batch_no IS NOT NULL AND ii.batch_no <> '' "
+            "  AND (i.status IS NULL OR i.status <> 'cancelled') "
+            "  AND (ii.issued_qty IS NULL OR ii.issued_qty > 0) AND ("
             "      i.work_order_id = :w "
             "   OR (i.work_order_id IS NULL AND i.source_doc_no = :no)) "
             "ORDER BY i.id",

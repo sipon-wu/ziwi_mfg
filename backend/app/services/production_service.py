@@ -1212,20 +1212,27 @@ class ProductionService:
     # ==================== 报表 ====================
     async def daily_report(self, report_date: date) -> dict:
         rows = await self.repo.daily_report(report_date)
+        # ★ 两个产出数各有名字：``total_output`` 是**完工口径**（只认路线末道工序），
+        #   ``total_wip_output`` 是**工序流转量**（全工序累计）。只保留一个数就会
+        #   重演 B-1：多工序工单的产量被乘上工序数（实测 30 件报成 410）。
         total_output = sum(r.get("total_output") or 0 for r in rows)
+        total_wip = sum(r.get("wip_output") or 0 for r in rows)
         total_scrap = sum(r.get("total_scrap") or 0 for r in rows)
         total_hours = sum(r.get("total_hours") or 0 for r in rows)
         total_machine_hours = sum(r.get("total_machine_hours") or 0 for r in rows)
         return {"date": str(report_date), "total_output": total_output,
+                "total_wip_output": total_wip,
                 "total_scrap": total_scrap, "total_hours": total_hours,
                 "total_machine_hours": total_machine_hours, "rows": rows}
 
     async def monthly_report(self, year: int, month: int) -> dict:
         rows = await self.repo.monthly_report(year, month)
-        total_output = sum(r.get("total_output") or 0 for r in rows)
-        total_scrap = sum(r.get("total_scrap") or 0 for r in rows)
-        total_hours = sum(r.get("total_hours") or 0 for r in rows)
-        total_machine_hours = sum(r.get("total_machine_hours") or 0 for r in rows)
-        return {"year": year, "month": month, "total_output": total_output,
-                "total_scrap": total_scrap, "total_hours": total_hours,
-                "total_machine_hours": total_machine_hours, "orders": len(rows), "rows": rows}
+        agg = rows[0] if rows else {}
+        return {"year": year, "month": month,
+                "total_output": agg.get("total_output") or 0,
+                "total_wip_output": agg.get("wip_output") or 0,
+                "total_scrap": agg.get("total_scrap") or 0,
+                "total_hours": agg.get("total_hours") or 0,
+                "total_machine_hours": agg.get("total_machine_hours") or 0,
+                "orders": agg.get("order_count") or 0,
+                "rows": agg.get("rows") or []}

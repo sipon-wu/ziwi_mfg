@@ -1465,6 +1465,7 @@ class IssueOrderService:
         if current_status in (ISSUE_PENDING, ISSUE_APPROVED, ISSUE_PICKING):
             # 仅置 cancelled，零库存影响
             await self.repo.update(order_id, {"status": ISSUE_CANCELLED})
+            await self._clear_issue_items(order_id)
             return {"order_id": order_id, "status": ISSUE_CANCELLED,
                     "reversed_qty": 0, "tx_count": 0}
 
@@ -1615,9 +1616,31 @@ class IssueOrderService:
                 tx_count += 1
 
             await self.repo.update(order_id, {"status": ISSUE_CANCELLED})
+            await self._clear_issue_items(order_id)
 
         return {"order_id": order_id, "status": ISSUE_CANCELLED,
                 "reversed_qty": total_reversed, "tx_count": tx_count}
+
+    async def _clear_issue_items(self, order_id: int) -> int:
+        """作废后把明细的 ``issued_qty`` 归零。
+
+        ★ 不清零的后果实测过：作废单的明细还挂着 ``issued_qty=15.15``，
+          批次追溯汇总"这批成品的原料来源"时把这张作废单也算进去 →
+          同一批半成品在 ``source_batches`` 里**出现两次**、用量翻倍
+          （来源条数 28 而实际只有 26）。库存回滚了、单据状态也 cancelled 了，
+          只有这一列还在撒谎，而撒谎的正是追溯链。
+
+        流水侧不受影响：``issue`` 与 ``cancel`` 两条流水都在，红冲事实可查；
+        这里清的是"单据当前还欠多少料"这个**状态量**，作废单的答案必须是 0。
+        """
+        items = await self.item_repo.list_by_issue(order_id)
+        n = 0
+        for it in items:
+            if (it.get("issued_qty") or 0) == 0:
+                continue
+            await self.item_repo.update(it["id"], {"issued_qty": 0})
+            n += 1
+        return n
 
     async def _resolve_rollback_row(self, material_id: int, warehouse_id: int,
                                     location_id, batch_no: str = None,

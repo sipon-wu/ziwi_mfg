@@ -114,7 +114,10 @@ class DailyReportRow(BaseModel):
     report_date: date
     wo_no: str
     product_name: str
+    # 完工口径：只统计路线**末道工序**的报工产出（30 件的多工序工单就是 30，不是 410）
     output_qty: int
+    # 工序流转量：全工序 output 累计，供在制分析。两个数各有名字，别互相替代
+    wip_output: int = 0
     scrap_qty: int
     labor_hours: float
     machine_hours: float = 0
@@ -124,6 +127,7 @@ class DailyReportRow(BaseModel):
 class DailyReportResponse(BaseModel):
     date: date
     total_output: int
+    total_wip_output: int = 0
     total_scrap: float
     total_hours: float
     total_machine_hours: float = 0

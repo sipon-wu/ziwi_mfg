@@ -79,8 +79,9 @@ class ProductionRepository(MultiTenantRepository):
                             work_order_id: int = None, report_date=None) -> dict:
         sql = """SELECT wr.id, wr.tenant_id, wr.work_order_id, wr.report_date, wr.reporter_id,
                  wr.org_id,
-                 wr.operation_code, wr.operation_name, wr.output_qty, wr.scrap_qty, 
-                 wr.defect_reason, wr.labor_hours, wr.status, wr.created_at, wr.reported_at,
+                 wr.operation_code, wr.operation_name, wr.input_qty, wr.output_qty,
+                 wr.scrap_qty, wr.defect_reason, wr.labor_hours, wr.machine_hours,
+                 wr.status, wr.created_at, wr.reported_at,
                  wo.wo_no, wo.product_name
                  FROM work_reports wr
                  LEFT JOIN work_orders wo ON wo.id = wr.work_order_id
@@ -138,20 +139,88 @@ class ProductionRepository(MultiTenantRepository):
         return rows
 
     # ==================== 报表 ====================
-    async def daily_report(self, report_date: date, tenant_id: str = None) -> List[Dict]:
-        sql = """SELECT wr.report_date, wo.wo_no, wo.product_name, 
-                 SUM(wr.output_qty) as total_output, SUM(wr.scrap_qty) as total_scrap,
-                 SUM(wr.labor_hours) as total_hours,
-                 SUM(wr.machine_hours) as total_machine_hours
+    async def _last_op_by_route(self) -> dict:
+        """``{route_id: 末道工序 code}``。
+
+        ★ 口径必须与 ``ProductionService._last_operation_code`` **完全一致**
+          （``step_seq DESC, id DESC`` 取第一条）。两处各写一套，就会出现
+          "工单完工数是按 A 工序算的、日报完工数是按 B 工序算的"——
+          两个数字都"有出处"，但谁也对不上谁。
+
+        路线是低频主数据（几十条），全量拉一次在内存里归并，比在 SQL 里
+        做"每 route 取最大 step_seq"要稳：后者要么用相关子查询（PG 上代价
+        不可控），要么用 ``DISTINCT ON``（PG 专有，SQLite 直接语法错）。
+        """
+        rows = await self.query(
+            "SELECT rs.route_id AS route_id, o.code AS code "
+            "FROM route_steps rs JOIN operations o ON o.id = rs.operation_id "
+            "ORDER BY rs.route_id, rs.step_seq DESC, rs.id DESC")
+        out: dict = {}
+        for r in rows:
+            out.setdefault(r["route_id"], r["code"])
+        return out
+
+    async def _rollup_by_wo(self, rows, report_date=None):
+        """把"工单 × 工序"的报工行归并成"工单"粒度。
+
+        ★ 为什么不能直接 ``SUM(output_qty)``：报工是**逐工序**的，一张 21 道
+          工序的工单每道各报 15 台，``SUM`` 出来是 315 —— 同一批货被数了 21 次。
+          实测：定子 30 件 / 14 道工序，日报显示 410；整机 15 台显示 315；
+          当日全厂显示 1760，而实际完工 74。
+
+          ``total_output``（完工口径）只认路线**末道工序**；
+          ``wip_output``（工序流转量）保留全工序累计，供在制分析用。
+          两个数都在、各有名字，比"改小一个数"安全。
+        """
+        last = await self._last_op_by_route()
+        agg: dict = {}
+        for r in rows:
+            wo_id = r["work_order_id"]
+            a = agg.get(wo_id)
+            if a is None:
+                a = agg[wo_id] = {
+                    "report_date": report_date or r.get("report_date"),
+                    "wo_no": r.get("wo_no"),
+                    "product_name": r.get("product_name"),
+                    "total_output": 0,
+                    "wip_output": 0,
+                    "total_scrap": 0,
+                    "total_hours": 0.0,
+                    "total_machine_hours": 0.0,
+                }
+            out_qty = int(r.get("op_output") or 0)
+            a["wip_output"] += out_qty
+            finish = last.get(r.get("route_id"))
+            op = (r.get("operation_code") or "").strip() or None
+            # 无路线 / 报工没填工序码（"报整单"）→ 仍按完工计，别把简单场景算成 0
+            if finish is None or op is None or op == finish:
+                a["total_output"] += out_qty
+            a["total_scrap"] += int(r.get("op_scrap") or 0)
+            a["total_hours"] += float(r.get("op_labor") or 0)
+            a["total_machine_hours"] += float(r.get("op_machine") or 0)
+        return sorted(agg.values(), key=lambda x: str(x.get("wo_no") or ""))
+
+    async def _report_facts(self, date_where: str, params: dict, tenant_id=None):
+        """按「工单 × 工序」取报工事实行。"""
+        sql = f"""SELECT wr.work_order_id, wo.wo_no, wo.product_name, wo.route_id,
+                 wr.operation_code,
+                 SUM(wr.output_qty) AS op_output, SUM(wr.scrap_qty) AS op_scrap,
+                 SUM(wr.labor_hours) AS op_labor,
+                 SUM(wr.machine_hours) AS op_machine
                  FROM work_reports wr
                  JOIN work_orders wo ON wo.id = wr.work_order_id
-                 WHERE wr.report_date = :rdate AND wr.status = 'submitted'"""
-        params = {"rdate": report_date}
+                 WHERE {date_where} AND wr.status = 'submitted'"""
         if tenant_id:
             sql += " AND wr.tenant_id = :tid"
             params["tid"] = tenant_id
-        sql += " GROUP BY wr.report_date, wo.wo_no, wo.product_name ORDER BY wo.wo_no"
+        sql += (" GROUP BY wr.work_order_id, wo.wo_no, wo.product_name, "
+                "wo.route_id, wr.operation_code")
         return await self.query(sql, params)
+
+    async def daily_report(self, report_date: date, tenant_id: str = None) -> List[Dict]:
+        rows = await self._report_facts("wr.report_date = :rdate",
+                                        {"rdate": report_date}, tenant_id)
+        return await self._rollup_by_wo(rows, report_date)
 
     async def monthly_report(self, year: int, month: int, tenant_id: str = None) -> List[Dict]:
         """月度报工汇总。
@@ -169,21 +238,20 @@ class ProductionRepository(MultiTenantRepository):
         """
         start = date(year, month, 1)
         end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-        sql = """SELECT :month_label as month,
-                 COUNT(DISTINCT wr.work_order_id) as order_count,
-                 SUM(wr.output_qty) as total_output,
-                 SUM(wr.scrap_qty) as total_scrap,
-                 SUM(wr.labor_hours) as total_hours,
-                 SUM(wr.machine_hours) as total_machine_hours
-                 FROM work_reports wr
-                 WHERE wr.report_date >= :month_start AND wr.report_date < :month_end
-                   AND wr.status = 'submitted'"""
-        params = {"month_label": f"{year:04d}-{month:02d}",
-                  "month_start": start, "month_end": end}
-        if tenant_id:
-            sql += " AND wr.tenant_id = :tid"
-            params["tid"] = tenant_id
-        return await self.query(sql, params)
+        facts = await self._report_facts(
+            "wr.report_date >= :month_start AND wr.report_date < :month_end",
+            {"month_start": start, "month_end": end}, tenant_id)
+        per_wo = await self._rollup_by_wo(facts)
+        return [{
+            "month": f"{year:04d}-{month:02d}",
+            "order_count": len(per_wo),
+            "total_output": sum(r["total_output"] for r in per_wo),
+            "wip_output": sum(r["wip_output"] for r in per_wo),
+            "total_scrap": sum(r["total_scrap"] for r in per_wo),
+            "total_hours": sum(r["total_hours"] for r in per_wo),
+            "total_machine_hours": sum(r["total_machine_hours"] for r in per_wo),
+            "rows": per_wo,
+        }]
 
 
 # ── 已删除：production_repo.RouteStepRepository ──────────────────────
