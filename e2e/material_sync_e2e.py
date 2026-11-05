@@ -101,6 +101,14 @@ def main():
                       "X-Tenant-Id": TENANT})
     print(f"登录成功 tenant={TENANT}\n")
 
+    # ★ TENANT 是**租户编码**（AH-THR），接口返回的 tenant_id 是 t_xxxxxxxxxxxx。
+    #   两个字段不是一个东西，拿 code 去比 tenant_id 永远不相等 ——
+    #   原写法 `tid in (None, TENANT)` 因此恒红。基准取登录人自己的 tenant_id。
+    r_me = c.get(f"{API}/auth/me")
+    TENANT_TID = ((r_me.json().get("data") or {}).get("tenant_id")
+                  if r_me.status_code == 200 else None)
+    print(f"本租户 tenant_id={TENANT_TID}\n")
+
     tag = datetime.now().strftime("%m%d%H%M%S")
     code_a = f"PRO-MS-A-{tag}"
     code_b = f"PRO-MS-B-{tag}"
@@ -179,7 +187,8 @@ def main():
     # 跨租户不可见由接口租户过滤保证，这里断言"取回的这一行归属本租户"。
     tid = rows[0].get("tenant_id") if rows else None
     check("M8 该档案归属本租户（接口无跨租户可见行）",
-          tid in (None, TENANT), f"tenant_id={tid}")
+          bool(TENANT_TID) and tid == TENANT_TID,
+          f"tenant_id={tid} 期望={TENANT_TID}")
 
     # ── M9 编码冲突不覆盖既有物料 ──
     print("── M9 已有同编码物料不被覆盖 ──")

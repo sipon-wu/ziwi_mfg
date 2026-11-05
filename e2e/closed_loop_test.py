@@ -8,7 +8,10 @@ import httpx as requests
 
 BASE = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1").rstrip("/")
 TENANT = "AH-THR"
-PW = "test123456"
+# 账号口令走环境变量：原写死的是演示租户 `test_admin`，2026-11-05
+# 单租户收敛删掉演示租户后该账号不存在，登录直接 401。
+USER = os.environ.get("E2E_USER", "mfg_admin")
+PW = os.environ.get("E2E_PWD", "admin123")
 TS = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 RND = uuid.uuid4().hex[:6]
 TAG = f"E2E_LOOP_{TS}_{RND}"
@@ -20,7 +23,7 @@ tok = None
 def login():
     global tok
     r = requests.post(f"{BASE}/auth/login",
-                      json={"username": "test_admin", "password": PW, "tenant_id": TENANT}, timeout=20)
+                      json={"username": USER, "password": PW, "tenant_id": TENANT}, timeout=20)
     r.raise_for_status()
     tok = r.json()["access_token"]
 login()
@@ -475,7 +478,7 @@ os.makedirs("deliverables", exist_ok=True)
 rep = f"deliverables/mfg1-deep-closeloop-test-{TS}.md"
 with open(rep, "w", encoding="utf-8") as f:
     f.write(f"# mfg1 深度业务闭环测试报告 ({TS})\n\n")
-    f.write(f"- TAG: `{TAG}`\n- 环境: {BASE}\n- 账号: test_admin / {TENANT}\n\n")
+    f.write(f"- TAG: `{TAG}`\n- 环境: {BASE}\n- 账号: {USER} / {TENANT}\n\n")
     f.write(f"## 结果概览\n\n")
     f.write(f"- 场景数: 4 (S1核心闭环 / S2 FIFO·LIFO / S3 BOM齐套 / S4 异常+看板)\n")
     f.write(f"- BUG 总数: {len(BUGS)}\n")

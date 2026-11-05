@@ -37,7 +37,10 @@ from datetime import datetime
 import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
-TENANT = os.environ.get("TENANT_CODE", "MFG1")
+# 租户**编码**（tenants.code），登录体里的 tenant_code 与 X-Tenant-Id 都用它。
+# 默认值原为 MFG1（演示租户），2026-11-05 单租户收敛后该租户已删除，
+# 库里只剩艾华 —— 留旧默认值会让 P9-3「租户列表能找到自己」恒红。
+TENANT = os.environ.get("TENANT_CODE", "AH-THR")
 USER = os.environ.get("ADMIN_USER", "mfg_admin")
 PWD = os.environ.get("ADMIN_PWD", "admin123")
 
@@ -120,8 +123,8 @@ def main() -> int:
     me = c.get(f"{API}/auth/me")
     me_obj = data(me) or {}
     me_id = me_obj.get("id")
-    # 平台里有两个"租户标识"：tenants.code（如 MFG1，登录用）和
-    # tenants.tenant_id（如 AH-THR，几乎所有 /tenants/{x} 路由用它）。
+    # 平台里有两个"租户标识"：tenants.code（如 AH-THR，登录用）和
+    # tenants.tenant_id（如 t_1692982c9cb7，几乎所有 /tenants/{x} 路由用它）。
     # 混用会得到一个干净的 404，看着像接口坏了。
     real_tid = me_obj.get("tenant_id") or TENANT
     print(f"当前用户 id={me_id} tenant_id={real_tid}")
@@ -496,7 +499,7 @@ def main() -> int:
     r = c.get(f"{API}/tenants/tenant/modules")
     mods = data(r) or {}
     enabled = mods.get("module_codes") if isinstance(mods, dict) else None
-    # 演示租户的 package_modules 是空的（没做模块授权），所以只断言"能读到列表"，
+    # 本租户的 package_modules 是空的（没做模块授权），所以只断言"能读到列表"，
     # 不断言非空 —— 那会把数据现状当成接口缺陷。
     report("P9-1 当前租户模块开关可读",
            r.status_code == 200 and isinstance(enabled, list),

@@ -18,18 +18,23 @@
 只看"有数据"证明不了任何事）：
 
     admin（ALL 范围）      → 基线
-    demo_ws1_leader（DEPT_CHILD @ 一号车间） → 必须严格小于基线
+    ah_dh（DEPT_CHILD @ 制造部） → 必须严格小于基线
+
+> 范围账号的历史：原用 `demo_ws1_leader`（演示租户一号车间主任）。2026-11-05
+> 单租户收敛删掉演示租户后它跟着没了，改用艾华场景账号 `ah_dh`
+> （`department_head`，scope=DEPT_CHILD，org=制造部 id=2）—— 同样是
+> "部门级、非公司根"的账号，差分验证的前提不变。
 
 ## 断言清单
 
     S1  两个账号都能登录，范围解析符合预期
-    S2  ws1 主任在报工/库存流水列表上看到 0 条（存量数据都在公司根节点）
-    S3  ws1 主任建工单 → 下达 → 报工，报工行 org_id 落一号车间（不是 NULL）
-    S4  ws1 主任看报工列表 = 1 条（只有他自己那条）→ **过滤生效**
+    S2  ah_dh 在报工/库存流水列表上看到 0 条（存量数据都在公司根节点）
+    S3  ah_dh 建工单 → 下达 → 报工，报工行 org_id 落制造部（不是 NULL）
+    S4  ah_dh 看报工列表 = 1 条（只有他自己那条）→ **过滤生效**
     S5  admin 看报工列表 = 基线 + 1 → **没误伤**
-    S6  ws1 主任读根节点检验单的明细 → 空；admin 读同一张 → 非空
+    S6  ah_dh 读根节点检验单的明细 → 空；admin 读同一张 → 非空
         （inspection_result 继承父单组织，子表不能比父单更宽）
-    S7  ws1 主任看不到自己建的工单以外的东西：工单列表也严格小于 admin
+    S7  ah_dh 看不到自己建的工单以外的东西：工单列表也严格小于 admin
 """
 import os
 import sys
@@ -40,8 +45,15 @@ import httpx
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
 TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 
-ADMIN = ("mfg_admin", "admin123")
-SCOPED = ("demo_ws1_leader", "admin123")
+# admin 必须是"看全厂"的账号（scope=ALL），否则基线不成立。
+# ⚠️ 不要换成 `ah_admin`：它是租户管理员，但 primary_org_id 为 NULL，
+#    自动开的单子 org_id 落 NULL，S6 就找不到可比对的根节点父单。
+ADMIN = (os.environ.get("E2E_ADMIN_USER", "mfg_admin"),
+         os.environ.get("E2E_ADMIN_PWD", "admin123"))
+# 范围账号必须是"部门级、且组织非空"的账号：org 为空 = 读侧过滤失效（fail-open），
+# 差分会被误判成"过滤没生效"。`ah_dh` = 部门负责人 / DEPT_CHILD / 制造部。
+SCOPED = (os.environ.get("E2E_SCOPED_USER", "ah_dh"),
+          os.environ.get("E2E_SCOPED_PWD", "Ah@2026seed"))
 
 PASS, FAIL = [], []
 
@@ -105,11 +117,11 @@ def main():
     me_admin, me_scoped = me(admin), me(scoped)
     check("S1 admin 登录成功", bool(me_admin.get("username")),
           f"username={me_admin.get('username')} org_id={me_admin.get('org_id')}")
-    check("S1 demo_ws1_leader 登录成功", bool(me_scoped.get("username")),
+    check("S1 部门账号 ah_dh 登录成功", bool(me_scoped.get("username")),
           f"username={me_scoped.get('username')} org_id={me_scoped.get('org_id')}")
     check("S1 演示账号挂在真实部门（不是公司根 1）",
           me_scoped.get("org_id") not in (None, 1),
-          f"org_id={me_scoped.get('org_id')}（应为 一号车间=2）")
+          f"org_id={me_scoped.get('org_id')}（应为 制造部=2）")
 
     # ── S2 基线：报工 / 库存流水 ──
     # 断言全部写成**相对基线**（scoped < admin、增量各 +1），不写死绝对值。
@@ -118,7 +130,7 @@ def main():
     base_reports = total_of(admin.get(f"{API}/work-reports", params={"page_size": 1}))
     scoped_reports = total_of(scoped.get(f"{API}/work-reports", params={"page_size": 1}))
     check("S2 admin 能看到报工（列表非空）", base_reports > 0, f"total={base_reports}")
-    check("S2 ws1 主任可见报工数严格小于 admin（数据范围生效）",
+    check("S2 部门账号可见报工数严格小于 admin（数据范围生效）",
           0 <= scoped_reports < base_reports,
           f"scoped={scoped_reports} < admin={base_reports}"
           f"（改造前两边都是 {base_reports}）")
@@ -126,7 +138,7 @@ def main():
     base_tx = total_of(admin.get(f"{API}/wms/inventory-transactions", params={"page_size": 1}))
     scoped_tx = total_of(scoped.get(f"{API}/wms/inventory-transactions", params={"page_size": 1}))
     check("S2 admin 能看到库存流水", base_tx > 0, f"total={base_tx}")
-    check("S2 ws1 主任可见库存流水数严格小于 admin", 0 <= scoped_tx < base_tx,
+    check("S2 部门账号可见库存流水数严格小于 admin", 0 <= scoped_tx < base_tx,
           f"scoped={scoped_tx} < admin={base_tx}")
 
     base_wo = total_of(admin.get(f"{API}/work-orders", params={"page_size": 1}))
@@ -134,8 +146,8 @@ def main():
     check("S2 工单（主表，改造前已过滤）同样严格小于 admin", scoped_wo < base_wo,
           f"scoped={scoped_wo} admin={base_wo}")
 
-    # ── S3 造数据：ws1 主任自己建工单 + 报工 ──
-    print("── S3 一号车间主任建单报工（验证写入归属）──")
+    # ── S3 造数据：部门账号自己建工单 + 报工 ──
+    print("── S3 部门负责人建单报工（验证写入归属）──")
     tag = datetime.now().strftime("%m%d%H%M%S")
     wo_no = f"WO-ORG-{tag}"
     r = scoped.post(f"{API}/work-orders", json={
@@ -143,7 +155,7 @@ def main():
         "product_name": f"组织归属验证件{tag}", "planned_qty": 10,
     })
     wo_id = data_of(r).get("id")
-    check("S3 ws1 主任能建工单", r.status_code == 200 and bool(wo_id),
+    check("S3 部门账号能建工单", r.status_code == 200 and bool(wo_id),
           f"HTTP {r.status_code} id={wo_id} {'' if wo_id else r.text[:160]}")
 
     report_ok = False
@@ -160,13 +172,13 @@ def main():
     print("── S4/S5 新增数据后重新差分（增量断言，可重复跑）──")
     scoped_after = total_of(scoped.get(f"{API}/work-reports", params={"page_size": 50}))
     admin_after = total_of(admin.get(f"{API}/work-reports", params={"page_size": 50}))
-    check("S4 ws1 主任的可见数恰好 +1（自己的报工看得见）",
+    check("S4 部门账号的可见数恰好 +1（自己的报工看得见）",
           scoped_after == scoped_reports + 1,
           f"{scoped_reports} → {scoped_after}（若为 0 增量说明写入没落 org_id）")
     check("S5 admin 的报工数恰好 +1（没有误伤）", admin_after == base_reports + 1,
           f"{base_reports} → {admin_after}")
 
-    # 直接回读接口确认落的是「一号车间」而不是 NULL/根节点。
+    # 直接回读接口确认落的是「制造部」而不是 NULL/根节点。
     # ★不能读本地 SQLite：探针打的是 staging（API_BASE=https://mfg1.ziwi.cn），
     #   报工行落在 staging 的 PostgreSQL 里，本地 sqlite 一行都没有 ——
     #   原写法让 org_id=[] 恒报"归属没生效"，把做对了的事显示成缺陷。
@@ -175,8 +187,8 @@ def main():
                        params={"work_order_id": wo_id, "page_size": 50})
         reps = (data_of(rr) or {}).get("items") or []
         orgs = [x.get("org_id") for x in reps]
-        # ★不能写死「一号车间=2」：组织 id 是各环境自增的，staging 上
-        #   一号车间不是 2。基准取报工人自己的 org_id（/auth/me），
+        # ★不能写死「制造部=2」：组织 id 是各环境自增的，别把 id 当常量。
+        #   基准取报工人自己的 org_id（/auth/me），
         #   断言"子表归属 = 报工人的组织"，这才是要验证的东西。
         want_org = me_scoped.get("org_id")
         check("S3 报工行 org_id 非 NULL（写入归属生效）",
@@ -229,7 +241,7 @@ def main():
         n_scoped = len(body(r_scoped).get("data") or []) if r_scoped.status_code == 200 else -1
         check("S6 admin 能读到该检验单明细", n_admin > 0,
               f"order={oid} ({target.get('order_no')}) 明细 {n_admin} 条")
-        check("S6 ws1 主任读同一张单的明细为空（不能比父单更宽）",
+        check("S6 部门账号读同一张单的明细为空（不能比父单更宽）",
               r_scoped.status_code in (403, 404) or n_scoped == 0,
               f"HTTP {r_scoped.status_code} 明细 {n_scoped} 条")
 

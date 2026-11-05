@@ -35,8 +35,16 @@ ADMIN_PWD = os.environ.get("AH_PWD", "Ah@2026seed")
 # 回归固定账号：名字**和口令都**沿用旧租户，只为让既有套件零改动。
 # ⚠️ 口令不能被"统一"成场景口令 —— 86 个 E2E/探针文件里写的就是这个值，
 #    改了它们会集体登录失败（且报错只显示"用户名或密码错误"）。
+#
+# ★ org 必须给，不能是 None（2026-11-05 全量回归实测）：
+#   写入归属（`_inject_org_owner`）取的是**登录人的 primary_org_id**。桥接账号
+#   没有组织 → 它建的工单/报工/NCR 全部落 org_id=NULL。于是
+#   `work_order_lifecycle_e2e` 的「S6 自动开的 NCR 带组织归属」永远红 ——
+#   而那恰恰是"部门负责人看不见自己家的不合格品"这个缺陷的回归锚点。
+#   挂根组织（AH）而不是某个部门：它是平台运维，代表公司口径，且存量数据
+#   本来就都在根节点（见 subtable_org_e2e 的扫描口径 org_id in (None, 1)）。
 BRIDGE = {"username": "mfg_admin", "real_name": "平台运维（回归固定账号）",
-          "role": "admin", "org": None,
+          "role": "admin", "org": "AH",
           "pwd": os.environ.get("E2E_PWD_BRIDGE", "admin123")}
 
 # 场景账号：一个角色一个人，够点得动流程即可，不铺开冗余账号。
@@ -128,7 +136,24 @@ def main() -> int:
                 err(f"{name}: 角色 {role_code} 不存在，跳过")
                 continue
             if name in existing:
-                ok(f"{name} 已存在 · id={existing[name]['id']} · 期望角色={role_code}")
+                # 已存在的账号也要校准组织归属：脚本第一版 BRIDGE["org"] 是 None，
+                # 老环境里的 mfg_admin 就一直是"无组织"状态，重跑不校准的话
+                # 上面那段注释描述的写入归属问题永远修不掉。
+                uid = existing[name]["id"]
+                want_org = orgs.get(spec.get("org") or "")
+                cur = None
+                rr = c.get(f"{API}/users/{uid}")
+                if rr.status_code == 200:
+                    d = rr.json().get("data") or rr.json()
+                    cur = d.get("primary_org_id") or d.get("org_id")
+                if want_org and cur != want_org:
+                    rp = c.put(f"{API}/users/{uid}", json={"org_id": want_org})
+                    if rp.status_code == 200:
+                        ok(f"{name} 组织已校准 {cur} → {want_org}（{spec.get('org')}）")
+                    else:
+                        err(f"{name}: 组织校准失败 HTTP {rp.status_code} {rp.text[:140]}")
+                else:
+                    ok(f"{name} 已存在 · id={uid} · 角色={role_code} · 组织={spec.get('org')}={cur}")
                 continue
             payload = {"username": name, "password": spec["pwd"],
                        "real_name": spec["real_name"], "role_ids": [role_id]}
