@@ -6,6 +6,7 @@ import { get, post } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,9 +29,7 @@ function statusTagOf(code: string): ReturnType<typeof useStatusTag> {
   return tag
 }
 
-const typeMap: Record<string, string> = {
-  purchase: '采购入库', '生产入库': '生产入库', '退货入库': '退货入库', transfer: '调拨入库',
-}
+// 入库类型 / 来源 走中央字典（receipt_type / doc_source），页面不再自建 typeMap。
 // 检验状态展示：口径与后端 normalize_inspection_status 一致
 function inspLabel(item: any) {
   const raw = item?.inspection_status
@@ -178,14 +177,14 @@ function canSubmitInspection(item: any) {
     <div v-else-if="order">
       <van-cell-group title="基本信息">
         <van-cell title="入库单号" :value="order.receipt_no" />
-        <van-cell title="入库类型" :value="typeMap[order.receipt_type] || order.receipt_type" />
+        <van-cell title="入库类型" :value="enumLabel('receipt_type', order.receipt_type)" />
         <van-cell title="状态">
           <span class="ziwi-state" :class="`ziwi-state--${statusTagOf(order.status).semantic.value}`">
             <van-icon :name="statusTagOf(order.status).icon.value" />
             {{ statusTagOf(order.status).label.value }}
           </span>
         </van-cell>
-        <van-cell v-if="order.source_type" title="来源类型" :value="order.source_type" />
+        <van-cell v-if="order.source_type" title="来源类型" :value="enumLabel('doc_source', order.source_type)" />
         <van-cell v-if="order.source_doc_no" title="来源单号" :value="order.source_doc_no" />
         <van-cell title="仓库" :value="order.warehouse_name || `ID: ${order.warehouse_id}`" />
         <van-cell v-if="order.supplier_id" title="供应商ID" :value="order.supplier_id" />

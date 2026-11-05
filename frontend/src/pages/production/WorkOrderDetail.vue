@@ -8,6 +8,7 @@ import { errCode, errMessage } from '@/utils/error'
 import type { WorkOrder } from '@/types'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiPrintButton from '@/components/ziwi/ZiwiPrintButton.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 const auth = useAuthStore()
 /** 工单全部动作（下达/开工/暂停/恢复/完工/关闭/作废）共用同一个执行权限 */
@@ -280,31 +281,10 @@ async function call(id: any, action: string, body?: any) {
 
 onMounted(fetch)
 
-const statusMap: Record<string, string> = {
-  draft: '草稿', released: '已下达', in_progress: '生产中',
-  paused: '已暂停', completed: '已完工', closed: '已关闭', cancelled: '已作废',
-}
+// 状态 / 齐套结论文案与配色统一走中央字典，页面不再自建 map 与配色函数。
+// 原来自建的那套把 `closed` 算成功色，与工单列表的中性色不一致。
 
-// 齐套结论用词：no_bom 不能说成"通过"，force_passed 要能一眼看出是硬着头皮下发的
-const checkStatusMap: Record<string, string> = {
-  pending: '未检查', passed: '齐套通过', failed: '缺料',
-  force_passed: '强制放行', no_bom: '未配置 BOM',
-}
 const checkStatus = computed(() => (order.value as any)?.material_check_status || 'pending')
-const checkTagType = computed(() => {
-  if (checkStatus.value === 'passed') return 'success'
-  if (checkStatus.value === 'failed') return 'danger'
-  if (checkStatus.value === 'force_passed') return 'warning'
-  return 'default'
-})
-
-const statusTagType = computed(() => {
-  const s = order.value?.wo_status
-  if (s === 'completed' || s === 'closed') return 'success'
-  if (s === 'cancelled') return 'default'
-  if (s === 'paused') return 'warning'
-  return 'primary'
-})
 
 function fmtTime(v?: string | null) {
   return v ? String(v).replace('T', ' ').slice(0, 19) : '—'
@@ -319,7 +299,7 @@ function fmtTime(v?: string | null) {
       <van-cell-group title="基本信息">
         <van-cell title="工单号" :value="order.wo_no" />
         <van-cell title="状态">
-          <van-tag :type="statusTagType">{{ statusMap[order.wo_status] || order.wo_status }}</van-tag>
+          <van-tag :type="statusTagOf('work_order', order.wo_status).tagType">{{ statusTagOf('work_order', order.wo_status).label }}</van-tag>
         </van-cell>
         <van-cell title="产品" :value="`${order.product_code} - ${order.product_name}`" />
         <van-cell title="计划 / 完成 / 报废"
@@ -327,7 +307,7 @@ function fmtTime(v?: string | null) {
         <van-cell title="实际开工" :value="fmtTime(order.actual_start_at)" />
         <van-cell title="实际完工" :value="fmtTime(order.actual_end_at)" />
         <van-cell title="齐套状态">
-          <van-tag :type="checkTagType">{{ checkStatusMap[checkStatus] || checkStatus }}</van-tag>
+          <van-tag :type="statusTagOf('kitting', checkStatus).tagType">{{ statusTagOf('kitting', checkStatus).label }}</van-tag>
         </van-cell>
       </van-cell-group>
 
@@ -370,7 +350,7 @@ function fmtTime(v?: string | null) {
       <van-cell-group title="状态日志">
         <van-cell
           v-for="log in statusLogs" :key="log.id"
-          :title="`${statusMap[log.from_status] || log.from_status} → ${statusMap[log.to_status] || log.to_status}`"
+          :title="`${statusTagOf('work_order', log.from_status).label} → ${statusTagOf('work_order', log.to_status).label}`"
           :label="`${log.created_at}${log.remark ? ' · ' + log.remark : ''}`" />
         <van-cell v-if="!statusLogs.length" title="暂无记录" />
       </van-cell-group>

@@ -8,6 +8,7 @@ import {
 } from '@/api/lab'
 import type { LabRequest } from '@/api/lab'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import { enumLabel } from '@/config/enums'
 
 const router = useRouter()
 const route = useRoute()
@@ -21,11 +22,8 @@ const statusLabels: Record<string, string> = {
   pending: '待接收', received: '已接收', assigned: '已分派',
   in_progress: '进行中', reviewing: '审核中', done: '已完成',
 }
-const typeLabels: Record<string, string> = {
-  mechanical: '力学性能', metallographic: '金相分析', chemical: '化学成分',
-  dimensional: '尺寸测量', environmental: '环境试验', physical: '物理性能',
-  aging: '老化试验', ndt: '无损检测', cleanliness: '洁净度', other: '其他',
-}
+// 委托类型 / 来源 / 实验结论 走中央字典（lab_request_type / doc_source / lab_conclusion），
+// 页面不再自建 typeLabels —— 它用的是「力学性能」，列表页用的是「力学」，同一个值两种叫法。
 
 const currentStep = computed(() => {
   if (!request.value) return 0
@@ -207,8 +205,8 @@ function showResultPass(is_pass: boolean | null): string {
       <!-- 基础信息 -->
       <van-cell-group title="基本信息">
         <van-cell title="标题" :value="request.title" />
-        <van-cell title="类型" :value="typeLabels[request.request_type] || request.request_type" />
-        <van-cell title="来源" :value="request.source_type || '-'" />
+        <van-cell title="类型" :value="enumLabel('lab_request_type', request.request_type)" />
+        <van-cell title="来源" :value="enumLabel('doc_source', request.source_type)" />
         <van-cell title="优先级" :value="request.priority" />
         <van-cell title="描述" :value="request.description || '-'" />
         <van-cell title="样品信息">{{ request.sample_info ? JSON.stringify(request.sample_info) : '-' }}</van-cell>
@@ -258,7 +256,7 @@ function showResultPass(is_pass: boolean | null): string {
         <van-cell v-if="!report" title="暂无报告" />
         <template v-if="report">
           <van-cell title="报告编号" :value="report.report_no" />
-          <van-cell title="结论" :value="report.conclusion" />
+          <van-cell title="结论" :value="enumLabel('lab_conclusion', report.conclusion)" />
           <van-cell title="摘要" :value="report.summary || '-'" />
           <van-cell title="发布时间" :value="report.published_at?.slice(0, 16) || '-'" />
         </template>

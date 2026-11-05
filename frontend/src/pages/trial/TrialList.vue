@@ -10,6 +10,8 @@ import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import { statusTagOf } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 const router = useRouter()
 const rawOrders = ref<TrialOrder[]>([])
@@ -62,15 +64,7 @@ const statusOptions = [
   { value: 'terminated', label: '已终止' },
 ]
 
-const statusMap: Record<string, string> = {
-  planning: '规划', lab_trial: '小试', pilot_run: '中试',
-  batch_verify: '小批量验证', review: '评审', production: '转量产', terminated: '已终止',
-}
-
-const typeMap: Record<string, string> = {
-  new_product: '新产品', new_process: '新工艺', new_material: '新材料',
-  eco_verification: '工程变更', tooling_trial: '模具/工装',
-}
+// 阶段 / 试产类型 走中央字典（trial / trial_type），页面不再自建 map。
 
 async function fetch() {
   loading.value = true
@@ -98,7 +92,7 @@ async function handleAdvance(order: TrialOrder) {
   const next = skipStages[order.status]
   if (!next) { showToast('当前阶段无法推进'); return }
   try {
-    const msg = `${order.order_no}\n从 ${statusMap[order.status]} 推进到 ${statusMap[next]}？`
+    const msg = `${order.order_no}\n从 ${statusTagOf('trial', order.status).label} 推进到 ${statusTagOf('trial', next).label}？`
     await showConfirmDialog({ title: '阶段推进', message: msg })
     await advanceStage(order.id)
     showToast('推进成功')
@@ -187,11 +181,11 @@ function formatStageActions(status: string): string[] {
         <template #title>
           <span style="font-weight: bold">{{ item.order_no }}</span>
           <van-tag :type="item.status === 'production' ? 'success' : item.status === 'terminated' ? 'danger' : 'primary'" style="margin-left: 6px">
-            {{ statusMap[item.status] || item.status }}
+            {{ statusTagOf('trial', item.status).label }}
           </van-tag>
         </template>
         <template #label>
-          <div>{{ typeMap[item.trial_type] || item.trial_type }} | {{ item.product_name }}</div>
+          <div>{{ enumLabel('trial_type', item.trial_type) }} | {{ item.product_name }}</div>
           <div v-if="item.planned_qty">计划数量: {{ item.planned_qty }} | 已完成: {{ item.completed_qty }}</div>
           <div style="font-size: 12px; color: #999">创建: {{ item.created_at?.slice(0, 10) }}</div>
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />

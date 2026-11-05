@@ -137,6 +137,25 @@ export function resolveStatusLabel(domain: string, code: string | null | undefin
 }
 
 /**
+ * 列表渲染用的便捷组合：一次拿到「文案 + 图标 + 语义 + van-tag type」。
+ *
+ * 为什么要有它：`useStatusTag` 返回的是一堆 `ComputedRef`，在 `v-for` 里逐行
+ * 建 ref 既浪费又要 `.value`；而各页面自己写 `statusTagType(s)` 配色函数的结果是
+ * **同一套状态在不同页面颜色不一致**（工单列表把 `closed` 算成功色、详情页算中性色）。
+ * 这里把配色收敛成一份。
+ */
+export function statusTagOf(domain: string, code: string | null | undefined) {
+  const e = getStateEntry(domain, code)
+  return {
+    label: e.label,
+    icon: e.icon,
+    semantic: e.semantic,
+    tagType: SEMANTIC_TO_VANT[e.semantic],
+    className: `ziwi-state ziwi-state--${e.semantic}`,
+  }
+}
+
+/**
  * 某 domain 的全部状态码，用于筛选下拉。
  *
  * @param domain 字典域

@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import dayjs from 'dayjs'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 const router = useRouter()
 const reports = ref<WorkReport[]>([])
@@ -35,7 +36,7 @@ function goCreate() { router.push('/work-reports/create') }
         :title="`${item.wo_no || '#'+item.work_order_id}`"
         :label="`产出:${item.output_qty} | 工时:${item.labor_hours}h | ${dayjs(item.created_at).format('MM-DD HH:mm')}`">
         <template #value>
-          <van-tag :type="item.status === 'submitted' ? 'success' : 'warning'">{{ item.status }}</van-tag>
+          <van-tag :type="statusTagOf('work_report', item.status).tagType">{{ statusTagOf('work_report', item.status).label }}</van-tag>
         </template>
       </van-cell>
     </van-list>

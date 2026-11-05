@@ -11,6 +11,7 @@ import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 interface ReceiptOrder { id: number; receipt_no: string; receipt_type: string; status: string; warehouse_id: number; warehouse_name: string; total_qty: number; received_qty: number; stored_qty: number; source_doc_no: string; created_at: string }
 
@@ -58,7 +59,16 @@ function condText(c: SearchCondition) {
 }
 
 const statusOpts = [{ value: 'pending', label: '待收货' }, { value: 'inspecting', label: '待检' }, { value: 'partially_stored', label: '部分上架' }, { value: 'stored', label: '已完成' }, { value: 'cancelled', label: '已取消' }]
-const typeOpts = [{ value: 'purchase', label: '采购入库' }, { value: '生产入库', label: '生产入库' }, { value: '退货入库', label: '退货入库' }, { value: 'transfer', label: '调拨入库' }]
+const typeOpts = [
+  { value: 'purchase', label: '采购入库' },
+  { value: 'production', label: '生产入库' },
+  { value: '生产入库', label: '生产入库' },
+  { value: 'return', label: '退货入库' },
+  { value: '退货入库', label: '退货入库' },
+  { value: 'transfer', label: '调拨入库' },
+]
+// ★ 原来缺 `production`（库里有 88 张生产入库单都是这个值）→ 列表直接印英文原文。
+//   中英文两种历史值并存，选项必须两种都给，否则筛选和显示都会漏。
 
 
 const loadFailed = ref(false)
@@ -135,7 +145,7 @@ onMounted(loadData)
           </span>
         </template>
         <template #label>
-          <div>类型: {{ typeOpts.find(t => t.value === item.receipt_type)?.label || item.receipt_type }} | 仓库: {{ item.warehouse_name }}</div>
+          <div>类型: {{ enumLabel('receipt_type', item.receipt_type) }} | 仓库: {{ item.warehouse_name }}</div>
           <div>应收: {{ item.total_qty }} | 实收: {{ item.received_qty }} | 上架: {{ item.stored_qty }}</div>
           <div v-if="item.source_doc_no">来源: {{ item.source_doc_no }}</div>
           <div>创建: {{ item.created_at }}</div>

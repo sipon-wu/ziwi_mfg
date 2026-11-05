@@ -6,6 +6,8 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
+import { enumLabel, enumOptions } from '@/config/enums'
 
 // M30 不合格品评审（NCR）
 // 每次状态推进都会写入后端通用状态流水，轨迹可在「流转记录」中查看
@@ -14,20 +16,9 @@ const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = use
 const keyword = ref('')
 const statusFilter = ref('')
 
-const STATUS_MAP: Record<string, string> = {
-  open: '待评审',
-  reviewing: '评审中',
-  disposed: '已处置',
-  closed: '已关闭',
-  cancelled: '已作废',
-}
-const STATUS_TYPE: Record<string, string> = {
-  open: 'warning',
-  reviewing: 'primary',
-  disposed: 'primary',
-  closed: 'success',
-  cancelled: 'default',
-}
+// 状态 / 来源 / 处置方式统一走中央字典（config/statusDict.ts + config/enums.ts）。
+// 原来自建的 STATUS_MAP 少了 `in_progress`/`completed`/`verified` 三种后端声明值，
+// 而 `|| item.status` 兜底又让缺失的值直接印成英文 —— 两头都不对。
 const statusOptions = [
   { value: '', label: '全部' },
   { value: 'open', label: '待评审' },
@@ -36,14 +27,10 @@ const statusOptions = [
   { value: 'closed', label: '已关闭' },
 ]
 
-const DISPOSITION_MAP: Record<string, string> = {
-  return: '退货',
-  sorting: '挑选',
-  concession: '让步接收',
-  rework: '返工',
-  scrap: '报废',
-  claim: '索赔',
-}
+// 处置方式从字典推（后端值域：return/sorting/concession/rework/scrap/claim）。
+// ★ 这里原先是 `DISPOSITION_MAP` 本地常量，中文化改造删掉后模板仍在 v-for 它
+//   —— 不报错、不掉接口，只是**整块处置标签渲染成空白**，处置弹窗变成单选不了。
+const dispositionOptions = enumOptions('disposition')
 
 // 各状态允许的下一步（与后端 NCR_TRANSITIONS 一致）
 const NEXT_ACTIONS: Record<string, { to: string; label: string }[]> = {
@@ -215,14 +202,14 @@ function fmtTime(t: string) {
       <van-cell v-for="item in items" :key="item.id">
         <template #title>
           {{ item.ncr_no }}
-          <van-tag :type="STATUS_TYPE[item.status] || 'default'" style="margin-left:6px">
-            {{ STATUS_MAP[item.status] || item.status }}
+          <van-tag :type="statusTagOf('ncr', item.status).tagType" style="margin-left:6px">
+            {{ statusTagOf('ncr', item.status).label }}
           </van-tag>
         </template>
         <template #label>
-          <div>来源：{{ item.source_type }}<span v-if="item.source_no">（{{ item.source_no }}）</span></div>
+          <div>来源：{{ enumLabel('ncr_source', item.source_type) }}<span v-if="item.source_no">（{{ item.source_no }}）</span></div>
           <div v-if="item.defect_qty != null">不良数：{{ item.defect_qty }}</div>
-          <div v-if="item.disposition">处置：{{ DISPOSITION_MAP[item.disposition] || item.disposition }}</div>
+          <div v-if="item.disposition">处置：{{ enumLabel('disposition', item.disposition) }}</div>
           <div v-if="item.defect_desc" style="color:#888">{{ item.defect_desc }}</div>
           <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
             <van-button
@@ -282,10 +269,10 @@ function fmtTime(t: string) {
         <van-field label="处置方式">
           <template #input>
             <div>
-              <van-tag v-for="(label, key) in DISPOSITION_MAP" :key="key"
-                :type="disposeForm.disposition === key ? 'primary' : 'default'"
+              <van-tag v-for="opt in dispositionOptions" :key="opt.value"
+                :type="disposeForm.disposition === opt.value ? 'primary' : 'default'"
                 style="margin:0 6px 6px 0;cursor:pointer"
-                @click="disposeForm.disposition = key">{{ label }}</van-tag>
+                @click="disposeForm.disposition = opt.value">{{ opt.text }}</van-tag>
             </div>
           </template>
         </van-field>
@@ -304,7 +291,7 @@ function fmtTime(t: string) {
       object-name="流转记录"
     />
         <van-cell v-for="(t, i) in trail" :key="i"
-          :title="`${STATUS_MAP[t.to_status] || t.to_status}（${t.action || '-'}）`"
+          :title="`${statusTagOf('ncr', t.to_status).label}（${t.action || '-'}）`"
           :label="`${fmtTime(t.occurred_at)} · ${t.actor_name || '系统'}${t.reason ? ' · ' + t.reason : ''}`" />
       </div>
     </van-popup>

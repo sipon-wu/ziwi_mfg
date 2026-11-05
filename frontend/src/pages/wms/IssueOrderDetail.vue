@@ -21,6 +21,7 @@ import { get } from '@/api/client'
 import { formatQty, txt } from '@/config/uiText'
 import { TERM } from '@/config/term'
 import { getStateEntry } from '@/config/statusDict'
+import { enumLabel } from '@/config/enums'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import ZiwiActionBar from '@/components/ziwi/ZiwiActionBar.vue'
 import ZiwiCodeText from '@/components/ziwi/ZiwiCodeText.vue'
@@ -69,12 +70,6 @@ interface ScanPayload {
 const route = useRoute()
 const router = useRouter()
 
-const ISSUE_TYPE_MAP: Record<string, string> = {
-  production: '生产出库',
-  sales: '销售出库',
-  scrap: '报废出库',
-  transfer: '调拨出库',
-}
 
 const orderId = computed(() => Number(route.params.id))
 const order = ref<IssueOrder | null>(null)
@@ -170,7 +165,7 @@ onMounted(load)
         <dl class="iod-grid">
           <div class="iod-grid__row">
             <dt>出库类型</dt>
-            <dd>{{ ISSUE_TYPE_MAP[order.issue_type] || order.issue_type || '-' }}</dd>
+            <dd>{{ enumLabel('issue_type', order.issue_type) }}</dd>
           </div>
           <div class="iod-grid__row">
             <dt>{{ TERM.warehouse }}</dt>

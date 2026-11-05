@@ -7,6 +7,8 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 interface FmeaDocument {
   id: number
@@ -59,17 +61,7 @@ const statusOptions = [
   { value: 'revised', label: '修订中' },
 ]
 
-const statusMap: Record<string, string> = {
-  draft: '草稿',
-  published: '已发布',
-  revised: '修订中',
-}
-
-const typeLabelMap: Record<string, string> = {
-  dfmea: 'DFMEA',
-  pfmea: 'PFMEA',
-  efmea: 'EFMEA',
-}
+// 状态 / FMEA 类型 走中央字典（fmea 域 + fmea_type），页面不再自建 statusMap/typeLabelMap。
 
 /** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
 const pageState = computed<StateKind>(() => {
@@ -216,8 +208,8 @@ onMounted(loadData)
           <van-tag
             :type="item.status === 'published' ? 'success' : item.status === 'revised' ? 'warning' : 'default'"
             style="margin-left:6px"
-          >{{ statusMap[item.status] || item.status }}</van-tag>
-          <van-tag plain style="margin-left:4px">{{ typeLabelMap[item.fmea_type] || item.fmea_type }}</van-tag>
+          >{{ statusTagOf('fmea', item.status).label }}</van-tag>
+          <van-tag plain style="margin-left:4px">{{ enumLabel('fmea_type', item.fmea_type) }}</van-tag>
         </template>
         <template #label>
           <div>文档号: {{ item.doc_no }} | 版本: {{ item.version }}</div>

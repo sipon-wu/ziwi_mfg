@@ -3,6 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { get } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { getStateEntry } from '@/config/statusDict'
+import { enumLabel } from '@/config/enums'
 
 // 能耗分析：基础骨架 + 图表占位，数据接已有 energy API
 const devices = ref<any[]>([])
@@ -45,8 +47,8 @@ onMounted(load)
       <van-cell
         v-for="d in devices" :key="d.id"
         :title="d.device_name || '-'"
-        :label="(d.energy_type || '') + ' | ' + (d.device_type || '')"
-        :value="d.status"
+        :label="enumLabel('energy_type', d.energy_type) + ' | ' + enumLabel('energy_device_type', d.device_type)"
+        :value="getStateEntry('energy_device', d.status).label"
       />
     </van-cell-group>
     <ZiwiStateView

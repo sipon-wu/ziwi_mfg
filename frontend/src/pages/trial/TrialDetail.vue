@@ -6,6 +6,8 @@ import { getTrial, getTrialRoute, saveTrialRoute, getTrialBom, saveTrialBom, lis
 import type { TrialOrder, TrialRoute, TrialBom, TrialReview } from '@/api/trial'
 import { errMessage } from '@/utils/error'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,20 +23,9 @@ const loading = ref(false)
 const routeText = ref('')
 const bomText = ref('')
 
-const statusMap: Record<string, string> = {
-  planning: '规划', lab_trial: '小试', pilot_run: '中试',
-  batch_verify: '小批量验证', review: '评审', production: '转量产', terminated: '已终止',
-}
+// 阶段 / 试产类型 / 评审结论 走中央字典（trial / trial_type / trial_conclusion）。
+// 页面不再自建 map：原来详情页写「新产品试产」、列表页写「新产品」，同一个值两种叫法。
 const STAGE_ORDER = ['planning', 'lab_trial', 'pilot_run', 'batch_verify', 'review']
-const typeMap: Record<string, string> = {
-  new_product: '新产品试产', new_process: '新工艺试产', new_material: '新材料试产',
-  eco_verification: '工程变更验证', tooling_trial: '模具/工装验证',
-}
-
-const conclusionMap: Record<string, string> = {
-  pending: '待评审', approved: '通过', conditional_approve: '有条件通过',
-  terminated: '终止', adjust: '需调整',
-}
 
 const skipInfo = computed(() => {
   if (!order.value) return ''
@@ -91,7 +82,7 @@ async function handleAdvance() {
   const next = skipStages[order.value.status]
   if (!next) { showToast('当前阶段无法推进'); return }
   try {
-    await showConfirmDialog({ title: '阶段推进', message: `从 ${statusMap[order.value.status]} 推进到 ${statusMap[next]}？\n${skipInfo.value}` })
+    await showConfirmDialog({ title: '阶段推进', message: `从 ${statusTagOf('trial', order.value.status).label} 推进到 ${statusTagOf('trial', next).label}？\n${skipInfo.value}` })
     await advanceStage(order.value.id)
     showToast('推进成功')
     fetchAll()
@@ -133,7 +124,7 @@ async function handleSubmitReview() {
 async function handleReviewDecision(reviewId: number, conclusion: string) {
   if (!order.value) return
   try {
-    await showConfirmDialog({ title: '评审决策', message: `确定评审结论为「${conclusionMap[conclusion] || conclusion}」？` })
+    await showConfirmDialog({ title: '评审决策', message: `确定评审结论为「${enumLabel('trial_conclusion', conclusion)}」？` })
     await makeReviewDecision(order.value.id, reviewId, { conclusion })
     showToast('决策已提交')
     fetchAll()
@@ -204,10 +195,10 @@ async function handleTerminate() {
       <!-- 基本信息 -->
       <van-cell-group title="基本信息">
         <van-cell title="工单编号" :value="order.order_no" />
-        <van-cell title="试产类型" :value="typeMap[order.trial_type] || order.trial_type" />
+        <van-cell title="试产类型" :value="enumLabel('trial_type', order.trial_type)" />
         <van-cell title="当前阶段">
           <van-tag :type="order.status === 'production' ? 'success' : order.status === 'terminated' ? 'danger' : 'primary'" size="medium">
-            {{ statusMap[order.status] || order.status }}
+            {{ statusTagOf('trial', order.status).label }}
           </van-tag>
         </van-cell>
         <van-cell title="产品" :value="order.product_name" />
@@ -225,7 +216,7 @@ async function handleTerminate() {
       <div style="padding: 12px 16px">
         <van-space direction="vertical" fill>
           <van-button v-if="['planning', 'lab_trial', 'pilot_run', 'batch_verify'].includes(order.status)" v-perm="'M16:trial:execute'" block type="primary" @click="handleAdvance">
-            阶段推进 ({{ statusMap[order.status] }} → 下一阶段)
+            阶段推进 ({{ statusTagOf('trial', order.status).label }} → 下一阶段)
           </van-button>
           <van-button v-if="order.status === 'review'" v-perm="'M16:trial:execute'" block type="success" @click="handleConvert">
             一键转量产
@@ -260,15 +251,15 @@ async function handleTerminate() {
         <van-tab title="阶段推进">
           <div style="padding: 12px">
             <van-cell-group>
-              <van-cell title="当前阶段" :value="statusMap[order.status] || order.status" />
-              <van-cell title="试产类型" :value="typeMap[order.trial_type] || order.trial_type" />
+              <van-cell title="当前阶段" :value="statusTagOf('trial', order.status).label" />
+              <van-cell title="试产类型" :value="enumLabel('trial_type', order.trial_type)" />
             </van-cell-group>
             <div v-if="skipInfo" style="margin: 12px 0; padding: 8px; background: #fff8e1; border-radius: 4px; font-size: 13px; color: #795548">{{ skipInfo }}</div>
             <div style="margin-top: 12px">
               <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap">
                 <van-tag v-for="(s, i) in ['planning', 'lab_trial', 'pilot_run', 'batch_verify', 'review']" :key="s"
                   :type="order.status === s ? 'primary' : STAGE_ORDER.indexOf(s) < STAGE_ORDER.indexOf(order.status) ? 'success' : 'default'" size="medium">
-                  {{ statusMap[s] }}
+                  {{ statusTagOf('trial', s).label }}
                 </van-tag>
                 <span v-if="i < 4" style="color: #999">→</span>
               </div>
@@ -284,7 +275,7 @@ async function handleTerminate() {
               <template #title>
                 <span>评审 #{{ item.id }}</span>
                 <van-tag :type="item.conclusion === 'approved' ? 'success' : item.conclusion === 'terminated' ? 'danger' : item.conclusion === 'pending' ? 'warning' : 'default'" style="margin-left: 6px">
-                  {{ conclusionMap[item.conclusion] || item.conclusion }}
+                  {{ enumLabel('trial_conclusion', item.conclusion) }}
                 </van-tag>
               </template>
               <template #label>

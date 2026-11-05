@@ -9,6 +9,7 @@ import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 const router = useRouter()
 const rawOrders = ref<WorkOrder[]>([])
@@ -43,18 +44,8 @@ function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
 }
 
-const statusMap: Record<string, string> = {
-  draft: '草稿', released: '已下达', in_progress: '生产中',
-  paused: '已暂停', completed: '已完工', closed: '已关闭', cancelled: '已作废',
-}
-
-// 状态标签配色：与工单详情页保持同一套语义
-function statusTagType(s: string) {
-  if (s === 'completed' || s === 'closed') return 'success'
-  if (s === 'cancelled') return 'default'
-  if (s === 'paused') return 'warning'
-  return 'primary'
-}
+// 状态文案与配色统一走 statusDict + statusTagOf：页面不再自建 statusMap/statusTagType。
+// 原来这套本地映射把 `closed` 算成成功色，而详情页把 `closed` 算中性色 —— 同一状态两个颜色。
 
 async function fetch() {
   loading.value = true
@@ -106,7 +97,7 @@ function goCreate() { router.push('/work-orders/create') }
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #value>
-          <van-tag :type="statusTagType(item.wo_status)">{{ statusMap[item.wo_status] || item.wo_status }}</van-tag>
+          <van-tag :type="statusTagOf('work_order', item.wo_status).tagType">{{ statusTagOf('work_order', item.wo_status).label }}</van-tag>
           <div style="text-align:right;margin-top:4px">
             <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
           </div>

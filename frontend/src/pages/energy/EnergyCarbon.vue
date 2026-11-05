@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { get } from '@/api/client'
 import dayjs from 'dayjs'
+import { enumLabel } from '@/config/enums'
 
 // 碳管理：基础骨架 + 图表占位，数据接 /energy/carbon/accounting
 const startDate = ref(dayjs().startOf('month').format('YYYY-MM-DD'))
@@ -44,7 +45,7 @@ onMounted(load)
 
     <van-cell-group title="碳排放汇总">
       <van-cell title="总碳排放(吨 CO₂e)" :value="String(totalCo2)" />
-      <van-cell v-for="(b, i) in breakdown" :key="i" :title="b.energy_type" :value="`${b.total_emission} kg`" />
+      <van-cell v-for="(b, i) in breakdown" :key="i" :title="enumLabel('energy_type', b.energy_type)" :value="`${b.total_emission} kg`" />
     </van-cell-group>
 
     <van-cell-group title="碳管理" style="margin-top:12px;">

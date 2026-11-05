@@ -6,6 +6,7 @@ import { get, post, put } from '@/api/client'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 interface FmeaAction {
   id: number
@@ -57,12 +58,7 @@ const completeForm = ref({
 })
 const submitting = ref(false)
 
-const statusMap: Record<string, string> = {
-  open: '待处理',
-  in_progress: '进行中',
-  completed: '已完成',
-  closed: '已关闭',
-}
+// 状态文案/配色走中央字典（fmea_action），页面不再自建 statusMap。
 
 const loadFailed = ref(false)
 
@@ -199,7 +195,7 @@ onMounted(fetchData)
             <van-tag
               :type="action.status === 'completed' ? 'success' : action.status === 'in_progress' ? 'warning' : 'default'"
               style="margin-left:6px"
-            >{{ statusMap[action.status] || action.status }}</van-tag>
+            >{{ statusTagOf('fmea_action', action.status).label }}</van-tag>
           </template>
           <template #label>
             <div>关联FMEA项: {{ getItemLabel(action.item_id) }}</div>

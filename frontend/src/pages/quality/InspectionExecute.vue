@@ -37,6 +37,7 @@ import { get, post, put } from '@/api/client'
 import { txt, formatQty } from '@/config/uiText'
 import { TERM } from '@/config/term'
 import { getStateEntry } from '@/config/statusDict'
+import { enumLabel } from '@/config/enums'
 import { useSubmitLock } from '@/composables/useSubmitLock'
 import ZiwiActionBar from '@/components/ziwi/ZiwiActionBar.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
@@ -139,11 +140,6 @@ const loadFailed = ref(false)
 const loadErrorKind = ref<'network' | 'business'>('network')
 const loadErrorMessage = ref('')
 
-const ORDER_TYPE_MAP: Record<string, string> = {
-  first: '首件检验',
-  inspection: '过程检验',
-  spot_check: '抽检',
-}
 
 function errorKindOf(error: unknown): 'network' | 'business' {
   const hasResponse = Boolean((error as { response?: unknown })?.response)
@@ -613,7 +609,7 @@ onMounted(load)
     <template v-else>
       <!-- 单头摘要 -->
       <div v-if="order" class="exec-meta">
-        <span>{{ ORDER_TYPE_MAP[order.order_type] || order.order_type || '-' }}</span>
+        <span>{{ enumLabel('inspection_type', order.order_type) }}</span>
         <span v-if="order.lot_qty !== null">批量 {{ formatQty(order.lot_qty) }}</span>
         <span v-if="order.sample_qty !== null">抽样 {{ formatQty(order.sample_qty) }}</span>
         <span v-if="order.ac !== null && order.re !== null">Ac {{ order.ac }} / Re {{ order.re }}</span>

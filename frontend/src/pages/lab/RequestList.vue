@@ -10,6 +10,8 @@ import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
+import { getStateEntry } from '@/config/statusDict'
+import { enumLabel } from '@/config/enums'
 
 const router = useRouter()
 const rawRequests = ref<LabRequest[]>([])
@@ -74,20 +76,8 @@ const priorityOptions = [
   { value: 'low', text: '低' },
 ]
 
-const statusMap: Record<string, string> = {
-  pending: '待接收', received: '已接收', assigned: '已分派',
-  in_progress: '进行中', reviewing: '审核中', done: '已完成',
-}
-
-const typeMap: Record<string, string> = {
-  mechanical: '力学', metallographic: '金相', chemical: '化学',
-  dimensional: '尺寸', environmental: '环境', physical: '物理',
-  aging: '老化', ndt: '无损', cleanliness: '洁净度', other: '其他',
-}
-
-const priorityMap: Record<string, string> = {
-  high: '高', medium: '中', low: '低',
-}
+// 状态 / 委托类型 / 优先级 一律走中央字典（见 config/statusDict.ts 与 config/enums.ts），
+// 页面里不再自建 map —— 自建 map 的 `|| 原码` 兜底会把库里的脏值伪装成正常值。
 
 // 创建表单
 const showCreate = ref(false)
@@ -198,14 +188,14 @@ async function handleCreate() {
             :type="item.status === 'done' ? 'success' : item.status === 'pending' ? 'warning' : 'primary'"
             style="margin-left: 6px"
           >
-            {{ statusMap[item.status] || item.status }}
+            {{ getStateEntry('lab_request', item.status).label }}
           </van-tag>
           <van-tag v-if="item.priority === 'high'" type="danger" style="margin-left: 4px">高优</van-tag>
         </template>
         <template #label>
           <div>{{ item.title }}</div>
-          <div>{{ typeMap[item.request_type] || item.request_type }} | 优先级: {{ priorityMap[item.priority] || item.priority }}</div>
-          <div v-if="item.source_type">来源: {{ item.source_type }}</div>
+          <div>{{ enumLabel('lab_request_type', item.request_type) }} | 优先级: {{ enumLabel('priority', item.priority) }}</div>
+          <div v-if="item.source_type">来源: {{ enumLabel('doc_source', item.source_type) }}</div>
           <div style="font-size: 12px; color: #999">创建: {{ item.created_at?.slice(0, 10) }}</div>
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>

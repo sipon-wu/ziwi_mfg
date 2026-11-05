@@ -12,6 +12,7 @@ import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel, enumOptions } from '@/config/enums'
 
 const router = useRouter()
 const rawOrders = ref<any[]>([])
@@ -55,17 +56,12 @@ function condText(c: SearchCondition) {
 }
 
 // 后端 InspectionOrder 真实字段为 order_type（first/inspection/spot_check），无 status 字段
-const ORDER_TYPE_MAP: Record<string, string> = {
-  first: '首件检验',
-  inspection: '过程检验',
-  spot_check: '抽检',
-}
 
+// ★ 筛选项从字典推，别再手抄：手抄的那份漏了 `iqc/ipqc/fqc/oqc/trial`，
+//   后端一旦按这几种建单，筛选栏里就没有对应标签（点了等于筛不到）。
 const statusOptions = [
   { value: '', label: '全部' },
-  { value: 'first', label: '首件检验' },
-  { value: 'inspection', label: '过程检验' },
-  { value: 'spot_check', label: '抽检' },
+  ...enumOptions('inspection_type').map((o) => ({ value: o.value, label: o.text })),
 ]
 
 async function loadData() {
@@ -189,7 +185,7 @@ onMounted(loadData)
       >
         <template #title>{{ '检验单#' + item.id }}</template>
         <template #label>
-          {{ ORDER_TYPE_MAP[item.order_type] || item.order_type || '-' }}
+          {{ enumLabel('inspection_type', item.order_type) }}
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #right-icon>

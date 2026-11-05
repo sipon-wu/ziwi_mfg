@@ -11,30 +11,18 @@ import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import { getStateEntry } from '@/config/statusDict'
+import { enumLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 
 const router = useRouter()
 
-// 安灯状态下文映射（避免右侧暴露英文 code）
-const STATUS_MAP: Record<string, string> = {
-  pending: '待响应',
-  in_progress: '响应中',
-  resolved: '已解决',
-  escalated: '已升级',
-  acknowledged: '已确认',
-  cancelled: '已取消',
-}
-const CALLTYPE_MAP: Record<string, string> = {
-  safety: '安全',
-  quality: '质量',
-  equipment: '设备',
-  process: '工艺',
-  material: '物料',
-  delivery: '交付',
-  other: '其他',
-}
-
+// 安灯状态 / 呼叫类型统一走中央字典：
+//   - 状态用 `getStateEntry('andon_call', …)`（带语义色与图标，双编码）
+//   - 类型用 `enumLabel('call_type', …)`（纯文案）
+// 页面自建 map 是"改一处漏一处"的根源：原来这张 CALLTYPE_MAP 里有 `process`/`delivery`
+// 两个库里根本不存在的值，而库里真实存在的 `personnel` 反而没登记 —— 两边都不对。
 const rawCalls = ref<AndonCall[]>([])
 const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 
@@ -197,12 +185,12 @@ onMounted(() => {
         @click="goDetail(item.id)"
       >
         <template #label>
-          {{ item.source_desc || (CALLTYPE_MAP[item.call_type] || item.call_type) }}
+          {{ item.source_desc || enumLabel('call_type', item.call_type) }}
           <ListRowDetail v-if="expandedId === item.id" :item="item" :fields="cfg.rowDetailFields" />
         </template>
         <template #value>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-            <span>{{ STATUS_MAP[item.status] || item.status }}</span>
+            <span>{{ getStateEntry('andon_call', item.status).label }}</span>
             <van-button :icon="expandedId === item.id ? 'arrow-up' : 'arrow-down'" size="mini" plain @click.stop="toggleExpand(item.id)" />
           </div>
         </template>

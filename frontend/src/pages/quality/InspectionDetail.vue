@@ -5,6 +5,7 @@ import { get, post, put, errorText } from '@/api/client'
 import { showToast } from 'vant'
 import { useAuthStore } from '@/stores/auth'
 import { useStatusTag } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import ZiwiPrintButton from '@/components/ziwi/ZiwiPrintButton.vue'
 
@@ -20,11 +21,6 @@ const canEntry = computed(() =>
 
 // 对齐后端：order_type ∈ first/inspection/spot_check；
 // result ∈ ACC/REJ/UAI，**空 = 未判定**（C-79 起建单不再写 'pending' 占位）
-const ORDER_TYPE_MAP: Record<string, string> = {
-  first: '首件检验',
-  inspection: '过程检验',
-  spot_check: '抽检',
-}
 // 录入通道：同一个数，手抄 / 手机录 / 量具直采的可信度完全不同
 /** 状态标签：文案/图标/语义统一取自 config/statusDict.ts（UE §1.2 双编码） */
 const statusTagCache = new Map<string, ReturnType<typeof useStatusTag>>()
@@ -37,11 +33,6 @@ function statusTagOf(code: string): ReturnType<typeof useStatusTag> {
   return tag
 }
 
-const SOURCE_MAP: Record<string, string> = {
-  web: 'PC 录入',
-  miniapp: '小程序',
-  device: '设备直连',
-}
 
 const order = ref<any>(null)
 const loading = ref(false)
@@ -227,7 +218,7 @@ function goExecute() {
     <div style="padding:16px;">
       <van-cell-group title="检验单信息">
         <van-cell title="检验单号" :value="order.order_no || ('#' + order.id)" />
-        <van-cell title="检验类型" :value="ORDER_TYPE_MAP[order.order_type] || order.order_type || '-'" />
+        <van-cell title="检验类型" :value="enumLabel('inspection_type', order.order_type)" />
         <van-cell title="判定结果" :value="statusTagOf(order.result).label.value" />
         <van-cell v-if="order.ac != null" title="抽样方案"
           :value="`样本 ${order.sample_qty ?? '-'} · Ac ${order.ac} / Re ${order.re}`" />
@@ -243,7 +234,7 @@ function goExecute() {
         style="margin-top:12px;min-height:var(--ziwi-touch-min);"
         @click="goExecute"
       >
-        {{ ORDER_TYPE_MAP[order.order_type] || '检验' }}执行（逐项录数）
+        {{ enumLabel('inspection_type', order.order_type) }}执行（逐项录数）
       </van-button>
 
       <!-- 打印检验记录单：判定结果是终态，纸质件要交品质归档 -->
@@ -269,7 +260,7 @@ function goExecute() {
             <van-tag :type="r.result === 'FAIL' ? 'danger' : r.result === 'PASS' ? 'success' : 'default'">
               {{ r.result === 'FAIL' ? '不合格' : r.result === 'PASS' ? '合格' : '未判' }}
             </van-tag>
-            <van-tag plain>{{ SOURCE_MAP[r.source] || r.source || 'PC 录入' }}</van-tag>
+            <van-tag plain>{{ enumLabel('entry_source', r.source) }}</van-tag>
           </div>
           <div style="color:#646566;font-size:13px;margin-top:4px;">
             实测 {{ r.measured_value ?? '-' }}{{ r.unit || '' }}

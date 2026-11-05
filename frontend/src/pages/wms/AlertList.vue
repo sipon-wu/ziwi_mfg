@@ -5,6 +5,7 @@ import { get, post, errorText } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 interface Alert { id: number; alert_type: string; material_id: number; material_code: string; material_name: string; warehouse_name: string; current_qty: number; threshold_qty: number; status: string; alert_message: string; created_at: string }
 
@@ -24,7 +25,7 @@ const loading = ref(false)
 const status = ref('')
 const page = ref(1); const total = ref(0); const pageSize = 20
 
-const alertTypeLabel: Record<string, string> = { min_stock: '低于最低库存', max_stock: '超出最高库存', safety_stock: '低于安全库存', slow_moving: '呆滞物料', expiry: '即将过期' }
+// 预警类型文案走中央字典（alert_type），页面不再自建 alertTypeLabel。
 
 const loadFailed = ref(false)
 const loadErrorMessage = ref('')
@@ -92,7 +93,7 @@ onMounted(loadData)
             <van-icon :name="statusTagOf(item.status).icon.value" />
             {{ statusTagOf(item.status).label.value }}
           </span>
-          {{ alertTypeLabel[item.alert_type] || item.alert_type }}
+          {{ enumLabel('alert_type', item.alert_type) }}
         </template>
         <template #label>
           <div>物料: {{ item.material_code }} - {{ item.material_name }}</div>

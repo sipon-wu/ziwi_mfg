@@ -6,6 +6,7 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel, enumListLabel } from '@/config/enums'
 
 interface EscalationRule {
   id: number
@@ -165,7 +166,7 @@ onMounted(loadData)
         </template>
         <template #label>
           <div>级别 {{ item.level }} | 超时 {{ item.timeout_minutes }}分钟</div>
-          <div>类型: {{ item.call_type }} | 通道: {{ item.notify_channels }}</div>
+          <div>类型: {{ enumLabel('call_type', item.call_type) }} | 通道: {{ enumListLabel('notify_channel', item.notify_channels) }}</div>
           <div v-if="item.notify_role">通知角色: {{ item.notify_role }}</div>
         </template>
         <template #value>

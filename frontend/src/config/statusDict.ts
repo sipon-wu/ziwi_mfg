@@ -165,21 +165,155 @@ export const STATUS_DICT: Record<string, Record<string, StateEntry>> = {
   },
 
   // ── 生产 · 工单 ──
+  // ⚠️ `paused` 必须在这里：`WorkOrderList` / `WorkOrderDetail` 的本地 map 有它，
+  //    中央字典曾漏掉 —— 页面一旦改用中央字典，「已暂停」就会退化成英文 `paused`。
   work_order: {
     draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 50 },
     released: { label: '已下达', semantic: 'progress', icon: ICON.todo, order: 10, actionable: true },
     in_progress: { label: '生产中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    paused: { label: '已暂停', semantic: 'warning', icon: ICON.pause, order: 25, actionable: true },
     completed: { label: '已完工', semantic: 'success', icon: ICON.check, order: 30 },
+    closed: { label: '已关闭', semantic: 'neutral', icon: ICON.lock, order: 90 },
+    cancelled: { label: '已作废', semantic: 'danger', icon: ICON.close, order: 95 },
+  },
+
+  // ── 生产 · 齐套检查 ──
+  kitting: {
+    pending: { label: '未检查', semantic: 'neutral', icon: ICON.clock, order: 10, actionable: true },
+    passed: { label: '齐套通过', semantic: 'success', icon: ICON.check, order: 20 },
+    force_passed: { label: '强制放行', semantic: 'warning', icon: ICON.warning, order: 30, actionable: true },
+    failed: { label: '缺料', semantic: 'danger', icon: ICON.close, order: 5, actionable: true },
+    no_bom: { label: '未配置 BOM', semantic: 'neutral', icon: ICON.question, order: 40 },
+  },
+
+  // ── 生产 · 报工单 ──
+  work_report: {
+    draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 50 },
+    submitted: { label: '已提交', semantic: 'progress', icon: ICON.todo, order: 10, actionable: true },
+    approved: { label: '已审核', semantic: 'success', icon: ICON.check, order: 20 },
+    rejected: { label: '已驳回', semantic: 'danger', icon: ICON.close, order: 30, actionable: true },
+  },
+
+  // ── 品质 · 不合格评审 NCR ──
+  // 后端模型注释写 `open/in_progress/completed/verified`，实际库里有
+  // `open/reviewing/disposed/closed/cancelled` —— 两套都收，避免任何一边露英文。
+  ncr: {
+    open: { label: '待评审', semantic: 'warning', icon: ICON.todo, order: 10, actionable: true },
+    reviewing: { label: '评审中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    in_progress: { label: '评审中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    disposed: { label: '已处置', semantic: 'progress', icon: ICON.check, order: 30 },
+    completed: { label: '已处置', semantic: 'progress', icon: ICON.check, order: 30 },
+    verified: { label: '已验证', semantic: 'success', icon: ICON.check, order: 40 },
+    closed: { label: '已关闭', semantic: 'neutral', icon: ICON.lock, order: 90 },
+    cancelled: { label: '已作废', semantic: 'danger', icon: ICON.close, order: 95 },
+  },
+
+  // ── 品质 · FMEA 文档 ──
+  fmea: {
+    draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 10, actionable: true },
+    published: { label: '已发布', semantic: 'success', icon: ICON.check, order: 20 },
+    revised: { label: '修订中', semantic: 'progress', icon: ICON.edit, order: 25, actionable: true },
+    active: { label: '已生效', semantic: 'success', icon: ICON.check, order: 20 },
+    obsolete: { label: '已作废', semantic: 'neutral', icon: ICON.close, order: 90 },
+    archived: { label: '已归档', semantic: 'neutral', icon: ICON.lock, order: 95 },
+  },
+
+  // ── 品质 · FMEA 整改措施 ──
+  fmea_action: {
+    open: { label: '待处理', semantic: 'warning', icon: ICON.todo, order: 10, actionable: true },
+    in_progress: { label: '进行中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    completed: { label: '已完成', semantic: 'success', icon: ICON.check, order: 30 },
+    closed: { label: '已关闭', semantic: 'neutral', icon: ICON.lock, order: 90 },
+  },
+
+  // ── 品质 · 控制计划 ──
+  control_plan: {
+    draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 10, actionable: true },
+    published: { label: '已发布', semantic: 'success', icon: ICON.check, order: 20 },
+    revising: { label: '修订中', semantic: 'progress', icon: ICON.edit, order: 25, actionable: true },
+    active: { label: '已启用', semantic: 'success', icon: ICON.check, order: 20 },
+    archived: { label: '已归档', semantic: 'neutral', icon: ICON.lock, order: 90 },
+  },
+
+  // ── 品质 · PPAP 提交 ──
+  ppap_submission: {
+    draft: { label: '草稿', semantic: 'neutral', icon: ICON.edit, order: 10, actionable: true },
+    submitted: { label: '已提交', semantic: 'progress', icon: ICON.todo, order: 20 },
+    pending: { label: '待批准', semantic: 'warning', icon: ICON.clock, order: 25, actionable: true },
+    approved: { label: '已批准', semantic: 'success', icon: ICON.check, order: 30 },
+    conditional: { label: '有条件批准', semantic: 'warning', icon: ICON.warning, order: 35, actionable: true },
+    rejected: { label: '已拒绝', semantic: 'danger', icon: ICON.close, order: 5, actionable: true },
+  },
+
+  // ── 品质 · PPAP 要素（逐项的提交状态）──
+  // 后端模型声明 not_started/in_progress/completed/not_applicable，
+  // 而页面按 upload 语义写了 pending/completed 两个值 —— 并集都收。
+  ppap_element: {
+    not_started: { label: '未开始', semantic: 'neutral', icon: ICON.clock, order: 10, actionable: true },
+    pending: { label: '待处理', semantic: 'warning', icon: ICON.todo, order: 10, actionable: true },
+    in_progress: { label: '进行中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    completed: { label: '已上传', semantic: 'success', icon: ICON.check, order: 30 },
+    rejected: { label: '已退回', semantic: 'danger', icon: ICON.close, order: 5, actionable: true },
+    not_applicable: { label: '不适用', semantic: 'neutral', icon: ICON.question, order: 40 },
+  },
+
+  // ── 试产单 ──
+  trial: {
+    planning: { label: '规划', semantic: 'neutral', icon: ICON.edit, order: 10, actionable: true },
+    lab_trial: { label: '小试', semantic: 'progress', icon: ICON.clock, order: 20, actionable: true },
+    pilot_run: { label: '中试', semantic: 'progress', icon: ICON.play, order: 30, actionable: true },
+    batch_verify: { label: '小批量验证', semantic: 'progress', icon: ICON.play, order: 40, actionable: true },
+    review: { label: '评审', semantic: 'warning', icon: ICON.todo, order: 50, actionable: true },
+    production: { label: '转量产', semantic: 'success', icon: ICON.check, order: 60 },
+    terminated: { label: '已终止', semantic: 'danger', icon: ICON.close, order: 90 },
+  },
+
+  // ── 安灯呼叫 ──
+  andon_call: {
+    pending: { label: '待响应', semantic: 'warning', icon: ICON.todo, order: 10, actionable: true },
+    // ★ `open`/`responding` 是**库里真实存在**而模型注释里没有的值（各 3 条 / 1 条）。
+    //   早期字典照注释只抄了 acknowledged/in_progress，于是这 4 条安灯在界面上
+    //   显示「未知（open）」—— 数据没错，是字典漏了。以库为准补齐。
+    open: { label: '待处理', semantic: 'warning', icon: ICON.todo, order: 15, actionable: true },
+    acknowledged: { label: '已确认', semantic: 'progress', icon: ICON.info, order: 20, actionable: true },
+    in_progress: { label: '响应中', semantic: 'progress', icon: ICON.play, order: 30, actionable: true },
+    responding: { label: '响应中', semantic: 'progress', icon: ICON.play, order: 30, actionable: true },
+    escalated: { label: '已升级', semantic: 'danger', icon: ICON.bolt, order: 35, actionable: true },
+    resolved: { label: '已解决', semantic: 'success', icon: ICON.check, order: 50 },
     closed: { label: '已关闭', semantic: 'neutral', icon: ICON.lock, order: 90 },
     cancelled: { label: '已取消', semantic: 'danger', icon: ICON.close, order: 95 },
   },
+
+  // ── 能碳 · 计量设备（M11）──
+  energy_device: {
+    online: { label: '在线', semantic: 'success', icon: ICON.check, order: 10 },
+    offline: { label: '离线', semantic: 'neutral', icon: ICON.pause, order: 20 },
+    fault: { label: '故障', semantic: 'danger', icon: ICON.bolt, order: 5, actionable: true },
+    upgrading: { label: '升级中', semantic: 'progress', icon: ICON.repair, order: 30 },
+  },
+
+  // ── 实验室委托单 ──
+  lab_request: {
+    pending: { label: '待接收', semantic: 'warning', icon: ICON.todo, order: 10, actionable: true },
+    received: { label: '已接收', semantic: 'progress', icon: ICON.info, order: 20, actionable: true },
+    assigned: { label: '已分派', semantic: 'progress', icon: ICON.cart, order: 30, actionable: true },
+    in_progress: { label: '进行中', semantic: 'progress', icon: ICON.play, order: 40, actionable: true },
+    reviewing: { label: '审核中', semantic: 'warning', icon: ICON.todo, order: 50, actionable: true },
+    done: { label: '已完成', semantic: 'success', icon: ICON.check, order: 60 },
+    completed: { label: '已完成', semantic: 'success', icon: ICON.check, order: 60 },
+    canceled: { label: '已取消', semantic: 'danger', icon: ICON.close, order: 90 },
+    cancelled: { label: '已取消', semantic: 'danger', icon: ICON.close, order: 90 },
+  },
 }
 
-/** 未知状态码的兜底记录：把原码原样显示出来（绝不吞掉信息） */
+/** 未知状态码的兜底记录：显式标出「未知（原码）」，绝不把脏值伪装成正常值 */
 export function fallbackEntry(code: string): StateEntry {
-  const raw = code === '' || code === null || code === undefined ? '未设置' : String(code)
+  const empty = code === '' || code === null || code === undefined
   return {
-    label: raw,
+    // ⚠️ 曾经这里直接回显原码，于是 `on_hold` 这种库里没有的脏值
+    //    在界面上看起来和 `生产中` 一样正常，谁也发现不了。
+    //    中文化检查的目标是"英文原码不该出现在界面上"，所以必须带「未知」前缀。
+    label: empty ? '未设置' : `未知（${String(code)}）`,
     semantic: 'neutral',
     icon: ICON.info,
     order: 999,

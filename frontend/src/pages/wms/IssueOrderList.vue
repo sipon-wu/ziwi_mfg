@@ -11,6 +11,7 @@ import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
+import { enumLabel } from '@/config/enums'
 
 interface IssueOrder { id: number; issue_no: string; issue_type: string; status: string; warehouse_id: number; warehouse_name: string; total_qty: number; issued_qty: number; recipient: string; source_doc_no: string; created_at: string }
 
@@ -58,7 +59,16 @@ function condText(c: SearchCondition) {
 }
 
 const statusOpts = [{ value: 'pending', label: '待出库' }, { value: 'picking', label: '拣货中' }, { value: 'partially_issued', label: '部分出库' }, { value: 'issued', label: '已完成' }, { value: 'cancelled', label: '已取消' }]
-const typeOpts = [{ value: 'production', label: '生产出库' }, { value: 'sales', label: '销售出库' }, { value: 'scrap', label: '报废出库' }, { value: 'transfer', label: '调拨出库' }]
+const typeOpts = [
+  { value: 'production', label: '生产领料' },
+  { value: 'return', label: '退料入库' },
+  { value: 'scrap', label: '报废出库' },
+  { value: 'transfer', label: '调拨出库' },
+  { value: '销售出库', label: '销售出库' },
+]
+// ★ 这里原来写的是 `sales` / 没有 `return` —— 与后端值域不符：
+//   库里出库单实际只有 production(201) / return(5)，`sales` 选了永远查不到数据，
+//   而 `return` 因为没有对应项，列表直接印英文原文。枚举项必须与后端值域对齐。
 
 
 const loadFailed = ref(false)
@@ -135,7 +145,7 @@ onMounted(loadData)
           </span>
         </template>
         <template #label>
-          <div>类型: {{ typeOpts.find(t => t.value === item.issue_type)?.label || item.issue_type }} | 仓库: {{ item.warehouse_name }}</div>
+          <div>类型: {{ enumLabel('issue_type', item.issue_type) }} | 仓库: {{ item.warehouse_name }}</div>
           <div>需求: {{ item.total_qty }} | 已发: {{ item.issued_qty }}</div>
           <div v-if="item.recipient">领料: {{ item.recipient }}</div>
           <div v-if="item.source_doc_no">来源: {{ item.source_doc_no }}</div>

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { get } from '@/api/client'
 import { showToast } from 'vant'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel } from '@/config/enums'
 
 interface ChartPoint {
   subgroup_no: number
@@ -262,7 +263,7 @@ onMounted(fetchData)
       <!-- 控制限信息 -->
       <van-cell-group v-if="limitInfo" title="控制限参数">
         <van-cell title="维度" :value="limitInfo.dimension_key" />
-        <van-cell title="图表类型" :value="limitInfo.chart_type" />
+        <van-cell title="图表类型" :value="enumLabel('chart_type', limitInfo.chart_type)" />
         <van-cell title="中心线(CL)" :value="limitInfo.cl.toFixed(3)" />
         <van-cell title="上控制限(UCL)" :value="limitInfo.ucl.toFixed(3)" />
         <van-cell title="下控制限(LCL)" :value="limitInfo.lcl.toFixed(3)" />

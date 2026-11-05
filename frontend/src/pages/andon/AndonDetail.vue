@@ -5,35 +5,11 @@ import { get, post, errorText } from '@/api/client'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import type { AndonCall } from '@/types'
+import { enumLabel } from '@/config/enums'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 const route = useRoute()
 const router = useRouter()
-
-const STATUS_MAP: Record<string, string> = {
-  pending: '待响应',
-  in_progress: '响应中',
-  resolved: '已解决',
-  escalated: '已升级',
-  acknowledged: '已确认',
-  cancelled: '已取消',
-}
-const CALLTYPE_MAP: Record<string, string> = {
-  safety: '安全',
-  quality: '质量',
-  equipment: '设备',
-  process: '工艺',
-  material: '物料',
-  delivery: '交付',
-  other: '其他',
-}
-const PRIORITY_MAP: Record<string, string> = {
-  P0: '紧急',
-  P1: '高',
-  high: '高',
-  urgent: '紧急',
-  normal: '普通',
-  low: '低',
-}
 
 const call = ref<AndonCall | null>(null)
 const loading = ref(false)
@@ -81,9 +57,9 @@ onMounted(fetch)
     <div style="padding:16px;">
       <van-cell-group title="呼叫信息">
         <van-cell title="呼叫编号" :value="call.call_no || '-'" />
-        <van-cell title="呼叫类型" :value="CALLTYPE_MAP[call.call_type] || call.call_type || '-'" />
-        <van-cell title="优先级" :value="PRIORITY_MAP[call.priority] || call.priority || '-'" />
-        <van-cell title="状态" :value="STATUS_MAP[call.status] || call.status || '-'" />
+        <van-cell title="呼叫类型" :value="enumLabel('call_type', call.call_type)" />
+        <van-cell title="优先级" :value="enumLabel('priority', call.priority)" />
+        <van-cell title="状态" :value="statusTagOf('andon_call', call.status).label" />
         <van-cell title="呼叫时间" :value="call.created_at || '-'" />
       </van-cell-group>
 

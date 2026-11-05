@@ -7,6 +7,7 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel } from '@/config/enums'
 
 interface ControlLimit {
   id: number
@@ -170,9 +171,9 @@ onMounted(loadData)
         <template #title>
           <span>{{ item.dimension_key }}</span>
           <van-tag style="margin-left:6px" :type="item.mode === 'auto' ? 'warning' : 'primary'">
-            {{ item.mode === 'auto' ? '自动' : '手动' }}
+            {{ enumLabel('mode', item.mode) }}
           </van-tag>
-          <van-tag style="margin-left:4px" plain>{{ item.chart_type }}</van-tag>
+          <van-tag style="margin-left:4px" plain>{{ enumLabel('chart_type', item.chart_type) }}</van-tag>
         </template>
         <template #label>
           <div>CL={{ item.cl.toFixed(2) }} UCL={{ item.ucl.toFixed(2) }} LCL={{ item.lcl.toFixed(2) }}</div>

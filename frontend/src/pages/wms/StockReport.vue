@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { get } from '@/api/client'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel } from '@/config/enums'
 
 interface SummaryRow { warehouse_id: number; warehouse_name: string; material_id: number; material_code: string; material_name: string; spec: string; unit: string; total_qty: number; total_locked_qty: number; available_qty: number }
 interface LocationRow { location_id: number; location_code: string; location_type: string; material_code: string; material_name: string; batch_no: string; quantity: number; locked_qty: number; available_qty: number; unit: string }
@@ -76,7 +77,7 @@ onMounted(() => { loadWarehouses(); loadReport() })
       v-if="pageState !== 'ready'"
       :state="pageState"
       object-name="库存汇总"
-      @retry="loadData"
+      @retry="loadReport"
     />
     </van-cell-group>
 
@@ -85,7 +86,7 @@ onMounted(() => { loadWarehouses(); loadReport() })
       <van-cell v-for="(row, i) in locationData" :key="i">
         <template #title>{{ row.location_code }} - {{ row.material_code }}</template>
         <template #label>
-          <div>物料: {{ row.material_name }} | 类型: {{ row.location_type }}</div>
+          <div>物料: {{ row.material_name }} | 类型: {{ enumLabel('location_type', row.location_type) }}</div>
           <div v-if="row.batch_no">批次: {{ row.batch_no }}</div>
         </template>
         <template #value>

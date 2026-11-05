@@ -6,6 +6,7 @@ import type { PaginatedResponse } from '@/types'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
+import { enumLabel } from '@/config/enums'
 
 interface Material { id: number; code: string; name: string; spec: string; unit: string; material_type: string; material_category: string; is_batch_managed: boolean; is_active: boolean }
 
@@ -102,7 +103,7 @@ onMounted(loadData)
         </template>
         <template #label>
           <div>编码: {{ item.code }} | 规格: {{ item.spec || '-' }} | 单位: {{ item.unit }}</div>
-          <div>类型: {{ typeOpts.find(t => t.value === item.material_type)?.label || item.material_type }} | 分类: {{ item.material_category || '-' }}</div>
+          <div>类型: {{ enumLabel('material_type', item.material_type) }} | 分类: {{ item.material_category || '-' }}</div>
         </template>
         <template #value>
           <van-button size="mini" plain type="primary" @click="openEdit(item)">编辑</van-button>

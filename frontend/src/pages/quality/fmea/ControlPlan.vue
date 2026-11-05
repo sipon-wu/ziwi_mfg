@@ -5,6 +5,7 @@ import { showToast } from 'vant'
 import { get, post, put } from '@/api/client'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 interface ControlPlanItem {
   id: number
@@ -47,11 +48,7 @@ const editForm = ref({
 const showEditDialog = ref(false)
 const submitting = ref(false)
 
-const statusMap: Record<string, string> = {
-  draft: '草稿',
-  active: '已启用',
-  archived: '已归档',
-}
+// 状态文案/配色走中央字典，页面不再自建 statusMap。
 
 const loadFailed = ref(false)
 
@@ -152,7 +149,7 @@ onMounted(fetchData)
             <van-tag
               :type="plan.status === 'active' ? 'success' : plan.status === 'archived' ? 'default' : 'warning'"
               style="margin-left:6px"
-            >{{ statusMap[plan.status] || plan.status }}</van-tag>
+            >{{ statusTagOf('control_plan', plan.status).label }}</van-tag>
             <van-tag v-if="plan.source === 'auto'" plain style="margin-left:4px" type="primary">自动生成</van-tag>
           </template>
           <template #label>

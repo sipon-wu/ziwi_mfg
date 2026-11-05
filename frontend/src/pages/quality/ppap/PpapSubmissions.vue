@@ -7,6 +7,7 @@ import type { PaginatedResponse } from '@/types'
 import { usePagination } from '@/composables/usePagination'
 import ZiwiFormSheet from '@/components/ziwi/ZiwiFormSheet.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { statusTagOf } from '@/composables/useStatusTag'
 
 interface PpapSubmission {
   id: number
@@ -83,13 +84,7 @@ const statusOptions = [
   { value: 'conditional', label: '有条件批准' },
 ]
 
-const statusMap: Record<string, string> = {
-  draft: '草稿',
-  submitted: '已提交',
-  approved: '已批准',
-  rejected: '已拒绝',
-  conditional: '有条件批准',
-}
+// 提交状态 / 要素状态 走中央字典（ppap_submission / ppap_element），页面不再自建 statusMap。
 
 /** 加载/空/失败三分（UE-09/12）：失败不再伪装成「暂无数据」 */
 const pageState = computed<StateKind>(() => {
@@ -214,7 +209,7 @@ onMounted(() => {
         <template #title>
           <span>{{ item.submission_no }}</span>
           <van-tag :type="item.status === 'approved' ? 'success' : item.status === 'rejected' ? 'danger' : 'primary'" style="margin-left:6px">
-            {{ statusMap[item.status] || item.status }}
+            {{ statusTagOf('ppap_submission', item.status).label }}
           </van-tag>
         </template>
         <template #label>
@@ -261,7 +256,7 @@ onMounted(() => {
             <van-cell title="提交编号" :value="selectedSubmission.submission_no" />
             <van-cell title="状态">
               <van-tag :type="selectedSubmission.status === 'approved' ? 'success' : selectedSubmission.status === 'rejected' ? 'danger' : 'primary'">
-                {{ statusMap[selectedSubmission.status] || selectedSubmission.status }}
+                {{ statusTagOf('ppap_submission', selectedSubmission.status).label }}
               </van-tag>
             </van-cell>
             <van-cell title="等级" :value="selectedSubmission.level_no + '级'" />
@@ -273,8 +268,8 @@ onMounted(() => {
               :title="it.element_name"
               :label="`编码: ${it.element_code}`">
               <template #value>
-                <van-tag :type="it.status === 'completed' ? 'success' : it.status === 'pending' ? 'warning' : 'default'">
-                  {{ it.status === 'completed' ? '已上传' : it.status === 'pending' ? '待处理' : it.status }}
+                <van-tag :type="statusTagOf('ppap_element', it.status).tagType">
+                  {{ statusTagOf('ppap_element', it.status).label }}
                 </van-tag>
               </template>
             </van-cell>
