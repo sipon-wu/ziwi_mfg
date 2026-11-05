@@ -22,7 +22,7 @@ import os
 import sys
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND_DIR = os.path.join(CODE_ROOT, "backend")
@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.database import Base, get_db  # noqa: E402
 from app.core.dependencies import get_current_user  # noqa: E402
 from app.main import app  # noqa: E402
+from app.core.business_time import business_now  # noqa: E402
 from app.models.copilot import (  # noqa: E402
     CopilotAskLog,
     CopilotDocChunk,
@@ -54,7 +55,6 @@ from app.models.user import UserOrganization, UserRole  # noqa: E402
 from app.models.andon import AndonCall  # noqa: E402
 from app.models.tpm import Equipment, MaintenancePlan, MaintenanceTask  # noqa: E402
 
-_TZ = timedelta(hours=8)
 _CURRENT_TENANT = {"id": "default"}
 _RESULTS: list = []
 
@@ -106,9 +106,11 @@ async def main() -> int:
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))
 
-    # 时间基准与服务端一致（MetricQueryService._today() = UTC+偏移 → 本地墙钟）：
-    # 用 timezone-aware 写法（utcnow() 在 Py3.12+ 已弃用），避免重复叠加时区。
-    today = (datetime.now(timezone.utc).replace(tzinfo=None) + _TZ).date()
+    # 时间基准与服务端**同源**（MetricQueryService._today() 就是 business_today()）：
+    # 直接调 business_now() 取 naive 值，不在探针里自己再算一份偏移 ——
+    # 曾经这里写死 timedelta(hours=8)，业务偏移一改，探针与实现就各走一套基准，
+    # 跑出来的红是假的、绿也是假的。
+    today = business_now().replace(tzinfo=None).date()
     yesterday = today - timedelta(days=1)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as s:
