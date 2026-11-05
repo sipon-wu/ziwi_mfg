@@ -289,10 +289,17 @@ cd /opt/ziwi/mfg && python3 scripts/validate_thruster_scenario.py
    **文案指向账号，真因在租户**。现在先按 tenant_id 匹配、再退化按 code 匹配；
    查不到返回 None、保留原值，既有 401 口径不变。
 2. **艾华建回归固定账号**：`scripts/migrate_regression_to_ah.py`（幂等）
-   账号沿用旧租户的 `mfg_admin`（挂 admin 角色）。有了它，86 个 E2E 文件的
-   账号口令一行都不用改，只换租户字段。
-   ⚠️ **没动口令**：`admin123` 同时是 `demo_ws1_leader` 等夹具账号的口令，
+   账号沿用旧租户的 `mfg_admin`（挂 admin 角色，无组织，与 `ah_admin` 同形）。
+   有了它，86 个 E2E 文件的账号口令一行都不用改，只换租户字段。
+   ⚠️ **桥接账号的口令必须保持原值**：套件里写的就是它，"统一成场景口令"
+   会让它们集体 401，而报错只显示「用户名或密码错误」。
+   ⚠️ **没动其他口令**：同一个口令还用于 `demo_ws1_leader` 等夹具账号，
    盲替换会连带打断它们。
+2b. **按生产场景补齐账号**（同脚本，幂等）：艾华 12 个角色里原先有三个只有角色
+   没有账号 —— 工艺工程师（路线/工序维护）、质量工程师（NCR 处置）、车间主任
+   （部门审批 + `DEPT_CHILD` 数据范围）。现补 `ah_pe`→`process_engineer`@制造部、
+   `ah_qe`→`quality_engineer`@质量部、`ah_dh`→`department_head`@制造部。
+   组织 id 经 `GET /organizations/tree` 现取，不写死。
 3. **租户字段切换**：54 个文件 `mfg_demo` → `AH-THR`，共 76 处。
    ⚠️ 用字节级替换（`read_bytes`/`write_bytes`），**不要用 `sed -i`** ——
    本仓 `e2e/run_all.py` 等是 CRLF，`sed -i` 会把整文件刷成 LF，实测一次
