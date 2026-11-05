@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { get } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import type { PaginatedResponse } from '@/types'
 import type { KpiState } from '@/types/search'
-import KpiCard from '@/components/KpiCard.vue'
+import CockpitKpi from './CockpitKpi.vue'
 import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 /**
  * 驾驶舱 · 模块概览
  *
- * 三条约束（都是踩过的坑）：
+ * 五条约束（都是踩过的坑）：
  * 1. **计数不能靠「拉一页再数」**。原来「未处理安灯」是 `page_size=100` 拉一页后
  *    客户端 filter —— 总量过百后数字被钉在 100 以内，看起来永远"刚好一百条"。
  *    一律用服务端的 `total` / 状态过滤，或专用聚合端点数。
@@ -18,6 +20,10 @@ import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
  *    其余照常出数。
  * 3. **能碳是独立产品线**（`dna` 实例），本系统只有只读概览 → 卡片上显著标注边界，
  *    否则会被当成"我们自己的功能没做完"。
+ * 4. **孤立数字没有信息量**。「在制 6」是大是小？必须给出分母（占比条）或异常语义
+ *    （逾期保养 > 0 才染红），否则看板退化成一张数字壁纸。
+ * 5. **入口要按权限藏**。没有 M04 权限的人点进"仓储"会直接撞 403 页，
+ *    比不给入口更糟。
  */
 
 interface KpiItem {
@@ -25,51 +31,110 @@ interface KpiItem {
   value: number | string | null
   state: KpiState
   unit?: string
-  note?: string
-  /** 计数来源说明（悬停/副标题用），便于核对口径 */
-  source?: string
+  /** 0..1，有分母才画占比条 */
+  ratio?: number | null
+  /** 占比条右侧文字，如 "6 / 10" */
+  ratioText?: string
+  /** 异常语义着色 */
+  severity?: 'normal' | 'warn' | 'danger'
+  /** 口径说明（悬停可见） */
+  hint?: string
 }
 interface ModuleInfo {
   name: string
   code: string
+  /** 进入模块的落点；外部产品线不填 */
+  to?: string
+  /** 进入前要校验的读权限 */
+  perm?: string
   /** 该模块是否为外部产品线（只读概览） */
   external?: boolean
   externalNote?: string
   kpis: KpiItem[]
 }
 
+const router = useRouter()
+const auth = useAuthStore()
+
 const loading = ref(true)
 const updatedAt = ref('')
+const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const todayLabel = `${dayjs().format('YYYY-MM-DD')} ${WEEK[dayjs().day()]}`
 
-const blank = (label: string, unit = ''): KpiItem =>
-  ({ label, value: null, state: 'loading', unit })
+const blank = (label: string, unit = '', hint?: string): KpiItem =>
+  ({ label, value: null, state: 'loading', unit, hint })
 
 const modules = ref<ModuleInfo[]>([
   {
-    name: '生产管理', code: 'M01',
-    kpis: [blank('工单'), blank('在制'), blank('今日完工', '件'), blank('报工单')],
+    name: '生产管理', code: 'M01', to: '/work-orders', perm: 'M01:work_order:read',
+    // ★ 这里刻意**只放 3 项**：模块卡里各 KPI 行数一致，8 张卡才能等高对齐。
+    //   「今日完工」不在这张卡里 —— 它在顶部「今日生产」摘要条里，口径说明也在那儿，
+    //   放两处只会让同一个数字有两种读法。
+    kpis: [
+      blank('工单', '', '工单总数（累计）'),
+      blank('在制', '', '已下达 + 生产中 + 已暂停'),
+      blank('报工单', '', '报工记录总数（累计）'),
+    ],
   },
   {
-    name: 'TPM 设备', code: 'M02',
-    kpis: [blank('设备'), blank('待保养'), blank('逾期保养')],
+    // ★ 编号沿用页面既有写法（M02 TPM 设备）。注意代码里设备权限码是
+    //   `M06:equipment:*`、而 router 里 M02 指的是 BOM —— 模块编号体系本身
+    //   存在两套，统一需要单独拍板，这里不顺手改。
+    name: 'TPM 设备', code: 'M02', to: '/equipment', perm: 'M06:equipment:read',
+    kpis: [
+      blank('设备', '', '设备台账总数'),
+      blank('待保养', '', '保养任务 status=pending'),
+      blank('逾期保养', '', '已过期未完成，> 0 需立即处理'),
+    ],
   },
   {
-    name: '品质管理', code: 'M03',
-    kpis: [blank('检验单'), blank('未结 NCR'), blank('今日报废', '件')],
+    name: '品质管理', code: 'M03', to: '/quality', perm: 'M03:inspection_order:read',
+    kpis: [
+      blank('检验单', '', '检验单总数（累计）'),
+      blank('未结 NCR', '', 'NCR 待评审 + 评审中，> 0 需闭环'),
+      blank('今日报废', '件', '报工报废件数'),
+    ],
   },
   {
-    name: '安灯系统', code: 'M05',
-    kpis: [blank('呼叫'), blank('未处理')],
+    name: '基础数据', code: 'M00', to: '/basics/products', perm: 'M00:product:read',
+    kpis: [
+      blank('产品', '', '产品主数据'),
+      blank('物料', '', '物料主数据（含原材料/半成品）'),
+      blank('工作中心', '', '车间/工位主数据'),
+    ],
+  },
+  {
+    name: '仓储管理', code: 'M04', to: '/wms/stock-query', perm: 'M04:wms_inventory:read',
+    kpis: [
+      blank('库存预警', '条', '未确认 + 已确认未解决，> 0 需处理'),
+      blank('入库单', '', '收货单总数（累计）'),
+      blank('出库单', '', '出库单总数（累计）'),
+    ],
+  },
+  {
+    name: '安灯系统', code: 'M05', to: '/andon', perm: 'M05:andon_call:read',
+    kpis: [
+      blank('呼叫', '', '安灯呼叫总数（累计）'),
+      blank('未处理', '', '不含已解决/已关闭/已取消'),
+    ],
   },
   {
     name: '能碳管理', code: 'M11',
     external: true,
     externalNote: '独立产品线（能碳实例），此处仅只读概览',
-    kpis: [blank('计量设备'), blank('碳排放', 't')],
+    kpis: [
+      blank('计量设备', '', '能碳实例的计量设备'),
+      blank('碳排放', 't', '首页排放记录合计，非全量'),
+      blank('用能告警', '条', '能碳实例的阈值告警'),
+    ],
   },
   {
-    name: '数据采集', code: 'M12',
-    kpis: [blank('数据源'), blank('采集记录'), blank('网关')],
+    name: '数据采集', code: 'M12', to: '/data-collection', perm: 'M12:collect_task:read',
+    kpis: [
+      blank('数据源', '', '已配置数据源'),
+      blank('采集记录', '', '采集记录总数'),
+      blank('网关', '', '已登记网关'),
+    ],
   },
 ])
 
@@ -81,7 +146,7 @@ function setKpi(code: string, idx: number, patch: Partial<KpiItem>) {
 /** 单个 KPI 的统一取数：成功记 real，异常记 unavailable（不冒泡） */
 async function feed(
   code: string, idx: number, fn: () => Promise<number | string>,
-  opts: { unit?: string; note?: string; source?: string } = {},
+  opts: { unit?: string } = {},
 ) {
   try {
     const v = await fn()
@@ -89,6 +154,26 @@ async function feed(
   } catch {
     setKpi(code, idx, { value: null, state: 'unavailable', ...opts })
   }
+}
+
+/** 已取到的真实数值；未接入/加载中返回 null（不做 0 处理，0 和"没取到"是两回事） */
+function num(code: string, idx: number): number | null {
+  const k = modules.value.find((x) => x.code === code)?.kpis[idx]
+  if (!k || k.state !== 'real') return null
+  const n = typeof k.value === 'number' ? k.value : Number(k.value)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 画占比条：分母 ≤ 0 或缺任一侧都不画（0/0 没有意义） */
+function withRatio(code: string, idx: number, part: number | null, whole: number | null) {
+  if (part == null || whole == null || whole <= 0) return
+  setKpi(code, idx, { ratio: part / whole, ratioText: `${part} / ${whole}` })
+}
+
+/** 异常着色：只有 > 0 才染色，正常态保持安静 */
+function withSeverity(code: string, idx: number, n: number | null, level: 'warn' | 'danger') {
+  if (n == null || n <= 0) return
+  setKpi(code, idx, { severity: level })
 }
 
 /** 分页接口只取 total，不拉数据行 */
@@ -105,61 +190,100 @@ async function totalByStatus(path: string, statuses: string[]) {
 
 const today = () => dayjs().format('YYYY-MM-DD')
 
+/** 今日摘要（一次性取自日报，M01/M03 的当日指标也复用这份，不重复请求） */
+const daily = ref<any>(null)
+const dailyState = ref<KpiState>('loading')
+
+const summary = computed(() => {
+  if (dailyState.value !== 'real' || !daily.value) return null
+  const out = Number(daily.value.total_output ?? 0)
+  const scrap = Number(daily.value.total_scrap ?? 0)
+  return {
+    out,
+    wip: Number(daily.value.total_wip_output ?? 0),
+    scrap,
+    hours: Number(daily.value.total_hours ?? 0),
+    /** 报废率分母取完工量；完工为 0 时不给率（0% 会误导成"质量很好"） */
+    scrapRate: out > 0 ? Math.round((scrap / out) * 1000) / 10 : null,
+  }
+})
+
 async function load() {
   loading.value = true
   const t = today()
 
+  // 日报只取一次
+  dailyState.value = 'loading'
+  daily.value = await get<any>('/reports/daily', { report_date: t }).catch(() => null)
+  dailyState.value = daily.value ? 'real' : 'unavailable'
+
+  const fromDaily = (key: string) => () => {
+    if (!daily.value) return Promise.reject(new Error('日报不可用'))
+    return Promise.resolve(Number(daily.value[key] ?? 0))
+  }
+
   // ── M01 生产管理 ──
-  await feed('M01', 0, () => total('/work-orders'), { source: '工单总数' })
+  await feed('M01', 0, () => total('/work-orders'))
   await feed('M01', 1, () =>
     // 在制 = 已下达 + 生产中 + 已暂停（草稿还没投产，不算在制）
-    totalByStatus('/work-orders', ['released', 'in_progress', 'paused']),
-  { source: '已下达 + 生产中 + 已暂停' })
-  await feed('M01', 2, async () => {
-    const r = await get<any>('/reports/daily', { report_date: t })
-    return r?.total_output ?? 0
-  }, { source: '完工口径（只认末道工序）' })
-  await feed('M01', 3, () => total('/work-reports'), { source: '报工单总数' })
+    totalByStatus('/work-orders', ['released', 'in_progress', 'paused']))
+  await feed('M01', 2, () => total('/work-reports'))
+  withRatio('M01', 1, num('M01', 1), num('M01', 0))
 
   // ── M02 TPM ──
-  await feed('M02', 0, () => total('/equipment'), { source: '设备台账' })
-  await feed('M02', 1, () => totalByStatus('/maintenance-tasks', ['pending']),
-    { source: '保养任务 status=pending' })
+  await feed('M02', 0, () => total('/equipment'))
+  await feed('M02', 1, () => totalByStatus('/maintenance-tasks', ['pending']))
   await feed('M02', 2, async () => {
     const list = await get<any[]>('/maintenance-tasks/overdue')
     return Array.isArray(list) ? list.length : 0
-  }, { source: '已过期未完成（含升级等级）' })
+  })
+  withRatio('M02', 2, num('M02', 2), num('M02', 1))
+  withSeverity('M02', 2, num('M02', 2), 'danger')
 
   // ── M03 品质 ──
-  await feed('M03', 0, () => total('/inspection-orders'), { source: '检验单总数' })
-  await feed('M03', 1, () => totalByStatus('/ncr', ['open', 'reviewing']),
-    { source: 'NCR 待评审 + 评审中' })
-  await feed('M03', 2, async () => {
-    const r = await get<any>('/reports/daily', { report_date: t })
-    return r?.total_scrap ?? 0
-  }, { source: '报工报废件数' })
+  await feed('M03', 0, () => total('/inspection-orders'))
+  await feed('M03', 1, () => totalByStatus('/ncr', ['open', 'reviewing']))
+  await feed('M03', 2, fromDaily('total_scrap'), { unit: '件' })
+  withSeverity('M03', 1, num('M03', 1), 'warn')
+
+  // ── M00 基础数据 ──
+  await feed('M00', 0, () => total('/products'))
+  // ★ 物料挂在 `/wms` 前缀下（`app/api/wms.py` 的 APIRouter prefix），
+  //   不是 `/materials` —— 少一段前缀就是干净 404，KPI 静静变成「未接入」。
+  await feed('M00', 1, () => total('/wms/materials'))
+  await feed('M00', 2, () => total('/work-centers'))
+
+  // ── M04 仓储（端点全在 /wms 前缀下）──
+  await feed('M04', 0, () =>
+    // 未闭环预警 = open（未确认）+ acknowledged（已确认未解决）
+    totalByStatus('/wms/inventory-alerts', ['open', 'acknowledged']))
+  await feed('M04', 1, () => total('/wms/receipt-orders'))
+  await feed('M04', 2, () => total('/wms/issue-orders'))
+  withSeverity('M04', 0, num('M04', 0), 'warn')
 
   // ── M05 安灯 ──
-  await feed('M05', 0, () => total('/andon/calls'), { source: '呼叫总数' })
+  await feed('M05', 0, () => total('/andon/calls'))
   await feed('M05', 1, () =>
     // 未处理 = 待响应/待处理/已确认/响应中/已升级（resolved/closed/cancelled 已终结）
     totalByStatus('/andon/calls',
-      ['pending', 'open', 'acknowledged', 'responding', 'in_progress', 'escalated']),
-  { source: '不含已解决/已关闭/已取消' })
+      ['pending', 'open', 'acknowledged', 'responding', 'in_progress', 'escalated']))
+  withRatio('M05', 1, num('M05', 1), num('M05', 0))
+  withSeverity('M05', 1, num('M05', 1), 'warn')
 
   // ── M11 能碳（外部产品线，失败即未接入，不重试）──
-  await feed('M11', 0, () => total('/energy/devices'), { source: '能碳实例计量设备' })
+  await feed('M11', 0, () => total('/energy/devices'))
   await feed('M11', 1, async () => {
     const r = await get<PaginatedResponse<any>>('/energy/carbon/emissions', { page_size: 100 })
     const items: any[] = r.items || []
     const sum = items.reduce((s, i) => s + Number(i.emission_amount || 0), 0)
     return Math.round(sum * 100) / 100
-  }, { source: '首页 100 条排放记录合计' })
+  }, { unit: 't' })
+  await feed('M11', 2, () => total('/energy/alerts'))
 
   // ── M12 数据采集 ──
-  await feed('M12', 0, () => total('/collect/data-sources'), { source: '数据源' })
-  await feed('M12', 1, () => total('/collect/records'), { source: '采集记录' })
-  await feed('M12', 2, () => total('/collect/gateways'), { source: '网关' })
+  await feed('M12', 0, () => total('/collect/data-sources'))
+  await feed('M12', 1, () => total('/collect/records'))
+  await feed('M12', 2, () => total('/collect/gateways'))
 
   updatedAt.value = dayjs().format('HH:mm:ss')
   loading.value = false
@@ -180,6 +304,20 @@ const coverage = computed(() =>
   kpiCount.value ? Math.round((realCount.value / kpiCount.value) * 100) : 0,
 )
 
+/**
+ * 卡片内列数：4 项排 2×2（排 3 列会落单一行只有 1 张，更难看），
+ * 其余按项数铺满、最多 3 列。
+ */
+const colsOf = (m: ModuleInfo) => (m.kpis.length === 4 ? 2 : Math.min(m.kpis.length, 3))
+
+/** 没权限不给入口：点进去撞 403 比不给更糟 */
+const canEnter = (m: ModuleInfo) =>
+  !!m.to && (auth.hasPerm(m.perm || '') || !auth.hasPermissionsLoaded)
+
+function enter(m: ModuleInfo) {
+  if (canEnter(m) && m.to) router.push(m.to)
+}
+
 onMounted(load)
 </script>
 
@@ -189,12 +327,59 @@ onMounted(load)
       <div>
         <h2 class="cockpit__title">驾驶舱 · 模块概览</h2>
         <div class="cockpit__sub">
-          KPI 接入 {{ realCount }}/{{ kpiCount }}（{{ coverage }}%）
-          <span v-if="updatedAt"> · 更新于 {{ updatedAt }}</span>
+          <span>{{ todayLabel }}</span>
+          <span class="cockpit__dot">·</span>
+          <span>KPI 接入 {{ realCount }}/{{ kpiCount }}（{{ coverage }}%）</span>
+          <span v-if="updatedAt" class="cockpit__dot">·</span>
+          <span v-if="updatedAt">数据时点 {{ updatedAt }}</span>
         </div>
       </div>
       <van-button size="small" plain type="primary" :loading="loading" @click="load">刷新</van-button>
     </div>
+
+    <!-- 今日摘要：把当日几个"经营级"数字串成一句话，避免在模块卡里东找西找 -->
+    <section class="today">
+      <div class="today__lead">
+        <span class="today__title">今日生产</span>
+        <span class="today__hint">完工口径 · 只认末道工序</span>
+      </div>
+      <div class="today__items">
+        <div class="today__item">
+          <span class="today__k">完工产出</span>
+          <span class="today__v">
+            {{ summary ? summary.out : '—' }}<i v-if="summary">件</i>
+          </span>
+        </div>
+        <div class="today__item">
+          <span class="today__k">工序流转</span>
+          <span class="today__v">
+            {{ summary ? summary.wip : '—' }}<i v-if="summary">件</i>
+          </span>
+        </div>
+        <div class="today__item">
+          <span class="today__k">报废</span>
+          <span class="today__v" :class="{ 'today__v--warn': summary && summary.scrap > 0 }">
+            {{ summary ? summary.scrap : '—' }}<i v-if="summary">件</i>
+          </span>
+        </div>
+        <div class="today__item">
+          <span class="today__k">报废率</span>
+          <span class="today__v">
+            {{ summary && summary.scrapRate !== null ? summary.scrapRate : '—'
+            }}<i v-if="summary && summary.scrapRate !== null">%</i>
+          </span>
+        </div>
+        <div class="today__item">
+          <span class="today__k">人工工时</span>
+          <span class="today__v">
+            {{ summary ? summary.hours : '—' }}<i v-if="summary">h</i>
+          </span>
+        </div>
+      </div>
+      <button type="button" class="today__more" @click="router.push('/reports')">
+        生产报表<van-icon name="arrow" />
+      </button>
+    </section>
 
     <ZiwiStateView
       v-if="!loading && !hasData"
@@ -204,93 +389,235 @@ onMounted(load)
       @retry="load"
     />
 
-    <van-row gutter="12">
-      <van-col span="12" v-for="mod in modules" :key="mod.code" class="cockpit__col">
-        <div class="cockpit__card">
-          <div class="cockpit__card-head">
-            <span class="cockpit__code">{{ mod.code }}</span>
-            <span class="cockpit__name">{{ mod.name }}</span>
-            <van-tag v-if="mod.external" type="warning" plain size="medium">外部</van-tag>
-          </div>
-          <div v-if="mod.externalNote" class="cockpit__card-note">{{ mod.externalNote }}</div>
-          <div
-            class="cockpit__kpis"
-            :style="{ gridTemplateColumns: `repeat(${mod.kpis.length === 3 ? 3 : 2}, minmax(0, 1fr))` }"
-          >
-            <KpiCard
-              v-for="(kpi, i) in mod.kpis"
-              :key="i"
-              :title="kpi.label"
-              :value="kpi.value"
-              :state="kpi.state"
-              :unit="kpi.unit"
-              :trend-label="kpi.note"
-            />
-          </div>
+    <div class="cockpit__grid">
+      <section v-for="mod in modules" :key="mod.code" class="mod">
+        <header
+          class="mod__head"
+          :class="{ 'mod__head--link': canEnter(mod) }"
+          @click="enter(mod)"
+        >
+          <span class="mod__code">{{ mod.code }}</span>
+          <span class="mod__name">{{ mod.name }}</span>
+          <van-tag v-if="mod.external" type="warning" plain size="medium">外部</van-tag>
+          <span v-if="canEnter(mod)" class="mod__enter">
+            进入<van-icon name="arrow" />
+          </span>
+        </header>
+        <p v-if="mod.externalNote" class="mod__note">{{ mod.externalNote }}</p>
+        <div
+          class="mod__kpis"
+          :style="{ gridTemplateColumns: `repeat(${colsOf(mod)}, minmax(0, 1fr))` }"
+        >
+          <CockpitKpi v-for="(kpi, i) in mod.kpis" :key="i" v-bind="kpi" />
         </div>
-      </van-col>
-    </van-row>
+      </section>
+    </div>
+
+    <footer class="cockpit__foot">
+      <p>
+        计数口径：<b>工单 / 报工 / 检验单 / 各类单据</b>为累计总量；
+        <b>今日完工 / 今日报废</b>取当日生产日报。完工只认工艺路线末道工序，
+        与「工序流转」不是同一口径，不可相加。
+      </p>
+      <p>
+        M11 能碳为独立产品线（能碳实例），本系统内仅只读概览，不参与本页交互。
+      </p>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.cockpit { padding: 16px; }
+.cockpit { padding: var(--ziwi-gap-lg); }
+
 .cockpit__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--ziwi-gap-md);
+  margin-bottom: var(--ziwi-gap-md);
 }
 .cockpit__title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--ziwi-font-size-xl);
   color: var(--ziwi-text-primary);
 }
 .cockpit__sub {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: var(--ziwi-gap-xs);
+  font-size: var(--ziwi-font-size-sm);
   color: var(--ziwi-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ziwi-gap-xs);
 }
-.cockpit__col { margin-bottom: 12px; }
-.cockpit__card {
-  background: var(--ziwi-bg-white, #fff);
-  border: 1px solid var(--ziwi-border-light, #ebedf0);
-  border-radius: var(--ziwi-radius-card, 8px);
-  padding: 12px;
-  height: 100%;
-}
-.cockpit__card-head {
+.cockpit__dot { color: var(--ziwi-text-placeholder); }
+
+/* ── 今日摘要条 ── */
+.today {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: var(--ziwi-gap-lg);
+  flex-wrap: wrap;
+  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg);
+  margin-bottom: var(--ziwi-gap-md);
+  background: var(--ziwi-bg-white);
+  border: 1px solid var(--ziwi-border-card);
+  border-radius: var(--ziwi-radius-card);
+  box-shadow: var(--ziwi-shadow-card);
 }
-.cockpit__code {
-  font-size: 11px;
+.today__lead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ziwi-gap-2xs);
+  flex: 0 0 auto;
+}
+.today__title {
+  font-size: var(--ziwi-font-size-lg);
   font-weight: 600;
-  color: var(--ziwi-primary);
-  background: var(--ziwi-primary-bg, #ecf5ff);
-  border-radius: 4px;
-  padding: 1px 5px;
-}
-.cockpit__name {
-  font-size: 14px;
-  font-weight: 500;
   color: var(--ziwi-text-primary);
 }
-.cockpit__card-note {
-  font-size: 11px;
+.today__hint {
+  font-size: var(--ziwi-font-size-xs);
   color: var(--ziwi-text-muted);
-  margin: -2px 0 8px;
 }
-.cockpit__kpis {
+.today__items {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--ziwi-gap-sm);
+}
+.today__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ziwi-gap-2xs);
+  min-width: 72px;
+  padding-left: var(--ziwi-gap-lg);
+  border-left: 1px solid var(--ziwi-border-light);
+}
+.today__item:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.today__k {
+  font-size: var(--ziwi-font-size-xs);
+  color: var(--ziwi-text-muted);
+}
+.today__v {
+  font-size: var(--ziwi-font-size-2xl);
+  font-weight: 700;
+  line-height: var(--ziwi-lineheight-tight);
+  color: var(--ziwi-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.today__v i {
+  font-style: normal;
+  font-size: var(--ziwi-font-size-sm);
+  font-weight: 400;
+  color: var(--ziwi-text-muted);
+  margin-left: 2px;
+}
+.today__v--warn { color: var(--ziwi-danger); }
+.today__more {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ziwi-gap-xs);
+  min-height: var(--ziwi-touch-min, 48px);
+  padding: 0 var(--ziwi-gap-md);
+  border: 1px solid var(--ziwi-border);
+  border-radius: var(--ziwi-radius-md);
+  background: transparent;
+  color: var(--ziwi-primary);
+  font-size: var(--ziwi-font-size-md);
+  cursor: pointer;
+}
+.today__more:hover { background: var(--ziwi-primary-bg); }
+
+/* ── 模块卡网格 ──
+   ★ 两种"看起来空"要分开治：
+   1. 旧写法 van-row/van-col 是**等高拉伸**：M11 只有 2 个 KPI，却被旁边的 M01
+      撑到同样高度，下半张卡整片留白 —— 空在卡片里面。
+   2. 只把 align-items 改成 start 又会出现新问题：同一行里短卡（M02）下方留出
+      一百多像素页面底色 —— 空在卡片外面。
+   最终取「行内等高 + 卡片竖向 flex」：卡等高，但 KPI 网格用 `flex:1` 吃掉余量，
+   空的地方落在 KPI 卡内部（有边框有节奏），页面不会出现裸露的空洞。
+   列宽 minmax(400px) 保证 1366 及以上是 2 列，窄屏自动收成 1 列。 */
+.cockpit__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  /* 同一模块内各卡等宽等高：否则 3 项时最后一张独占半行、卡片高度参差 */
-  grid-auto-rows: minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  align-items: stretch;
+  gap: var(--ziwi-gap-md);
 }
-/* 列数按项数定（见模板上的 gridTemplateColumns 内联样式）：
-   3 项就一行排满，不再"两张 + 半行空洞"；2/4 项走两列。 */
+
+.mod {
+  display: flex;
+  flex-direction: column;
+  background: var(--ziwi-bg-white);
+  border: 1px solid var(--ziwi-border-card);
+  border-radius: var(--ziwi-radius-card);
+  box-shadow: var(--ziwi-shadow-card);
+  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg) var(--ziwi-gap-lg);
+}
+
+.mod__head {
+  display: flex;
+  align-items: center;
+  gap: var(--ziwi-gap-sm);
+  min-height: var(--ziwi-touch-min, 48px);
+  margin-bottom: var(--ziwi-gap-sm);
+}
+.mod__head--link { cursor: pointer; }
+.mod__head--link:hover .mod__enter { color: var(--ziwi-primary); }
+.mod__code {
+  font-size: var(--ziwi-font-size-xs);
+  font-weight: 600;
+  color: var(--ziwi-primary);
+  background: var(--ziwi-primary-bg);
+  border-radius: var(--ziwi-radius-sm);
+  padding: 2px 6px;
+  flex: 0 0 auto;
+}
+.mod__name {
+  font-size: var(--ziwi-font-size-lg);
+  font-weight: 600;
+  color: var(--ziwi-text-primary);
+}
+.mod__enter {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ziwi-gap-2xs);
+  font-size: var(--ziwi-font-size-sm);
+  color: var(--ziwi-text-muted);
+  flex: 0 0 auto;
+}
+.mod__note {
+  margin: calc(-1 * var(--ziwi-gap-2xs)) 0 var(--ziwi-gap-sm);
+  font-size: var(--ziwi-font-size-xs);
+  color: var(--ziwi-text-muted);
+}
+
+.mod__kpis {
+  display: grid;
+  /* 吃掉卡片剩余高度：卡片被同行拉高时，空留在 KPI 卡内部而不是页面底色 */
+  flex: 1 1 auto;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--ziwi-gap-sm);
+}
+
+.cockpit__foot {
+  margin-top: var(--ziwi-gap-lg);
+  padding-top: var(--ziwi-gap-md);
+  border-top: 1px solid var(--ziwi-border-light);
+  font-size: var(--ziwi-font-size-xs);
+  color: var(--ziwi-text-muted);
+  line-height: var(--ziwi-lineheight-normal);
+}
+.cockpit__foot p { margin: 0 0 var(--ziwi-gap-2xs); }
+.cockpit__foot b { color: var(--ziwi-text-secondary); font-weight: 500; }
+
+@media (max-width: 720px) {
+  .cockpit__grid { grid-template-columns: 1fr; }
+  .today__items { gap: var(--ziwi-gap-lg); }
+}
 </style>
