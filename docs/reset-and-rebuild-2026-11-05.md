@@ -215,7 +215,7 @@ op_type=production      探针脏值
 
 ```bash
 # ① 建空库并在其上建表（123 张，与模型一一对应）
-docker exec -e DB_NAME=mfg_clean mfg1-backend python /app/_mkdb.py
+docker exec -e DB_NAME=mfg_clean mfg1-backend python /app/scripts/mkdb_create_all.py
 
 # ② 在新库上跑重建链（全部用 -e DB_NAME 指过去）
 docker exec -e DB_NAME=mfg_clean mfg1-backend python -m seeds.mfg1_seed
