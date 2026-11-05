@@ -470,6 +470,18 @@ OPERATIONS = [
     ("CW190", "入库终检与包装", "final_qc", 0, 10, "WC-AH-CW190"),
 ]
 
+# `route_steps.step_type` 的值域只有 production/inspect/outsource（models/basic_data.py），
+# 而工序的 `op_type` 是另一套 14 值域（core/enums.py）。两者不是一回事，必须显式映射。
+#
+# ⚠️ 原实现这里写死 `"step_type": "normal"` —— `normal` 不在值域内，于是 43 道工序
+#    全被标成"非生产、非检验"，前端按值域回显时只能印英文原文（2026-11-05 实测：
+#    `select step_type, count(*)` 得到 normal=43）。与 `op_type` 那次事故同一个形状：
+#    **值域没有单一真源，随手写一个"看起来像"的值**。
+#
+# 这里从 OPERATIONS **推导**而不是手写第二张表：工序清单改一次，映射自动跟上。
+STEP_TYPE = {code: ("inspect" if str(op_type).endswith("_qc") else "production")
+             for code, _n, op_type, _su, _ut, _wc in OPERATIONS}
+
 WORK_CENTERS = [
     ("WC-AH-CW010", "槽绝缘工位", "machining"),
     ("WC-AH-CW020", "绕线工位", "machining"),
@@ -733,7 +745,8 @@ def phase_p2(ctx: Ctx):
             if not oid:
                 continue
             steps.append({"route_id": rid, "operation_id": oid, "step_seq": i,
-                          "step_type": "normal", "wc_id": ctx.get("wc", wc),
+                          "step_type": STEP_TYPE.get(opcode, "production"),
+                          "wc_id": ctx.get("wc", wc),
                           "is_parallel_eligible": False, "is_outsource": False})
         r = ctx.c.put(f"{API}/routes/{rid}/steps", json=steps)
         if r.status_code in (200, 201):

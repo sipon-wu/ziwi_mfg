@@ -754,7 +754,11 @@ class TrialService:
                     "op": step["operation_id"],
                     "name": step.get("step_name") or step.get("name") or f"工序{idx}",
                     "seq": seq,
-                    "stype": step.get("step_type") or "normal",
+                    # 值域只有 production/inspect/outsource（见 models/basic_data.py）。
+                    # 原来兜底写的是 "normal" —— 不在值域内，试产路线复制正式路线时
+                    # 一旦源步骤缺 step_type 就会造出一批"非生产非检验"的脏步骤，
+                    # 前端按值域回显时会印出英文原文（与 op_type 那次同一个形状）。
+                    "stype": step.get("step_type") or "production",
                     "wc": step.get("wc_id"),
                     "outs": bool(step.get("is_outsource")),
                     "remark": step.get("remark"),
