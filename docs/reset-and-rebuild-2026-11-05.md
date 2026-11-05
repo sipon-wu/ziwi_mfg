@@ -105,11 +105,14 @@ $C python -m seeds.suppliers_seed
 # ⑦ 艾华推进器厂完整场景（走 HTTP API，需后端在线）
 cd backend && ./.venv/Scripts/python.exe ../scripts/seed_thruster_staging.py
 cd backend && ./.venv/Scripts/python.exe ../scripts/seed_thruster_supplement.py
+
+# ⑧ 回归固定账号（幂等；漏了这一步，E2E 套件登录不上艾华）
+cd backend && ./.venv/Scripts/python.exe ../scripts/migrate_regression_to_ah.py
 ```
 
 **为什么顺序不能换**：`seed_permissions` 要按"库里已有的租户 + 角色"授权，
 所以必须在 ① 之后；`mfg1_e2e_seed_data` 依赖 ③ 建的物料/工序；⑦ 走 HTTP，
-必须等后端连上重建后的库。
+必须等后端连上重建后的库；⑧ 依赖 ⑦ 建出来的租户与 admin 角色。
 
 ---
 
@@ -264,3 +267,49 @@ cd /opt/ziwi/mfg && python3 scripts/validate_thruster_scenario.py
 ② `completed_qty <= 计划量 × 1.01`（口径若退回旧行为，此条立刻红）。
 改后 `PASS 14 / FAIL 0 / GAP 1`。
 
+
+---
+
+## 8. 单租户收敛（用户要求：租户只留艾华）
+
+> 「租户为什么多个？租户不就一个吗，推进器厂。」「帐号角色根据生产场景需要创建就可以了」
+
+清库重建后库里有两个租户：`mfg_demo`（平台自带的演示/回归库）与 `AH-THR`
+（艾华推进器 A 厂 = 真正的交付对象）。目标是**只留艾华**。分两步做。
+
+### 8.1 第一步（已完成）：先切换，不删数据
+
+直接删 `mfg_demo` 会让整个回归失去基准（54 个 `e2e/`+`scripts/` 文件、86 个文件用
+`mfg_admin` 当登录身份）。所以先切换：
+
+1. **登录认租户编码**（`backend/app/api/auth.py` + `user_repo.resolve_login_tenant`）
+   `get_with_password` 是 `users.tenant_id = :x` 精确匹配，而 `tenants.tenant_id`
+   是服务端生成的 `t_xxxxxxxxxxxx`（每次重新开通都会变），客户手上只有编码
+   （`AH-THR`/`MFG1`）。只认 tenant_id 时，编码填对了也报「用户名或密码错误」——
+   **文案指向账号，真因在租户**。现在先按 tenant_id 匹配、再退化按 code 匹配；
+   查不到返回 None、保留原值，既有 401 口径不变。
+2. **艾华建回归固定账号**：`scripts/migrate_regression_to_ah.py`（幂等）
+   账号沿用旧租户的 `mfg_admin`（挂 admin 角色）。有了它，86 个 E2E 文件的
+   账号口令一行都不用改，只换租户字段。
+   ⚠️ **没动口令**：`admin123` 同时是 `demo_ws1_leader` 等夹具账号的口令，
+   盲替换会连带打断它们。
+3. **租户字段切换**：54 个文件 `mfg_demo` → `AH-THR`，共 76 处。
+   ⚠️ 用字节级替换（`read_bytes`/`write_bytes`），**不要用 `sed -i`** ——
+   本仓 `e2e/run_all.py` 等是 CRLF，`sed -i` 会把整文件刷成 LF，实测一次
+   造成 125 文件 / 4380 行伪 diff。
+
+验证：`pytest 1447 passed / 0 failed`；真实探针 `e2e/basic_data_edge_e2e.py`
+打 staging → `PASS 31 / FAIL 0`；`ah_admin@AH-THR` 与 `mfg_admin@AH-THR` 均能登录，
+归一后 `tenant_id=t_1692982c9cb7`。
+
+### 8.2 第二步（未做）：删租户
+
+**前置阻塞**：`scripts/probe_artifacts.py` 还没做。实测一个探针就会在艾华留下
+十几行带时间戳后缀的测试数据（`PA-1105111153` / `RT-E6-1105111153` /
+`M-BB1-1105111153` 等）。回收工具不做，删掉 `mfg_demo` 之后照样被造脏 ——
+等于白清两次。
+
+顺序：① 做完 `probe_artifacts.py` 并清掉已有探针残留 → ② 跑全量
+`e2e/run_all.py` 确认回归绿（此时若仍有探针造数，应在跑完立即回收）→
+③ 删除 `mfg_demo` 的租户行与全部业务数据 → ④ 从 `seeds/mfg1_seed.py`
+与 runbook 步骤 ①②③④ 里摘掉演示租户（否则下次重建又建回来）。
