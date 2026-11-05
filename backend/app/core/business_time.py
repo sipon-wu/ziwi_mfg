@@ -34,16 +34,30 @@ def business_tz() -> timezone:
     return timezone(timedelta(hours=int(get_settings().BUSINESS_UTC_OFFSET_HOURS)))
 
 
+def as_business_time(value: datetime | None = None) -> datetime:
+    """把**任意时刻**换算到业务时区 —— 展示用（纸面、界面上写给人看的时间）。
+
+    naive 一律按 UTC 解释（这是全库存储约定：库里存 UTC-naive，不做时区迁移）。
+
+    ⚠️ 只要把一个 UTC-aware 的 datetime 直接 ``strftime``，就会印出 UTC 墙钟。
+    实测（staging，2026-11-05 08:49 CST）：同一次打印，
+    ``X-Print-At``（纸面，走本函数口径）印 **08:49:11**，
+    而扫码核验页 ``printed_at``（直接 strftime timestamptz）显示 **00:49:11** ——
+    同一张纸上两个时间差 8 小时，纸质记录与数字留痕互相打架。
+    """
+    base = value or datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    return base.astimezone(business_tz())
+
+
 def business_now(now: datetime | None = None) -> datetime:
     """业务时区下此刻。
 
     Args:
         now: 测试注入用。naive 视为 UTC；None 取当前 UTC 时刻。
     """
-    base = now or datetime.now(timezone.utc)
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    return base.astimezone(business_tz())
+    return as_business_time(now)
 
 
 def business_today(now: datetime | None = None) -> date:

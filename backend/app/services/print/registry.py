@@ -29,6 +29,7 @@ from typing import Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.business_time import as_business_time
 from app.models.production import WorkOrder, WorkReport
 from app.models.quality import InspectionOrder, InspectionResult
 from app.services.print.renderer import PrintDoc, Section
@@ -51,11 +52,18 @@ INSP_RESULT_LABEL = {"ACC": "合格", "REJ": "不合格", "UAI": "待判定", "p
 
 
 def _fmt(dt) -> str:
-    """时间统一成本地可读格式；None 一律给空串（纸面不出现 None）。"""
+    """时间统一成**车间当地时间**的可读格式；None 一律给空串（纸面不出现 None）。
+
+    ★ 库里存的是 UTC-naive，直接 strftime 会把「计划开工 08:00」印成「00:00」——
+    一张纸上"打印时间 08:49"和"创建时间 00:49"自相矛盾，这张纸的证据价值就没了。
+    实测踩过：2026-11-05 staging，同一单纸面打印时间 08:49、核验页 00:49。
+    """
     if not dt:
         return ""
     if isinstance(dt, str):
         return dt.replace("T", " ")[:19]
+    if isinstance(dt, datetime):
+        return as_business_time(dt).strftime("%Y-%m-%d %H:%M")
     return dt.strftime("%Y-%m-%d %H:%M")
 
 

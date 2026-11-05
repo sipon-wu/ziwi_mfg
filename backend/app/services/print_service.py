@@ -39,7 +39,7 @@ from typing import Any, Optional
 from sqlalchemy import select, update
 
 from app.core.config import get_settings
-from app.core.business_time import business_now
+from app.core.business_time import as_business_time, business_now
 from app.models.print import PrintArtifact
 from app.services.audit_service import AuditAction, AuditService
 from app.services.print import (
@@ -486,7 +486,11 @@ class PrintService:
             # 否则现场没法判断"手里这张是不是被人从归档件上剪下来贴的"
             "paper": art.paper_kind or PAPER_A4,
             "printed_by_name": art.printed_by_name,
-            "printed_at": art.created_at.strftime("%Y-%m-%d %H:%M:%S") if art.created_at else None,
+            # ★ created_at 是 timestamptz，读回来是 **UTC-aware** —— 直接 strftime
+            # 会把 08:49 打的纸显示成 00:49（实测 2026-11-05 staging）。核验页是
+            # 用户拿手机扫纸上的二维码看的，必须与纸面同口径。
+            "printed_at": (as_business_time(art.created_at).strftime("%Y-%m-%d %H:%M:%S")
+                           if art.created_at else None),
             "page_count": art.page_count,
             # 这张纸现在还有效吗 —— 扫码核验最核心的一行
             "valid": art.status == "valid",

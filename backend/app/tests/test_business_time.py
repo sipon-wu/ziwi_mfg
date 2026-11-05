@@ -253,3 +253,40 @@ def test_copilot_today_follows_business_today():
     with patch("app.copilot.metric_query_service.business_today",
                return_value=date(2026, 11, 5)):
         assert svc._today() == date(2026, 11, 5)
+
+
+# ── 8. 纸面/界面上的时间必须是车间墙钟 ──────────────────────
+
+def test_paper_time_converts_naive_utc_to_business_tz():
+    """库里存 UTC-naive，纸面要印 +8 —— 否则一张纸上两个时间自相矛盾。
+
+    实测（staging 2026-11-05）：同一次打印，X-Print-At 印 08:49:11，
+    而扫码核验页 printed_at 显示 00:49:11。
+    """
+    from app.services.print.registry import _fmt
+
+    assert _fmt(datetime(2026, 11, 5, 0, 49)) == "2026-11-05 08:49"
+    assert _fmt(datetime(2026, 11, 4, 16, 49)) == "2026-11-05 00:49", "跨日也要翻"
+
+
+def test_paper_time_converts_aware_utc():
+    """timestamptz 读回来是 aware-UTC（print_artifacts.created_at），同样要转。"""
+    from app.services.print.registry import _fmt
+
+    assert _fmt(datetime(2026, 11, 5, 0, 49, 11, tzinfo=timezone.utc)) == "2026-11-05 08:49"
+
+
+def test_paper_time_keeps_none_and_string_behavior():
+    """空值给空串（纸面不出现 None）；已是字符串的原样截断，不重复转换。"""
+    from app.services.print.registry import _fmt
+
+    assert _fmt(None) == ""
+    assert _fmt("2026-11-05T08:49:11") == "2026-11-05 08:49:11"
+
+
+def test_as_business_time_naive_is_utc():
+    from app.core.business_time import as_business_time
+
+    got = as_business_time(datetime(2026, 11, 5, 0, 49))
+    assert got.utcoffset().total_seconds() == 8 * 3600
+    assert (got.day, got.hour) == (5, 8)
