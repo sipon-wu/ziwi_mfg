@@ -311,12 +311,92 @@ cd /opt/ziwi/mfg && python3 scripts/validate_thruster_scenario.py
 
 ### 8.2 第二步（未做）：删租户
 
-**前置阻塞**：`scripts/probe_artifacts.py` 还没做。实测一个探针就会在艾华留下
-十几行带时间戳后缀的测试数据（`PA-1105111153` / `RT-E6-1105111153` /
-`M-BB1-1105111153` 等）。回收工具不做，删掉 `mfg_demo` 之后照样被造脏 ——
-等于白清两次。
+**前置阻塞：已解除**（`scripts/probe_artifacts.py` 已做，见 §9）。
+
+阻塞原因回顾：实测一个探针就会在艾华留下十几行带时间戳后缀的测试数据
+（`PA-1105111153` / `RT-E6-1105111153` / `M-BB1-1105111153` 等）。回收工具不做，
+删掉 `mfg_demo` 之后照样被造脏 —— 等于白清两次。
 
 顺序：① 做完 `probe_artifacts.py` 并清掉已有探针残留 → ② 跑全量
 `e2e/run_all.py` 确认回归绿（此时若仍有探针造数，应在跑完立即回收）→
 ③ 删除 `mfg_demo` 的租户行与全部业务数据 → ④ 从 `seeds/mfg1_seed.py`
 与 runbook 步骤 ①②③④ 里摘掉演示租户（否则下次重建又建回来）。
+
+---
+
+## 9. 探针造数回收（2026-11-05，已完成，§8.2 的前置阻塞已解除）
+
+### 9.1 工具
+
+`scripts/probe_artifacts.py`，默认 dry-run，`--yes` 才删。
+
+```bash
+# 看影响面
+docker exec mfg1-backend python /app/scripts/probe_artifacts.py --tenant AH-THR
+# 真删
+docker exec mfg1-backend python /app/scripts/probe_artifacts.py --tenant AH-THR --yes
+# 只清某个后缀（排查时用）
+docker exec mfg1-backend python /app/scripts/probe_artifacts.py --suffix 1105111153 --yes
+```
+
+### 9.2 识别规则：为什么锁死 10 位
+
+探针后缀来自 `datetime.now().strftime("%m%d%H%M%S")`，**恒为 10 位**（`1105111153`
+= 11-05 11:11:53）。规则写 `[-_][0-9]{10}$`。
+
+第一版写成 `{8,}`，实测误报两类：
+- `maintenance_tasks.task_no = MT-1-20261105`（8 位日期，`seed_thruster_supplement.py` 产的合法数据）；
+- `users.cloud_uuid = 00000000-0000-0000-0000-000000000001`。
+
+**不要为了"多抓一点"放宽这个数字。** 抓干净靠的是后缀格式固定，不是靠模糊。
+
+### 9.3 引用关系为什么要手工登记
+
+本库 **123 张表只有 7 条外键**（`user_roles`×2、`user_organizations`、
+`role_permissions`×2、`lab_*`×2），业务表之间**一条外键都没有**。父行删掉不会报错，
+只会留孤儿 —— 所以脚本里 `REFS` 是一张显式登记表（子表 / 子列 / 根表 / 根表键），
+**新增引用列必须往 `REFS` 加一行**，否则那批子行变成永远回收不掉的孤儿。
+
+### 9.4 实际清理结果
+
+清理前（艾华租户）：根 23 行 + 按列计引用 25 行。
+
+| 表 | 删除 |
+|---|---|
+| products | 7 |
+| route_steps | 6 |
+| product_bom | 6 |
+| work_orders | 5 |
+| process_routes | 5 |
+| operations | 4 |
+| bom_snapshots | 2 |
+| work_order_status_logs | 2 |
+| materials | 2 |
+| **合计** | **39** |
+
+清理后基线（全部符合预期）：
+
+| 指标 | 值 |
+|---|---|
+| 产品 / 工序 / 路线 / 工单 | 3 / 43 / 3 / 10 |
+| 物料 | 23 → 21 |
+| `product_bom` | 32 → 26 |
+| `route_steps` | 161 → 155 |
+| 悬空引用（6 项） | 清理前 3 + 3 → **全部 0** |
+
+那 6 条悬空引用本身就是探针造的：3 张探针工单指向不存在的产品 `P-NA`（测"产品
+不存在"的用例），3 行探针 BOM 指向不存在的物料 `MX-1` / `MX-2` / `PB-1105111153`。
+清完一起归零 —— 说明探针造的垃圾是**自洽的一坨**，按后缀回收能整块带走。
+
+回滚副本：`/opt/mfg1/backups/mfg_pre_probeclean_20261105_1128.sql.gz`（305 KB）。
+
+### 9.5 顺带发现（只记录，未处理）
+
+**`GET /api/v1/routes` 没有租户过滤。** 用 `AH-THR` 的 token 请求，返回 19 条，
+其中 16 条 `tenant_id=mfg_demo`（`RT-001`…`RT-016`）。同一次会话里
+`/products`（3）、`/work-orders`（10）、`/operations`（43）都是过滤后的正确条数，
+只有 `/routes` 是 19（= 全库）。这是**跨租户越权读**。
+
+⚠️ 删掉 `mfg_demo` 会让这个 bug "看不见"（没有别的租户可泄漏），但这只是掩盖。
+真上多租户时它会直接暴露别家工艺路线。建议在 §8.2 第三步之前先修掉。
+
