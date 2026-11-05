@@ -36,6 +36,21 @@
 4. 删除后断言根表里**不再有任何匹配行**，且 `REFS` 里的引用残留为 0；
 5. 全流程一个事务，异常整体回滚。
 
+## 个别根表不吃默认规则
+
+跑完 48 个探针后，除了 `-<10位>` 这种统一后缀，还会留下**每个探针自己一套**的命名：
+拆分/合并子单 `E2E-MG1-1105115414-M1`、仓储写实 `WO-W-115609`、SPC 闭环 `RW-NC-WR111`、
+`closed_loop_test` 的 `WO_20261105121007_c45196_1`、权限探针的账号 `tmpu1105115407`
+（前缀直接接时间戳，没有分隔符）。这些由 `ROOT_PATTERNS` **逐表列举**补上，
+每条都对应一个具体探针源码里的命名，不写"看起来像"的通配。
+
+## `organizations` 为什么不在这张清单里
+
+平台底座探针会在组织树里挂 `DEPT-<ts>` / `TEAM-<ts>` 叶子节点（每轮 8 个）。
+本工具**不动它们**：组织是结构数据，业务行靠 `org_id` 指过去，删节点会留下
+一批"归属指向不存在的组织"的行，而那类孤儿正是 `purge_tenant.py` 覆盖、
+本工具覆盖不到的地方。要清得单独写一条"节点无引用才可删"的守卫。
+
 ## 用法
 
     # 看影响面（默认，安全）
@@ -100,7 +115,75 @@ ROOTS = [
     ("products",       "code",  "产品",  "id"),
     ("operations",     "code",  "工序",  "id"),
     ("materials",      "code",  "物料",  "id"),
+    ("work_centers",   "code",  "工作中心", "id"),
+    ("roles",          "code",  "角色",  "id"),
+    ("users",          "username", "账号", "id"),
 ]
+
+# 个别根表的编码形态与 `[-_]<10位>` 不同，单独给规则（**逐表覆盖，不合并**）。
+#
+# `users` 为什么不能套用默认规则：权限探针建的账号是 `tmpu1105115407` 这种
+# 「前缀 + 直接接 10 位时间戳」，**中间没有分隔符**，默认规则一条都匹配不上；
+# 反过来若把默认规则放宽成"结尾 10 位数字"，`users.cloud_uuid` 那类值会被误伤
+# （见模块 docstring 里 `{8,}` 的教训）。所以这里**不猜格式，只认白名单前缀**：
+# 前缀全部取自探针源码里实际用的用户名，没在名单里的账号一律不动。
+#
+# 其余几张表的补充规则同理：每一条都对应一个**具体探针源码里的命名**，
+# 不是"看起来像探针"。列举时只写能唯一指认探针的前缀/形状，绝不写
+# `^WO-` 这种会把场景种子一起卷进去的通配。
+ROOT_PATTERNS = {
+    "users": [r"^(tmpu|rouser|busyu|idleu|delu|delidle|norole|emptyu|"
+              r"inspector_|probe_|e2e_)[a-z_]*[0-9]{10}$"],
+    "work_orders": [
+        # 拆分/合并的子单：`E2E-MG1-1105115414-M1`、`WO-DUP-1105115428-B`
+        r"[-_][0-9]{10}-[A-Z][0-9]?$",
+        # 整类前缀就是探针的：`E2E-SP-*` / `E2E-MG*` / `WO-E2E-*`
+        r"^E2E[-_]",
+        # 仓储写实：`WO-W-115609`
+        r"^WO-W-[0-9]{6}$",
+        # SPC/NCR 闭环：`RW-NC-WR111`
+        r"^RW-NC-WR[0-9]+$",
+        # closed_loop_test：`WO_20261105121007_c45196_1`
+        r"^WO_[0-9]{14}_[0-9a-f]+_[0-9]+$",
+        # 自动编号：`WO-20261105-115506`
+        r"^WO-[0-9]{8}-[0-9]{6}$",
+    ],
+    "products": [
+        r"^E2E[-_]",              # `E2E-FG-001`
+        r"^GE[0-9]{11}$",         # `GE3` + 10 位时间戳（edge 探针）
+    ],
+    "materials": [
+        r"^E2E[-_]",              # `E2E-MAT` / `E2E-TRACE-*` / `E2E_LOOP_*`
+        r"^P-E2E$",               # 工单生命周期探针的成品
+        r"^MAT-TC4-[0-9]{6}$",    # 批次追溯探针
+    ],
+    "process_routes": [
+        r"^RTE-P-GE-[0-9]+-V[0-9]+$",   # 路线编辑探针的版本拷贝
+        r"^RT-TS-[0-9]{6}$",            # trial 探针
+    ],
+}
+
+
+#: 这些表的专用规则**取代**默认规则，不与之合并（账号就是这样：只认前缀白名单，
+#: 不给"结尾 10 位数字"任何机会）。其余表是"默认规则 + 补充规则"取并集。
+ROOT_EXCLUSIVE = {"users"}
+
+#: `--suffix` 模式（人工指定精确后缀）下专用规则全部退场，只按给定后缀匹配 ——
+#: 否则"只清这一批"会被白名单规则扩大成"清掉所有探针账号"。
+_SUFFIX_MODE = False
+
+
+def _rx_for(tbl: str, fallback: re.Pattern) -> re.Pattern:
+    """取该根表适用的正则：默认规则 ∪ 补充规则（exclusive 表只用补充规则）。"""
+    if _SUFFIX_MODE:
+        return fallback
+    pats = ROOT_PATTERNS.get(tbl)
+    if not pats:
+        return fallback
+    alts = [f"(?:{p})" for p in pats]
+    if tbl not in ROOT_EXCLUSIVE:
+        alts.insert(0, f"(?:{fallback.pattern})")
+    return re.compile("|".join(alts))
 
 # 打印明细时补一列区分同码多行 —— `RT-S3-*` 有 v1/v2 两条，只打编码会看成重复命中。
 DISPLAY_EXTRA = {
@@ -151,6 +234,14 @@ REFS = [
     ("material_substitutes",    "material_code",  "materials",      "code"),
     ("ncr_records",             "material_id",    "materials",      "id"),
     ("customer_complaints",     "product_code",   "products",       "code"),
+    # 账号是"根"的一种：探针建的账号要连角色关联一起清，否则 users 删了、
+    # user_roles 留着，角色页上会显示"该角色有 N 个成员"但点开是空名单。
+    ("user_roles",              "user_id",        "users",          "id"),
+    ("user_organizations",      "user_id",        "users",          "id"),
+    # 角色同理，而且 role_permissions 是全库仅有的 7 条外键之一 ——
+    # 不先删它会直接 FK 报错，整条事务回滚。
+    ("role_permissions",        "role_id",        "roles",          "id"),
+    ("user_roles",              "role_id",        "roles",          "id"),
 ]
 
 
@@ -218,13 +309,14 @@ async def discover(conn, is_pg: bool, rx: re.Pattern, tenant_id):
         if not await _table_exists(conn, tbl, is_pg):
             print(f"  [跳过] 表 {tbl} 不存在")
             continue
+        rxx = _rx_for(tbl, rx)
         extra = DISPLAY_EXTRA.get(tbl)
         sel = f'"{id_col}", "{code_col}"' + (f', "{extra}"' if extra else "")
         rs = await conn.execute(text(f'select {sel} from "{tbl}"{where}'), params)
         rows = []
         for r in rs.fetchall():
             code = r[1]
-            if not (code and rx.search(str(code))):
+            if not (code and rxx.search(str(code))):
                 continue
             disp = str(code) + (f" ({r[2]})" if extra and r[2] is not None else "")
             rows.append([r[0], code, disp])
@@ -270,6 +362,8 @@ async def main(argv):
                     help="限定租户（tenant_id 或租户编码，如 AH-THR）；不给则全库扫")
     args = ap.parse_args(argv)
 
+    global _SUFFIX_MODE
+    _SUFFIX_MODE = bool(args.suffix)
     if args.suffix:
         # 显式后缀：精确尾匹配，零误报。给多个时用 | 拼。
         pattern = r"[-_](" + "|".join(re.escape(s) for s in args.suffix) + r")$"
@@ -286,6 +380,9 @@ async def main(argv):
     print(f"目标库: {_mask(url)}")
     print(f"方言  : {'PostgreSQL' if is_pg else 'SQLite'}")
     print(f"识别  : {label}")
+    if not _SUFFIX_MODE:
+        for _t, _p in ROOT_PATTERNS.items():
+            print(f"        （{_t} 专用）" + " | ".join(_p))
     print()
 
     eng = create_async_engine(url, pool_pre_ping=False)
@@ -339,10 +436,11 @@ async def main(argv):
                 where, params = "", {}
                 if tenant_id:
                     where, params = " where tenant_id = :tid", {"tid": tenant_id}
+                rxx = _rx_for(tbl, rx)
                 rs = await conn.execute(
                     text(f'select "{id_col}", "{code_col}" from "{tbl}"{where}'), params)
                 keep[tbl] = {r[0] for r in rs.fetchall()
-                             if not (r[1] and rx.search(str(r[1])))}
+                             if not (r[1] and rxx.search(str(r[1])))}
 
             print()
             print("[3/4] 执行删除（单事务）")

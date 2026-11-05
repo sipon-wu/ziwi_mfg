@@ -42,16 +42,39 @@
     # 真删
     python scripts/purge_tenant.py --tenant mfg_demo --yes
 
+    # 清扫探针开的租户（回归跑完的收尾步骤，见下）
+    python scripts/purge_tenant.py --probe-tenants
+    python scripts/purge_tenant.py --probe-tenants --yes
+
     # 容器里
     docker cp scripts/purge_tenant.py mfg1-backend:/app/scripts/
     docker exec mfg1-backend python /app/scripts/purge_tenant.py --tenant mfg_demo --yes
+
+## 复跑一次回归就会多 3 个租户
+
+`tenant_onboarding_e2e` / `perm_base_edge_e2e` / `tenant_role_preset_e2e` 每跑一次
+就用 `strftime("%m%d%H%M%S")` 后缀**开一个新租户**（开通流程本身就得开租户，
+那是被验证的功能，不是脏写）。它们不清理，于是 `/tenants` 越堆越多，
+"库里只剩艾华"这个收官状态在每轮回归后失真。
+
+`--probe-tenants` 就是这步收尾：编码匹配 `^(E2E|RP)[A-Za-z]*[0-9]{10}$` 的租户
+全部按租户清除。**后缀锁死 10 位**（与 `probe_artifacts.py` 同一条教训：
+放宽成 `{8,}` 会把 `20261105` 这类日期后缀的业务编码一起吃掉）。
+单个租户仍走原来的四条安全闸，"不能删到只剩零个租户"由每条子命令各自校验。
 """
 import argparse
 import asyncio
 import glob
 import os
+import re
+import subprocess
 import sys
 import time
+
+# ── 探针租户识别 ───────────────────────────────────────────────────────────
+# 前缀取自三个探针实际用的编码（E2E1105115724 / RPfull1105115821 / RPqc…）；
+# 末尾 10 位是 `strftime("%m%d%H%M%S")`，**位数固定**，不许模糊匹配。
+PROBE_TENANT_RE = re.compile(r"^(E2E|RP)[A-Za-z]*[0-9]{10}$")
 
 # ── 没有 tenant_id 列、但必须跟着租户一起清的"旁路"关系 ─────────────────────
 # (要删的表, 过滤表达式)。表达式里的 :t 是 tenants.tenant_id 的取值。
@@ -146,14 +169,20 @@ async def _count(conn, sql: str, params: dict) -> int:
 async def main(argv):
     ap = argparse.ArgumentParser(
         description="按租户整体清除（默认 dry-run）")
-    ap.add_argument("--tenant", required=True,
+    ap.add_argument("--tenant",
                     help="tenant_id 或租户编码，如 mfg_demo / MFG1")
+    ap.add_argument("--probe-tenants", action="store_true",
+                    help="清扫探针开的租户（编码匹配 E2E*/RP* + 10 位时间后缀）")
     ap.add_argument("--yes", action="store_true", help="真的执行删除")
     ap.add_argument("--skip-backup-check", action="store_true",
                     help="跳过 24 小时备份检查（仅限刚 create_all 完的空库重建 / 本地演练）")
     ap.add_argument("--if-exists", action="store_true",
                     help="租户不存在时视为成功（重建链里的幂等收尾步骤用）")
     args = ap.parse_args(argv)
+
+    if bool(args.tenant) == bool(args.probe_tenants):
+        print("[拒绝] --tenant 与 --probe-tenants 必须二选一")
+        return 2
 
     settings = get_settings()
     url = settings.DATABASE_URL
@@ -166,6 +195,49 @@ async def main(argv):
     eng = create_async_engine(url, pool_pre_ping=False)
     try:
         async with eng.connect() as conn:
+            if args.probe_tenants:
+                rows = (await conn.execute(text(
+                    "select tenant_id, code, name from tenants "
+                    "order by tenant_id"))).fetchall()
+                targets = [r for r in rows if PROBE_TENANT_RE.match(r[1] or "")]
+                keep = [r for r in rows if not PROBE_TENANT_RE.match(r[1] or "")]
+                print(f"探针租户 {len(targets)} 个 / 保留 {len(keep)} 个")
+                for t in targets:
+                    print(f"      将清除  {t[0]} · {t[1]} · {t[2]}")
+                for t in keep:
+                    print(f"      保留    {t[0]} · {t[1]} · {t[2]}")
+                if not targets:
+                    print("\n没有匹配的探针租户，无需清扫。")
+                    return 0
+                if not keep:
+                    # 同一条底线：扫完不能一个租户都不剩
+                    print("\n[拒绝] 清扫后库里将没有任何租户，平台会登录不了。")
+                    return 2
+                if not args.yes:
+                    print("\n[dry-run] 未做任何改动。核对无误后加 --yes 执行。")
+                    return 0
+                # 逐个委派给自己：单租户的四条安全闸（不能删到 0 个、
+                # 备份存在性、单事务、删后回读 + 误伤校验）一条都不重写。
+                print()
+                rc = 0
+                for tid, code, _name in targets:
+                    cmd = [sys.executable, os.path.abspath(__file__),
+                           "--tenant", code, "--yes"]
+                    if args.skip_backup_check:
+                        cmd.append("--skip-backup-check")
+                    # 探针租户没有业务价值，但备份闸仍按参数决定，不在这里越权放开
+                    r = subprocess.run(cmd, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace")
+                    tail = (r.stdout or "").strip().splitlines()[-1:] or ["(无输出)"]
+                    print(f"  [{code}] rc={r.returncode} · {tail[0]}")
+                    if r.returncode != 0:
+                        rc = 1
+                        print((r.stderr or "")[-400:])
+                print()
+                print(f"[结论] 探针租户清扫：目标 {len(targets)} 个 / rc={rc}"
+                      + ("" if rc == 0 else "（有失败，见上）"))
+                return rc
+
             row = (await conn.execute(text(
                 "select tenant_id, code, name from tenants "
                 "where tenant_id = :k or code = :k limit 1"), {"k": args.tenant})).first()
