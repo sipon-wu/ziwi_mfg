@@ -70,3 +70,76 @@ def op_type_label(code: str | None) -> str:
 # 但 dict 将来被改成非 dict 或插入非 str 时要在导入期就炸，而不是等 422 文案变怪）。
 assert set(get_args(OpType)) == set(OP_TYPE_LABELS), "OpType 与 OP_TYPE_LABELS 不同步"
 assert all(isinstance(k, str) for k in OP_TYPES), "op_type 只能是字符串"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 仓库类型（`warehouses.type`）值域 —— 后端唯一真源
+#
+# 这个值域此前**只活在一句列注释里**（`comment="raw_material/semi/finished/
+# consumable"`），没有任何校验、没有枚举、前端另有一份 4 项硬编码字典。
+# 结果库里实际躺着 7 个值，其中 3 个是别名或脏值：
+#
+#   声明域      raw_material  semi        finished   consumable
+#   库内实际    raw           wip         finished_goods       ← 别名，指的同一件事
+#               line_side     spare_parts                      ← 真实存在、声明域里却没有
+#
+# 危害不是"不好看"，而是**按类型找仓库的代码会静默找不到**：
+# 生产入库要取 `type='finished'` 的仓，而有租户建的是 `finished_goods` ——
+# 于是"没有成品仓"，半成品/成品混仓，全程不报错。
+#
+# ## 域怎么定的
+#
+# 以**业务真有**为准，不以旧注释为准：保留 `line_side`（线边仓）与
+# `spare_parts`（备件仓），因为它们是不同物理区域，语义不能合并；
+# 三个同义别名一律归一到声明域（`raw`→`raw_material`、`wip`→`semi`、
+# `finished_goods`→`finished`）。
+#
+# 顺序 = 物流方向：原料进厂 → 线边 → 在制/半成品 → 成品 → 备件/耗材。
+# ══════════════════════════════════════════════════════════════════
+WAREHOUSE_TYPE_LABELS: dict[str, str] = {
+    "raw_material": "原料仓",
+    "line_side": "线边仓",
+    "semi": "半成品仓",
+    "finished": "成品仓",
+    "spare_parts": "备件仓",
+    "consumable": "耗材仓",
+}
+
+WAREHOUSE_TYPES: tuple[str, ...] = tuple(WAREHOUSE_TYPE_LABELS)
+
+#: Pydantic 用的字面量类型：`type: WarehouseType` → 非法值 422。
+WarehouseType = Literal[*WAREHOUSE_TYPE_LABELS]
+
+#: 历史别名 → 规范值。迁移脚本与写入归一共用同一张表，避免两处各写一份。
+WAREHOUSE_TYPE_ALIASES: dict[str, str] = {
+    "raw": "raw_material",
+    "wip": "semi",
+    "finished_goods": "finished",
+}
+
+
+def warehouse_type_label(code: str | None) -> str:
+    """代码转中文；未知值给「未知（原文）」，不回显原文冒充正常值。"""
+    if not code:
+        return ""
+    return WAREHOUSE_TYPE_LABELS.get(code, f"未知（{code}）")
+
+
+def normalize_warehouse_type(code: str | None) -> str | None:
+    """把历史别名归一成规范值；空值原样返回。
+
+    只做别名映射，**不**把未知值硬塞成默认值 —— 未知就是未知，交给校验去拒。
+    """
+    if code is None:
+        return None
+    key = code.strip()
+    return WAREHOUSE_TYPE_ALIASES.get(key, key)
+
+
+assert set(get_args(WarehouseType)) == set(WAREHOUSE_TYPE_LABELS), \
+    "WarehouseType 与 WAREHOUSE_TYPE_LABELS 不同步"
+# 别名必须指向域内值，否则迁移会把数据搬进一个非法值里（比不迁移更糟）
+assert set(WAREHOUSE_TYPE_ALIASES.values()) <= set(WAREHOUSE_TYPE_LABELS), \
+    "WAREHOUSE_TYPE_ALIASES 的目标值必须都在值域内"
+assert not (set(WAREHOUSE_TYPE_ALIASES) & set(WAREHOUSE_TYPE_LABELS)), \
+    "别名键不能同时是合法值，否则归一规则自相矛盾"

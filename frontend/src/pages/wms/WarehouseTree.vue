@@ -4,6 +4,7 @@ import { showToast, showConfirmDialog } from 'vant'
 import { get, post, put, del } from '@/api/client'
 import type { PaginatedResponse } from '@/types'
 import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
+import { enumLabel } from '@/config/enums'
 
 interface Warehouse { id: number; code: string; name: string; type: string; address: string; contact_person: string; contact_phone: string; is_active: boolean }
 interface Zone { id: number; warehouse_id: number; zone_code: string; zone_name: string; zone_type: string }
@@ -35,7 +36,10 @@ async function selectZone(zone: Zone) {
   locations.value = res.items as Location[]
 }
 
-const whTypeLabel: Record<string, string> = { raw_material: '原料仓', semi: '半成品仓', finished: '成品仓', consumable: '消耗品仓' }
+// ★ 原来这里是 4 项硬编码 `{ raw_material, semi, finished, consumable }`，
+//   而库里还有 line_side / spare_parts —— 这两类仓在树上直接印英文原码。
+//   现在统一从 config/enums.ts 取（那里与后端 WAREHOUSE_TYPE_LABELS 对账）。
+const whTypeLabel = (code: string | null | undefined) => enumLabel('warehouse_type', code)
 const zoneTypeLabel: Record<string, string> = { storage: '存储区', '待检': '待检区', 不良品: '不良品区', 待发: '待发区', 退货: '退货区' }
 
 onMounted(loadWarehouses)
@@ -48,7 +52,7 @@ onMounted(loadWarehouses)
       <van-col span="8" style="border-right:1px solid #eee;overflow-y:auto">
         <van-cell-group title="仓库">
           <van-cell v-for="wh in warehouses" :key="wh.id" clickable :class="{ active: selectedWh === wh.id }"
-            :title="wh.name" :label="whTypeLabel[wh.type] || wh.type" @click="selectWarehouse(wh)">
+            :title="wh.name" :label="whTypeLabel(wh.type)" @click="selectWarehouse(wh)">
             <template #icon><van-icon name="shop" style="margin-right:6px" /></template>
           </van-cell>
           <ZiwiStateView

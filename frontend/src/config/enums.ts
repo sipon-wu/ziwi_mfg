@@ -49,6 +49,24 @@ export function opTypeLabel(code: string | null | undefined): string {
   return hit ? hit.label : `未知（${code}）`
 }
 
+/**
+ * 仓库类型（`warehouses.type`）。顺序与后端 `WAREHOUSE_TYPE_LABELS` 一致 ——
+ * 物流方向：原料进厂 → 线边 → 在制/半成品 → 成品 → 备件/耗材。
+ *
+ * ⚠️ 这里原来有**两份**4 项硬编码：`WarehouseTree.vue::whTypeLabel` 和模型注释。
+ * 库里实际有 7 个值（`raw`/`wip`/`finished_goods`/`line_side`/`spare_parts` 都在
+ * 声明域之外），于是线边仓、备件仓在树上直接印英文原码。
+ * 现在只剩这一份，由 `test_warehouse_type_domain.py` 与后端逐项同序对账。
+ */
+export const WAREHOUSE_TYPE_OPTIONS: EnumOption[] = [
+  { value: 'raw_material', label: '原料仓' },
+  { value: 'line_side', label: '线边仓' },
+  { value: 'semi', label: '半成品仓' },
+  { value: 'finished', label: '成品仓' },
+  { value: 'spare_parts', label: '备件仓' },
+  { value: 'consumable', label: '耗材仓' },
+]
+
 /* ────────────────────────────────────────────────────────────
  * 非状态类枚举：类型 / 级别 / 来源 / 通道
  *
@@ -340,6 +358,15 @@ export const LABEL_DICT: Record<string, Record<string, string>> = {
     manual: '手动',
   },
 }
+
+/**
+ * 仓库类型从 `WAREHOUSE_TYPE_OPTIONS` 推出来，**不在这里再写一遍**：
+ * 写两遍就是两个真源，早晚有一份漏掉新值（这正是本次要修的病根）。
+ * 登记进 `LABEL_DICT` 之后，页面统一走 `enumLabel('warehouse_type', …)`。
+ */
+LABEL_DICT.warehouse_type = Object.fromEntries(
+  WAREHOUSE_TYPE_OPTIONS.map((o) => [o.value, o.label]),
+)
 
 /**
  * 码 → 中文。未知值给「未知（原码）」。

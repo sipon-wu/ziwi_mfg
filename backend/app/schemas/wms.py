@@ -1,7 +1,32 @@
 """M20 仓储管理（WMS）模块 — Pydantic v2 Schemas"""
 from datetime import date, datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+
+from app.core.enums import (
+    WAREHOUSE_TYPE_LABELS,
+    WAREHOUSE_TYPES,
+    normalize_warehouse_type,
+)
+
+
+def _check_warehouse_type(v: Optional[str]) -> Optional[str]:
+    """归一别名并校验值域。非法值直接 422，并列出合法取值。
+
+    为什么不在 schema 里直接写 `WarehouseType`（Literal）：
+    Literal 会把历史别名 `raw`/`wip`/`finished_goods` 一并拒掉，而这些值
+    昨天还在被写入（前端硬编码字典就用的 4 项世界）。先归一再校验，
+    既不让脏值继续落库，也不突然打断存量调用方。
+    """
+    if v is None:
+        return None
+    norm = normalize_warehouse_type(v)
+    if norm not in WAREHOUSE_TYPE_LABELS:
+        raise ValueError(
+            f"仓库类型「{v}」不合法；可选："
+            + " / ".join(f"{k}（{lab}）" for k, lab in WAREHOUSE_TYPE_LABELS.items())
+        )
+    return norm
 
 
 # ============================================
@@ -17,6 +42,8 @@ class WarehouseCreate(BaseModel):
     contact_phone: Optional[str] = None
     is_active: bool = True
 
+    _norm_type = field_validator("type", mode="after")(_check_warehouse_type)
+
 class WarehouseUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
@@ -24,6 +51,8 @@ class WarehouseUpdate(BaseModel):
     contact_person: Optional[str] = None
     contact_phone: Optional[str] = None
     is_active: Optional[bool] = None
+
+    _norm_type = field_validator("type", mode="after")(_check_warehouse_type)
 
 class ZoneCreate(BaseModel):
     warehouse_id: int

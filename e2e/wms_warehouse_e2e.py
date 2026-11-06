@@ -35,9 +35,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 
 import httpx
+
+# 仓类型值域取后端唯一真源（本探针 cwd=backend，与 copilot_smoke 同一做法）。
+# 为什么不在探针里再抄一份 6 项常量：抄一份就是第三个真源，早晚和
+# `core/enums.py` 漂开 —— 本次要修的正是"值域散成几份"这个病。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
+from app.core.enums import WAREHOUSE_TYPE_LABELS  # noqa: E402
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
 TENANT = os.environ.get("TENANT_CODE", "MFG1")
@@ -115,10 +122,31 @@ def main() -> int:
 
     r = c.post(f"{API}/wms/warehouses", json={
         "code": f"WH-W-{tag}", "name": f"推进器厂原料仓{tag}",
-        "warehouse_type": "raw", "address": "重庆两江新区·机加车间东侧"})
+        # ★ 字段名是 `type`，不是 `warehouse_type`。之前这里写错，Pydantic
+        #   把多余字段静默丢掉 → 仓类型一直是默认值 raw_material，
+        #   这条断言等于没验类型。顺带验证别名 `raw` 会被归一成 `raw_material`。
+        "type": "raw", "address": "重庆两江新区·机加车间东侧"})
     wh_id = new_id(r)
     report("W1-1 仓库可创建", wh_id is not None,
            f"HTTP {r.status_code} wh_id={wh_id} {detail(r).get('message', '') if wh_id is None else ''}")
+    # 创建只回 {"id"}，要回读才能看到落库的类型
+    _g = c.get(f"{API}/wms/warehouses/{wh_id}") if wh_id else None
+    wh_type = (data(_g) or {}).get("type") if _g is not None and _g.status_code == 200 else None
+    report("W1-1b ★仓类型真的落库了，且别名 raw 归一为 raw_material",
+           wh_type == "raw_material",
+           f"回读 type={wh_type!r}（发的是 raw）")
+
+    # ★ 全量值域：接口返回的每一个 type 都必须在 core/enums.py 的值域内。
+    #   这条兜的是"库里还有历史脏值没归一" —— 归一迁移漏一个，
+    #   按类型找仓的代码就会静默找不到（完工入库取不到成品仓）。
+    r = c.get(f"{API}/wms/warehouses", params={"page": 1, "page_size": 100})
+    _all = items(r)
+    _types = sorted({(x.get("type") or "") for x in _all})
+    _bad_types = [t for t in _types if t not in WAREHOUSE_TYPE_LABELS]
+    report("W1-1c 全部仓库类型都在值域内（无历史别名残留）",
+           r.status_code == 200 and not _bad_types,
+           f"共 {len(_all)} 个仓 / {len(_types)} 种类型"
+           + (f" · 域外值：{_bad_types}" if _bad_types else f" · {_types}"))
 
     r = c.get(f"{API}/wms/warehouses/all/active")
     actives = data(r) if isinstance(data(r), list) else []

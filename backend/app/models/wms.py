@@ -19,7 +19,10 @@ class Warehouse(Base):
     tenant_id     = Column(String(50), nullable=False, comment="租户ID")
     code          = Column(String(64), nullable=False, comment="仓库编码")
     name          = Column(String(128), nullable=False, comment="仓库名称")
-    type          = Column(String(32), default="raw_material", comment="raw_material/semi/finished/consumable")
+    # ★ 值域真源是 `app/core/enums.py::WAREHOUSE_TYPE_LABELS`，不要再把 4 项
+    #   抄回注释里 —— 旧注释（raw_material/semi/finished/consumable）就是第二
+    #   个真源，它和前端各漏了几个值、和库里 7 个值也对不上。
+    type          = Column(String(32), default="raw_material", comment="仓库类型，见 core/enums.py::WAREHOUSE_TYPE_LABELS")
     address       = Column(String(256), comment="地址")
     contact_person = Column(String(64), comment="联系人")
     contact_phone = Column(String(32), comment="联系电话")
