@@ -134,6 +134,14 @@ DEFAULT_PROBES = [
     # 打出 3 条真缺陷，全是"改不动"：仓储层缺方法导致 500、
     # 两处 PUT 复用 Create schema 导致"只改一个字段"被 422 挡掉。
     "module_tails_e2e",
+    # M00 产品 ↔ 工艺路线关联（product_routes）。
+    # 这张表 2026 年前就在，但零 API / 零引用 / 零行，而 process_routes 连
+    # product_id 都没有 —— "产品用哪条路线"在库层面没有落点。后果不是"少个
+    # 功能"，是**断链**：建工单页没有选路线入口 → route_id 恒 NULL →
+    # _last_operation_code() 返回 None → 每条报工都被判"完工" →
+    # total_output 与 total_wip_output 恒等，双口径静默退化成单口径。
+    # 本探针走到建单回填那一格，不只验四个端点能通。
+    "product_route_e2e",
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL
@@ -163,7 +171,8 @@ _SUMMARY_RE = re.compile(
 #
 # 所以这里在跑探针之前先用**真实登录**确认哪个租户能进，再统一下发。
 # 判据只认 HTTP 200，不读本地库、不猜配置。
-_RESOLVED_TENANT = ""
+_RESOLVED_TENANT = ""       # 规范 tenant_id（mfg_demo）—— 业务表列值 / 直写库用
+_RESOLVED_TENANT_CODE = ""  # 租户编码（MFG1）—— 登录 / 按 code 比对用
 
 
 def _login_tenant(api_base: str, user: str, pwd: str, tenant: str,
@@ -210,27 +219,47 @@ def _login_tenant(api_base: str, user: str, pwd: str, tenant: str,
         return None
 
 
-def _resolve_tenant(api_base: str) -> str:
-    """决定本次回归用哪个租户，并把它统一注入子探针。
+def _resolve_tenant(api_base: str) -> tuple:
+    """决定本次回归用哪个租户，返回 ``(租户编码, 规范 tenant_id)``。
+
+    ★ **必须两个都返回**。这里是踩过坑的地方：
+
+    最初只返回 tenant_id 并把它下发给 ``E2E_TENANT``/``TENANT_CODE``/
+    ``TENANT`` 三个别名。结果是 ``platform_base_e2e`` 的 P9-3 一直红：
+
+        租户列表可读且能找到自己 · 共 123 个租户，本租户 tenant_id=mfg_demo
+
+    它拿 ``TENANT_CODE`` 去比租户的 ``code`` 字段，而 ``code`` 是 ``MFG1`` ——
+    ``mfg_demo`` 永远匹配不上，翻完所有页也"找不到自己"。看上去像"租户列表
+    接口漏了本租户"，实际是**下发错了键**。
+
+    ``tenants`` 表里本来就是两套键，各有各的用途：
+
+    * ``code``（``MFG1`` / ``AH-THR``）—— 登录填这个；按 code 做业务比对也用它
+    * ``tenant_id``（``mfg_demo`` / ``t_xxx``）—— 业务表的 ``tenant_id`` 列存这个；
+      绕 API 直写库必须用它
+
+    所以编码下发到三个历史别名（保持各探针原有语义），tenant_id 单独给
+    ``E2E_TENANT_ID``，谁需要谁显式取。
 
     * 用户显式给了 ``E2E_TENANT`` → 完全尊重，不自动改（显式意图优先）
     * 没给 → 按「探针默认值优先」的顺序试登录，第一个能进的就是本次租户
-    * 全都进不去 → 不下发，让探针如实报 [FATAL]（不掩盖问题）
+    * 全都进不去 → 返回空，让探针如实报 [FATAL]（不掩盖问题）
     """
     env_tenant = (os.environ.get("E2E_TENANT") or "").strip()
     user = os.environ.get("E2E_USER", "mfg_admin")
     pwd = os.environ.get("E2E_PWD", "admin123")
 
     if env_tenant:
-        # ★ 显式指定也要归一。否则用户照着提示写 E2E_TENANT=MFG1（编码），
-        #   拿到的却是编码本身 —— 直写库的探针又会对不上 tenant_id。
+        # 显式指定也要归一：用户很可能照着提示写编码（MFG1），而直写库的
+        # 探针需要 tenant_id —— 两个都发下去，各取所需。
         tid = _login_tenant(api_base, user, pwd, env_tenant)
         if tid:
             print(f"租户：{env_tenant} → tenant_id={tid}（E2E_TENANT 显式指定）")
-            return tid
+            return (env_tenant, tid)
         print(f"⚠️  租户：E2E_TENANT={env_tenant} 但 {user} 登不进这个租户；"
               f"按原值下发，探针大概率会报 [FATAL] 登录失败。")
-        return env_tenant
+        return (env_tenant, "")
 
     # ★ 顺序有讲究：AH-THR 必须排第一。它是 staging 的靶场，探针默认值也是它，
     #   放第一位可以保证 staging 行为的判定口径一个字都不变。
@@ -244,10 +273,10 @@ def _resolve_tenant(api_base: str) -> str:
                 print(f"⚠️  租户：已自动改用 {code} → tenant_id={tid}"
                       f"（探针默认的 AH-THR 登不上 {user}，本环境种子数据在 {code}）")
                 print(f"   如需固定下来：E2E_TENANT={code} 再跑一次")
-            return tid
+            return (code, tid)
     print(f"⚠️  租户：解析失败 —— {user} 在 {candidates} 里一个都登不进。"
           f"下面的 [FATAL] 登录失败是如实反映，不是门禁误报。")
-    return ""
+    return ("", "")
 
 
 def _child_env() -> dict:
@@ -287,9 +316,29 @@ def _child_env() -> dict:
         root = api[:-len("/api/v1")] if api.endswith("/api/v1") else api
         env["BASE_URL"] = root
 
-    # 统一租户：探针各自的默认值不再单独生效，一律用本次解析出来的那个
+    # 统一租户：探针各自的默认值不再单独生效，一律用本次解析出来的那个。
+    #
+    # ★ 必须把**别名一起下发**。探针里这套变量名有三派：
+    #     E2E_TENANT(36) / TENANT_CODE(7) / TENANT(2)
+    #     E2E_USER(36)   / ADMIN_USER(7)
+    #     E2E_PWD(35)    / ADMIN_PWD(7)
+    # 只设 E2E_TENANT 的话，读 TENANT_CODE 的那 9 个照样用自己写死的
+    # `MFG1` —— 本地恰好对、staging 上必 401，且看起来像认证挂了。
+    #
+    # ★ 这三个别名一律下发**租户编码**（MFG1），不是 tenant_id：
+    #   `platform_base_e2e` P9-3 拿 TENANT_CODE 去比租户的 `code` 字段，
+    #   下发 tenant_id 会让它 "翻完 2 页也找不到自己"，看起来像列表漏了本租户。
+    if _RESOLVED_TENANT_CODE:
+        for _k in ("E2E_TENANT", "TENANT_CODE", "TENANT"):
+            env[_k] = _RESOLVED_TENANT_CODE
+    # tenant_id 单独给一个不会歧义的名字（绕 API 直写库的探针才需要）
     if _RESOLVED_TENANT:
-        env["E2E_TENANT"] = _RESOLVED_TENANT
+        env["E2E_TENANT_ID"] = _RESOLVED_TENANT
+    # 账号密码同理（值本来就来自同一组环境变量，这里只是补齐别名）
+    if env.get("E2E_USER") and not env.get("ADMIN_USER"):
+        env["ADMIN_USER"] = env["E2E_USER"]
+    if env.get("E2E_PWD") and not env.get("ADMIN_PWD"):
+        env["ADMIN_PWD"] = env["E2E_PWD"]
 
     host = ""
     for v in (env.get("BASE_URL", ""), api):
@@ -514,8 +563,8 @@ def main():
     # ── 租户自解析（必须在第一个探针之前）──────────────────────────
     # 探针各自的默认租户分两套环境不一致：staging 是 AH-THR，本地是 MFG1。
     # 不先钉下来，本地就是 36 个探针集体 401 —— 一个恒红的闸，没人会再看它。
-    global _RESOLVED_TENANT
-    _RESOLVED_TENANT = _resolve_tenant(
+    global _RESOLVED_TENANT, _RESOLVED_TENANT_CODE
+    _RESOLVED_TENANT_CODE, _RESOLVED_TENANT = _resolve_tenant(
         os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1"))
 
     print("=" * 62)

@@ -27,6 +27,12 @@ import httpx
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
 TENANT = os.environ.get("E2E_TENANT", "AH-THR")
+# ★ 直写库（D10/D11）必须用**规范 tenant_id**，不是登录用的租户编码。
+#   `tenants` 表里 code（MFG1）与 tenant_id（mfg_demo）是两套值，业务表的
+#   tenant_id 列存的是后者。拿编码去写，永远撞不上唯一索引 —— 表现为
+#   "库级约束没生效"，实际是自己写错了租户键。run_all 会显式下发这个变量；
+#   单独跑时退回 TENANT，行为与以前一致。
+TENANT_ID = os.environ.get("E2E_TENANT_ID") or TENANT
 USER = os.environ.get("E2E_USER", "mfg_admin")
 PWD = os.environ.get("E2E_PWD", "admin123")
 
@@ -204,7 +210,7 @@ def probe_db_unique(receipt_no: str) -> bool:
                 "INSERT INTO receipt_orders (tenant_id, receipt_no, receipt_type, "
                 "warehouse_id, status, total_qty, received_qty, stored_qty) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                (TENANT, receipt_no, "purchase", 1, "pending", 0, 0, 0),
+                (TENANT_ID, receipt_no, "purchase", 1, "pending", 0, 0, 0),
             )
             conn.commit()
             return False  # 竟然写进去了 → 约束没生效
