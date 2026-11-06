@@ -67,6 +67,47 @@ export const WAREHOUSE_TYPE_OPTIONS: EnumOption[] = [
   { value: 'consumable', label: '耗材仓' },
 ]
 
+/**
+ * 工作中心类别（`work_centers.wc_type`）。顺序与后端 `WC_TYPE_LABELS` 一致
+ * （dict 插入序即下拉顺序），一致性由 `test_wc_type_domain.py` 断言。
+ *
+ * ★ 这个字段混了**两种正交语义**，是历史遗留，前端如实呈现：
+ *   - 粒度：产线 / 工作单元 / 工位（`work_centers` 表本身就是这一层的单元）
+ *   - 工艺性质：机加工 / 装配 / 热处理 / …（艾华 33 个工位全在这一维）
+ *   拆成两个字段要先给 33 行数据归因（工位"是工位"还是"是装配"，两个答案都对），
+ *   属产品决策，所以先把值域收到一处、加闸看住。
+ *
+ * ⚠️ 这里原来有**两份** 3 项副本（`WorkCenterList.vue::WC_TYPE_OPTIONS`
+ *   和 `searchFields.ts::WC_TYPE`），都只抄了粒度三值，而库里实际是工艺性质
+ *   → 列表「类型」列 33/33 行直接印英文 `assembly` / `quality` / `machining`。
+ *   现在只剩这一份。
+ */
+export const WC_TYPE_OPTIONS: EnumOption[] = [
+  // 粒度
+  { value: 'production_line', label: '产线' },
+  { value: 'work_cell', label: '工作单元' },
+  { value: 'workstation', label: '工位' },
+  // 工艺性质
+  { value: 'machining', label: '机加工' },
+  { value: 'assembly', label: '装配' },
+  { value: 'heat_treat', label: '热处理' },
+  { value: 'surface_treat', label: '表面处理' },
+  { value: 'quality', label: '检验' },
+  { value: 'pack', label: '包装' },
+]
+
+/**
+ * 工作中心类别 → 中文。未知值给「未知（原文）」。
+ *
+ * 与 `opTypeLabel` 同一口径：**不允许 `|| v` 回退原文**（那个写法让脏值
+ * 看起来像正常值，`mfg_demo` 的 65 条探针工序就这么藏了三轮）。
+ */
+export function wcTypeLabel(code: string | null | undefined): string {
+  if (!code) return ''
+  const hit = WC_TYPE_OPTIONS.find((o) => o.value === code)
+  return hit ? hit.label : `未知（${code}）`
+}
+
 /* ────────────────────────────────────────────────────────────
  * 非状态类枚举：类型 / 级别 / 来源 / 通道
  *

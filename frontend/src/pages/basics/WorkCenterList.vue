@@ -9,6 +9,7 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
+import { WC_TYPE_OPTIONS, wcTypeLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
 
 interface WorkCenter {
@@ -30,11 +31,9 @@ interface WorkCenter {
   is_active: boolean
 }
 
-const WC_TYPE_OPTIONS = [
-  { value: 'production_line', label: '产线' },
-  { value: 'work_cell', label: '工作单元' },
-  { value: 'workstation', label: '工位' },
-]
+// 工作中心类别统一取 @/config/enums（后端真源 core/enums.py::WC_TYPE_LABELS）。
+// 原来这里有一份 3 项本地副本，只抄了粒度三值，而库里实际存的是工艺性质
+// （assembly/quality/machining）→ 列表「类型」列直接印英文原文。
 
 /** 所属车间下拉：只取 org_type=workshop 的组织，避免把部门和班组也列进来 */
 const workshopOptions = ref<Array<{ value: number; label: string }>>([])
@@ -93,8 +92,8 @@ const activeFilterTexts = computed<string[]>(() => {
   const out: string[] = []
   if (keyword.value) out.push(`关键词「${keyword.value}」`)
   if (wcTypeFilter.value) {
-    const hit = WC_TYPE_OPTIONS.find((o) => o.value === wcTypeFilter.value)
-    out.push(`类型「${hit?.label ?? wcTypeFilter.value}」`)
+    // 走 wcTypeLabel：未知值给「未知（原文）」，不再把原码当正常值塞进筛选说明
+    out.push(`类型「${wcTypeLabel(wcTypeFilter.value)}」`)
   }
   conditions.value.forEach((c) => out.push(condText(c)))
   return out
@@ -197,8 +196,16 @@ async function handleDelete(item: WorkCenter) {
   })
 }
 
+/**
+ * 类型 → 中文。
+ *
+ * ★ 原来写的是「查表命中就取中文，查不到就直接把原码吐出去」（label 后面
+ *   接一个表达式回退到入参）—— 于是库里 33 个工位的 `assembly`/`quality`/
+ *   `machining` 全被当成"正常显示"，没人去查为什么下拉里选不到。
+ *   现在交由 `wcTypeLabel` 统一处理，未知值给「未知（原文）」。
+ */
 function getWcTypeLabel(v: string): string {
-  return WC_TYPE_OPTIONS.find(o => o.value === v)?.label || v
+  return wcTypeLabel(v)
 }
 
 onMounted(() => {

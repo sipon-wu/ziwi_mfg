@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import date, datetime
 
-from app.core.enums import OpType
+from app.core.enums import OpType, WcType
 
 
 # ==================== M04 工序定义 ====================
@@ -73,7 +73,10 @@ class OperationResponse(BaseModel):
 class WorkCenterCreate(BaseModel):
     code: str
     name: str
-    wc_type: str
+    # 值域见 app/core/enums.py::WC_TYPE_LABELS。用 Literal 而不是裸 str：
+    # 这一列此前没有任何校验，前端下拉又只有 3 个粒度值，于是库里的
+    # `assembly` / `quality` / `machining` 到页面上全成了英文原文。
+    wc_type: WcType
     org_id: Optional[int] = None
     efficiency: float = 0.85
     equipment_count: int = 0
@@ -89,7 +92,7 @@ class WorkCenterCreate(BaseModel):
 class WorkCenterUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
-    wc_type: Optional[str] = None
+    wc_type: Optional[WcType] = None
     org_id: Optional[int] = None
     efficiency: Optional[float] = None
     equipment_count: Optional[int] = None
@@ -107,6 +110,9 @@ class WorkCenterResponse(BaseModel):
     tenant_id: str
     code: str
     name: str
+    # ⚠️ 响应故意保持 `str` 而不是 `WcType`：库里若已存在域外脏值，
+    #    用 Literal 会让**读取**直接 500（把数据问题变成可用性问题）。
+    #    校验只挡写入，读出来交给前端显示「未知（原文）」。
     wc_type: str
     org_id: Optional[int] = None
     efficiency: float = 0.85

@@ -143,3 +143,80 @@ assert set(WAREHOUSE_TYPE_ALIASES.values()) <= set(WAREHOUSE_TYPE_LABELS), \
     "WAREHOUSE_TYPE_ALIASES 的目标值必须都在值域内"
 assert not (set(WAREHOUSE_TYPE_ALIASES) & set(WAREHOUSE_TYPE_LABELS)), \
     "别名键不能同时是合法值，否则归一规则自相矛盾"
+
+# ══════════════════════════════════════════════════════════════════
+# 工作中心类别（`work_centers.wc_type`）—— 后端唯一真源
+#
+# ## 这个字段历史上是"三份各说各话"
+#
+# | 位置 | 内容 |
+# |---|---|
+# | `models/basic_data.py` 列注释 | `production_line` / `work_cell` / `workstation`（粒度）|
+# | `frontend/.../WorkCenterList.vue::WC_TYPE_OPTIONS` | 同样 3 个（抄注释）|
+# | `frontend/src/config/searchFields.ts::WC_TYPE` | 又同样 3 个（第二份副本）|
+# | **库里实际** | 艾华 33 个工位全是 `assembly`(19) / `quality`(9) / `machining`(5) —— **一个粒度值都没有** |
+#
+# 于是列表「类型」列 33/33 行裸渲染英文，而「产线 / 工作单元」两个选项
+# 全库**零使用**（是照着那句注释凭空建的）。
+#
+# ## ★ 它混了两种正交语义 —— 这里如实承认，不再假装只有一个
+#
+# ① **粒度**：产线 / 工作单元 / 工位。`work_centers` 表本身就是这一层的单元；
+#    探针建工位时填 `workstation`，说明这个语义真在用。
+# ② **工艺性质**：这个工作中心主要承担什么工艺（机加工 / 装配 / 热处理…）。
+#    艾华的实际数据全在这一维。
+#
+# 不拆成两个字段的理由：拆要给 33 行数据做归因（工位到底"是工位"还是"是装配"，
+# 两个答案都对），而当前没有任何计算按 wc_type 分支 —— 它只做等值筛选与展示。
+# 拆字段是产品决策，不是一次数据清理能定的。所以先把**值域收到一处、加闸看住**。
+#
+# ## 为什么不直接 `= OP_TYPE_LABELS`
+#
+# - 工序的检验被细分成 来料检/过程检/终检 三段；一个**工作中心**在物理空间上
+#   只分"检验工位"，不分工序阶段 → 这里用单个 `quality`，不铺开四段。
+# - `reaction` / `blend` / `separation` / `filling` / `transport` 属流程行业，
+#   本项目边界已明确排除 → 不列，免得下拉里全是永远用不到的值。
+# - 断言闸 (`test_wc_type_domain.py`) 把"比 OP_TYPE 多出来的值"钉死在白名单
+#   4 个上：`quality` / `production_line` / `work_cell` / `workstation`。
+#   多一个就红 —— 防止再有人往这里塞野值。
+# ══════════════════════════════════════════════════════════════════
+WC_TYPE_LABELS: dict[str, str] = {
+    # ── 粒度（顺序即下拉顺序：先"这个东西有多大"，再"它干什么活"）──
+    "production_line": "产线",
+    "work_cell": "工作单元",
+    "workstation": "工位",
+    # ── 工艺性质 ──
+    "machining": "机加工",
+    "assembly": "装配",
+    "heat_treat": "热处理",
+    "surface_treat": "表面处理",
+    "quality": "检验",
+    "pack": "包装",
+}
+
+WC_TYPES: tuple[str, ...] = tuple(WC_TYPE_LABELS)
+
+#: Pydantic 用的字面量类型：`wc_type: WcType` → 非法值 422。
+WcType = Literal[*WC_TYPE_LABELS]
+
+
+def wc_type_label(code: str | None) -> str:
+    """代码转中文；未知值给「未知（原文）」，不回显原文冒充正常值。"""
+    if not code:
+        return ""
+    return WC_TYPE_LABELS.get(code, f"未知（{code}）")
+
+
+#: `WC_TYPE_LABELS` 允许超出 `OP_TYPE_LABELS` 的值（白名单，多一个就红）。
+#: 每一条都要能说出理由，否则就是野值。
+WC_TYPE_EXTRA_ALLOWED: frozenset[str] = frozenset({
+    "production_line", "work_cell", "workstation",  # 粒度语义
+    "quality",                                      # 工作中心粒度的"检验"
+})
+
+assert set(get_args(WcType)) == set(WC_TYPE_LABELS), \
+    "WcType 与 WC_TYPE_LABELS 不同步"
+assert set(WC_TYPE_LABELS) - set(OP_TYPE_LABELS) == WC_TYPE_EXTRA_ALLOWED, (
+    "WC_TYPE_LABELS 比 OP_TYPE_LABELS 多出的值必须恰好是白名单那一组；"
+    "新增值请先在 WC_TYPE_EXTRA_ALLOWED 里写明理由"
+)

@@ -9,7 +9,7 @@
  */
 import type { FieldDef, Operator, ResourceSearchConfig, SearchCondition } from '@/types/search'
 import { OPERATOR_LABELS } from '@/types/search'
-import { OP_TYPE_OPTIONS as OP_TYPE } from '@/config/enums'
+import { OP_TYPE_OPTIONS as OP_TYPE, WC_TYPE_OPTIONS as WC_TYPE } from '@/config/enums'
 
 // ============================================================
 // 各枚举候选项（收敛自各列表页散落的 *_OPTIONS 常量）
@@ -22,11 +22,8 @@ const PRODUCT_TYPE = [
   { value: 'semi', label: '半成品' },
   { value: 'raw', label: '原材料' },
 ]
-const WC_TYPE = [
-  { value: 'production_line', label: '产线' },
-  { value: 'work_cell', label: '工作单元' },
-  { value: 'workstation', label: '工位' },
-]
+// 工作中心类别同样统一放在 @/config/enums。原来这里那份只有粒度三值，
+// 而库里实际存的是工艺性质（assembly/quality/machining）→ 列表印英文原文。
 const ROUTE_STATUS = [
   { value: 'draft', label: '草稿' },
   { value: 'published', label: '已发布' },

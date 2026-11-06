@@ -64,7 +64,13 @@ class WorkCenter(Base):
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     code            = Column(String(100), nullable=False, comment="工作中心编码")
     name            = Column(String(200), nullable=False, comment="工作中心名称")
-    wc_type         = Column(String(50), nullable=False, comment="类型: production_line/work_cell/workstation")
+    # ★ 这一列混了两种正交语义（粒度 / 工艺性质），历史遗留：
+    #   库里的实际取值是 `assembly` / `quality` / `machining`（工艺性质），
+    #   而探针建工位填的是 `workstation`（粒度）；全库 `production_line` /
+    #   `work_cell` **零使用**。原先这句注释只写了后三个粒度值，前端照它建了
+    #   下拉，导致列表「类型」列 33/33 行裸渲染英文。
+    #   真源见 `core.enums.WC_TYPE_LABELS`，前端对应 `config/enums.ts`。
+    wc_type         = Column(String(50), nullable=False, comment="工作中心类别（粒度或工艺性质），取值见 core.enums.WC_TYPE_LABELS")
     org_id          = Column(BigInteger, comment="所属组织ID")
     efficiency      = Column(Float, default=0.85, comment="效率因子(0~1)")
     equipment_count = Column(Integer, default=0, comment="设备数")
