@@ -147,3 +147,68 @@ class TestRecalcCoversOldValues:
         """60 对 55（+9%）：在闸的容差内，也超出 5% 重算线 —— 这种会被重写。
         反过来 55.5 对 55 只差 0.9%，不该为了 0.5 件去改人的手填值。"""
         assert abs(55.5 - 55) <= 55 * seed.RECALC_TOLERANCE
+
+
+#: staging `RTE-AH-UNIT` v1 实测（2026-11-07）：`(工位, 占机, 并行台数)`，
+#: 占机 = unit_time + setup_time。串联合计 618 分。
+UNIT_SEQ = [
+    ("MA020", 40, 1), ("MA030", 13, 1), ("MA035", 15, 1), ("MA040", 17, 1),
+    ("MA050", 20, 1), ("MA060", 17, 1), ("MA070", 15, 1), ("FA040", 13, 1),
+    ("FA020", 17, 1), ("FA030", 5, 1), ("FA035", 8, 1), ("FA070", 50, 1),
+    ("FA080", 5, 1), ("MA080", 15, 1), ("MA090", 15, 1), ("FA090", 13, 1),
+    ("FA1000", 15, 1), ("EL010", 30, 1), ("EL020", 35, 1), ("EL030", 250, 1),
+    ("CW190", 10, 1),
+]
+
+
+class TestClosedLoop:
+    """口径 C：单班走完全流程并下线。这是对设计纲领该用的口径。"""
+
+    def test_lead_time_is_618(self):
+        assert sum(o for _k, o, _p in UNIT_SEQ) == 618
+
+    def test_one_aging_rack_only_closes_one_unit(self):
+        """★ 核心事实：只有 1 个老化台架时，单班只能下线 **1** 台。
+        第 1 台 618 分（班内），第 2 台 868 分（14.5h，跨班）——
+        所以"单班 44 台/月"在"每班清"的前提下是错的，实际 22 台/月。"""
+        n, times = gate.closed_loop_output(UNIT_SEQ, 720)
+        assert n == 1
+        assert times[0] == 618
+        assert times[1] == 868
+
+    def test_two_aging_racks_closes_two_units(self):
+        """EL030 实物 3 台含 1 台备用 → 可用 2 台：第 2 台 668 分下得了线，44 台/月成立。"""
+        seq = [(k, o, 2 if k == "EL030" else p) for k, o, p in UNIT_SEQ]
+        n, times = gate.closed_loop_output(seq, 720)
+        assert n == 2
+        assert times[1] == 668
+        assert times[2] == 868          # 第 3 台要跨班
+
+    def test_closed_loop_is_stricter_than_takt(self):
+        """节拍（720÷250=2）比闭环（1）宽松 —— 拿节拍判纲领会把跨班在制当成免费的。"""
+        n, _ = gate.closed_loop_output(UNIT_SEQ, 720)
+        assert n == 1 < 720 // 250 == 2
+
+    def test_same_station_steps_must_serialize(self):
+        """★ 回归闸：同一工位的两道工序共用一个治具，必须串行。
+        RT050「上轴承压入 + 下轴承压入」各 20 分 → 每件 40 分 → 18 件/班。
+        若按**工序**各算一个工位，会凭空多一条并行通道，算出 36 件/班
+        （初版就是这个错：Rotor 线报 23 件/班，实际 18）。"""
+        n, _ = gate.closed_loop_output([("RT050", 20, 1), ("RT050", 20, 1)], 720)
+        assert n == 18
+
+    def test_parallel_count_from_equipment_count(self):
+        """并行台数来自 `equipment_count`（**可用**台数）；0/未填按 1 台。"""
+        assert gate.DEFAULT_PARALLEL == 1
+        # 同一工位两道 250 分 = 500 分/件，1 台 → 720/500 = 1 件/班
+        assert gate.closed_loop_output([("S", 250, 0), ("S", 250, 1)], 720)[0] == 1
+        assert gate.closed_loop_output([("S", 250, 1)], 720)[0] == 2
+        assert gate.closed_loop_output([("S", 250, 2)], 720)[0] == 4
+
+    def test_empty_route(self):
+        assert gate.closed_loop_output([], 720) == (0, [])
+
+    def test_zero_occupancy_does_not_hang(self):
+        """占机填 0 不能让模拟死循环（防御性：真实数据里出现过 0）。"""
+        n, times = gate.closed_loop_output([("S", 0, 1), ("T", 100, 1)], 720)
+        assert n == 7 and len(times) == 8

@@ -12,7 +12,7 @@
 
 所以产能填了多少、填得对不对，跑完全量回归也发现不了——**没有任何断言会去读它**。
 
-## 算法（两个口径，别混）
+## 算法（三个口径，别混）
 
 一个工作中心上常挂多道工序（推进器的灌胶区一个工位就挂了 7 道：
 预热 / 混合抽真空 / 灌胶 / 灌胶后抽真空 / 固化烘烤 / 冷却拆治具）。
@@ -26,14 +26,20 @@
 = 单班分钟数 ÷ 该工位**全部工序占机之和**（整件取整）。
 一件产品要依次过完这个工位的每一道工序，所以物理吞吐是合计，不是单道。
 
-两个口径必然不同（7 道工序的灌胶区：口径 A 5 件、口径 B 2 件），
-**它们不是"谁对谁错"，是回答两个不同问题**：
-- A 回答"工位被哪道工序卡住、单工序产能下限是多少"→ 粗排产、工位负荷看板
-- B 回答"这个工位一班到底能出几件"→ 月产能、路线瓶颈、45 台/月 对账
+**口径 C —— 单班闭环下线量（对设计纲领用这个）**
+= 空线起跑，一个班次内能**走完全流程并下线**几件 = `closed_loop_output()`。
+它取决于 **lead time（全流程串联占机之和）** 和瓶颈工序在链条上的**位置**。
 
-因此本闸**分开比**：
-- `capacity_per_shift` ↔ 口径 A（字段口径一致性）
-- 月产能 / 瓶颈工位 ↔ 口径 B（物理吞吐 vs 设计纲领）
+A/B/C 三个口径必然不同，**不是"谁对谁错"，是回答三个不同问题**：
+- A 回答"工位被哪道工序卡住、单工序产能下限"→ `capacity_per_shift` 该填的数
+- B 回答"这个工位一班到底能出几件"→ 月产能、路线瓶颈
+- C 回答"单班能不能真的把成品交下来"→ 纲领能不能达成
+
+★ 2026-11-07 用户指出：拿 B/A 去对纲领会把"在制品跨班滞留"当成免费前提。
+  推进器 21 道工序串联 618 分，老化 250 分且排在倒数第二道 —— 只有 1 个老化台架时
+  第 1 台 618 分下线、第 2 台 868 分（14.5h）跨班，**单班实际只能下线 1 台**
+  （22 台/月），而节拍算是 2 台（44 台/月）。配 2 个台架后第 2 台 668 分，
+  44 台/月才真的成立。所以判纲领必须用 C，A/B 只用于字段核对与瓶颈分析。
 
 ⚠️ 2026-11-07 之前这里只有口径 B，却拿它去比 `capacity_per_shift` —— 于是一个工位
 挂 7 道工序时，字段 11（口径 A）被判定成"对 2（口径 B）高估 450%"，**报出来的
@@ -45,7 +51,11 @@
 3. 瓶颈 = 该路线里**口径 B 产能最低**的工位；
 4. 月产能 = 每班产出 × 班数 × 月工作日；
 5. 同时拿 `capacity_per_shift` 字段值与**口径 A（最慢一道）**比对 ——
-   一个工位多工序时，若有人按"最快那道"或"合计"填，这里就会报出来。
+   一个工位多工序时，若有人按"最快那道"或"合计"填，这里就会报出来；
+6. 再按**口径 C** 模拟整条流程（含 `equipment_count` 并行台架），
+   用"单班闭环下线量"去对设计纲领。
+
+因此本闸**分开比**：字段 ↔ A、瓶颈分析 ↔ B、纲领 ↔ C。
 
 ## 用法
 
@@ -141,6 +151,62 @@ def station_capacity(max_occupancy: float, shift_minutes: float) -> int | None:
     if not max_occupancy or max_occupancy <= 0:
         return None
     return math.floor(shift_minutes / max_occupancy)
+
+
+#: 没填 `equipment_count` 的工位按几台并行算。0 = 没填 → 单工位单治具。
+#: ★ `equipment_count` 记的是**参与排产的可用台数**，不是资产台数 ——
+#:   备用台架不产生产能，不能算进来（2026-11-07 EL030 实物 3 台含 1 台备用，
+#:   这里填 2，备注写在 work_centers.description 里）。
+DEFAULT_PARALLEL = 1
+
+
+def closed_loop_output(seq: list[tuple[object, float, int]],
+                       shift_minutes: float) -> tuple[int, list[float]]:
+    """口径 C：**空线起跑，一个班次内能走完全流程并下线几件**。
+
+    `seq` = 按工序顺序的 `(工位键, 占机, 并行台数)`。
+
+    为什么要单独算这个：口径 B（720 ÷ 合计）和"节拍产能"（720 ÷ 瓶颈）都是
+    **稳态**吞吐 —— 它们默认流水线已经在跑、在制品可以滞留到下一个班次。
+    而"单班完成全流程并下线"是更严的问题：从投料到下线整条链必须在本班内走完，
+    所以它取决于 **lead time（串联占机之和）** 和瓶颈工序在链条上的**位置**。
+
+    推进器的实际形态（2026-11-07 核实）：21 道工序串联 618 分，老化一道 250 分
+    且排在倒数第二道 —— 只有一个老化台架时，第 1 台 618 分下线（班内 ✅），
+    第 2 台要 868 分（14.5h，**跨班**）。也就是说"单班 44 台/月"这个说法在
+    "每班清"的前提下是**错的**，实际只有 22 台/月。配 2 个台架后第 2 台 668 分，
+    才真的成立。
+
+    ★ `seq` 按**工位**排队，不是按工序：RT050 的「上轴承压入 + 下轴承压入」是
+      同一个工位的两道工序，共用一个压机/治具，必须**串行**。按工序各算一个"工位"
+      会凭空多出一条并行通道（初版就错在这里：Rotor 线算出 23 件/班，而它 8 道工序
+      里 RT050 占了 40 分/件，实际只有 18 件/班）。
+
+    返回 `(本班下线件数, 每件下线时刻)`；时刻表里最后一项是**本班下不了线**的
+    那一件（用于打印"第 N+1 件要多久"）。
+    """
+    if not seq:
+        return 0, []
+    #: 每个工位最近若干件在该站的完成时刻（判治具/台架是否腾出来）
+    station_hist: dict[object, list[float]] = {}
+    times: list[float] = []
+    while True:
+        t = 0.0
+        for key, occ, par in seq:
+            occ = float(occ)
+            if occ <= 0:
+                continue
+            par = max(DEFAULT_PARALLEL, int(par or 0))
+            hist = station_hist.setdefault(key, [])
+            avail = hist[-par] if len(hist) >= par else 0.0
+            t = max(t, avail) + occ
+            hist.append(t)
+        times.append(t)
+        if t > shift_minutes:
+            break
+        if len(times) > 5000:      # 防御：占机填 0 之类会让循环停不下来
+            break
+    return sum(1 for x in times if x <= shift_minutes), times
 
 
 async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
@@ -280,6 +346,7 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
 
                 # ④ 与字段值比对（★ 比的是口径 A「最慢一道」，不是上面的口径 B 合计）
                 field_cap = gate["cap"]
+                racks = max(1, int(gate.get("eq") or 0))
                 if field_cap:
                     delta = (float(field_cap) - gate["slowest"]) / gate["slowest"]
                     if abs(delta) <= TOLERANCE:
@@ -297,26 +364,50 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                         findings[f"field:{code}/{gate['wc_code']}"] = (
                             f"{code} {gate['wc_code']} capacity_per_shift {field_cap:g}"
                             f" 应为最慢一道 {gate['slowest']}（{sign} {abs(delta) * 100:.0f}%）")
+                    if racks > 1:
+                        # 台架数与字段口径是**两个维度**：字段记单台口径（Kane 2026-11-07
+                        # 拍板"按最慢那道"时没涉及台数），台数只在使用处相乘。
+                        print(f"            工位总产能 {float(field_cap) * racks:g} 件/班"
+                              f"（{racks} 台可用并行；capacity_per_shift 记的是单台口径）")
                 else:
                     print("  字段核对  ⚠️ 该工位没填 capacity_per_shift")
 
-                # ⑤ 月产能（按实算，双口径）
+                # ⑤ 月产能：先算「每班闭环下线量」（口径 C），再算稳态节拍
+                #    ★ 判纲领用口径 C。用节拍去比纲领会把"在制跨班"当成免费的前提，
+                #      于是单班明明只能下线 1 台也会报 ✅（2026-11-07 用户指出）。
+                seq = [(s[10] or f"step:{s[5]}",
+                        float(s[8] or 0) + float(s[9] or 0),
+                        max(1, int(s[16] or 0))) for s in steps]
+                n_closed, closed_times = closed_loop_output(seq, shift_minutes)
+                lead = sum(o for _k, o, _p in seq)
                 per_shift = gate["implied"]
                 m1, mn = per_shift * WORKDAYS, per_shift * shifts * WORKDAYS
-                print(f"  月产能    单班 {m1:6.1f} 台 ｜ {shifts} 班 {mn:6.1f} 台")
+                m_closed = n_closed * WORKDAYS
+                print(f"  闭环下线  {n_closed} 件/班"
+                      f"（串联 lead time {lead:g} 分={lead / 60:.1f}h，整条链在本班走完才算）"
+                      + (f"；第 {n_closed + 1} 件要 {closed_times[-1]:g} 分"
+                         f"（{closed_times[-1] / 60:.1f}h）→ 跨班"
+                         if len(closed_times) > n_closed else ""))
+                print(f"  月产能    单班闭环 {m_closed} 台/月（{n_closed}×{WORKDAYS}）"
+                      f" ｜ 稳态节拍 {m1:6.1f} ｜ {shifts} 班 {mn:6.1f}")
 
-                diff = (m1 - DESIGN_MONTHLY) / DESIGN_MONTHLY * 100
+                diff = (m_closed - DESIGN_MONTHLY) / DESIGN_MONTHLY * 100
                 ok = abs(diff) <= DESIGN_TOLERANCE_PCT
-                print(f"  对比纲领  单班 {m1:.0f} vs {DESIGN_MONTHLY:.0f} → "
+                print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
                       + ("✅ 对得上" if ok else f"❌ 偏差 {diff:+.0f}%"))
+                if abs(m1 - m_closed) > 0.5:
+                    print(f"            ⚠️ 稳态节拍 {m1:.0f} 台/月 是按瓶颈节拍算的，隐含流水线"
+                          f"连续运转、在制品可跨班；按「每班走完全流程并下线」只有 "
+                          f"{n_closed} 台/班 —— 两个数都对，但**纲领该对后者**")
                 if shifts > 1:
                     print(f"            ⚠️ shift_config 写的是 {shifts} 班（{shift_hours:g}h）→ "
                           f"按配置算 {mn:.0f} 台/月，是单班的 {shifts} 倍；"
                           f"若纲领是 {DESIGN_MONTHLY:.0f} 台，两班配置与实际不符")
-                verdicts.append((code, ver, "OK" if ok else f"偏差 {diff:+.0f}%", m1, mn))
+                verdicts.append((code, ver, "OK" if ok else f"偏差 {diff:+.0f}%", m_closed, mn))
                 if not ok:
                     findings[f"design:{code}"] = (
-                        f"{code} 单班 {m1:.0f} 台/月 vs 纲领 {DESIGN_MONTHLY:.0f}（{diff:+.0f}%）")
+                        f"{code} 单班闭环下线 {m_closed} 台/月 vs 纲领 {DESIGN_MONTHLY:.0f}"
+                        f"（{diff:+.0f}%）")
 
             print("\n" + "=" * 100)
             print("汇总")
@@ -324,7 +415,7 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
             for code, ver, tag, m1, mn in verdicts:
                 s1 = f"{m1:.0f}" if m1 else "-"
                 sn = f"{mn:.0f}" if mn else "-"
-                print(f"  {code:<18} v{ver}  单班 {s1:>6} 台/月 ｜ 按配置 {sn:>6} 台/月   {tag}")
+                print(f"  {code:<18} v{ver}  单班闭环 {s1:>4} 台/月 ｜ 按配置 {sn:>4} 台/月   {tag}")
 
             if problems:
                 print("\n字段与「最慢一道」不符（capacity_per_shift 的口径 = 单班 ÷ 该工位最慢那道工序）：")
@@ -360,8 +451,10 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                       + ("：" + "、".join(off) if off else ""))
 
             bad = [v for v in verdicts if not str(v[2]).startswith("OK")]
-            print(f"\n结论：{len(verdicts)} 条路线，单班口径 {len(verdicts) - len(bad)} 条与 "
-                  f"{DESIGN_MONTHLY:.0f} 台/月吻合；{len(problems)} 个工位字段填错")
+            print(f"\n结论：{len(verdicts)} 条路线，单班**闭环下线**口径 {len(verdicts) - len(bad)} 条"
+                  f"与 {DESIGN_MONTHLY:.0f} 台/月吻合；{len(problems)} 个工位字段填错")
+            print("     （闭环 = 空线起跑、整条流程在本班内走完并下线；"
+                  "稳态节拍另列，两者之差就是跨班在制）")
 
             # ── 棘轮档位 ────────────────────────────────────────────────
             if update_baseline:
