@@ -159,6 +159,17 @@ class ProductRoute(Base):
     """产品-工艺路线关联表"""
     __tablename__ = "product_routes"
 
+    # ★ 同一产品同一路线只能挂一次。挂两次不会报错，只会让"默认哪条"
+    #   更难判 —— 而默认路线解析错是静默的（建单悄悄不带路线或带错路线）。
+    # ★ 默认路线唯一走**部分唯一索引**（`WHERE is_default`），在
+    #   migrations/20261106c_product_route_perm.py 里逐条 CreateIndex：
+    #   SQLAlchemy 2.0 的 CreateTable 不带索引，写在 __table_args__ 里
+    #   对既有库不生效，容易造成"模型里有、库里没有"的假安全感。
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_id", "route_id",
+                         name="uq_product_routes_tenant_product_route"),
+    )
+
     id              = Column(PK_TYPE, primary_key=True, autoincrement=True)
     tenant_id       = Column(String(50), nullable=False, comment="租户ID")
     product_id      = Column(BigInteger, nullable=False, comment="产品ID")

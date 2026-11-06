@@ -50,6 +50,10 @@ async def create_work_order(
     # 只在响应里给得出去才有意义，吞掉等于没做。
     return {"code": 0, "message": result["message"],
             "data": {"id": result.get("id"), "wo_no": result.get("wo_no"),
+                     # 产品默认路线回填的结果必须透出：前端不传 route_id 却
+                     # 在详情里看到路线，不解释清楚就是个黑箱
+                     "route_id": result.get("route_id"),
+                     "route_auto": result.get("route_auto"),
                      "warnings": result.get("warnings") or []}}
 
 # 注意顺序：/work-orders/merge 必须注册在 /work-orders/{order_id} 之前。

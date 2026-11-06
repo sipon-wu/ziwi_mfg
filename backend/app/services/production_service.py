@@ -89,12 +89,72 @@ class ProductionService:
 
     async def create_work_order(self, data: dict, tenant_id: str) -> dict:
         data["tenant_id"] = tenant_id
+        # ★ 产品默认路线回填必须在校验**之前**：让校验看到真实的 route_id，
+        #   否则会误报"未关联工艺路线"，而实际已经回填了。
+        auto_route = await self._fill_default_route(data)
         warns = await self._validate_resources(data)
+        if auto_route:
+            _ver = auto_route.get("route_version")
+            warns.insert(0,
+                f"已按产品 {auto_route.get('route_code') or data.get('product_code')} "
+                f"的默认工艺路线「{auto_route.get('route_name')}"
+                f"{f' v{_ver}' if _ver is not None else ''}」"
+                f"自动关联（本次未手选路线）")
         order_id = await self.repo.create_work_order(data)
         # 必须回 id：不回的话前端建完工单拿不到 id，
         # 只能"建成功 → 回列表 → 搜索 → 再点进去"，缺一步跳不过去。
         return {"message": "工单创建成功", "id": order_id,
-                "wo_no": data.get("wo_no"), "warnings": warns}
+                "wo_no": data.get("wo_no"), "warnings": warns,
+                # 回传这次到底有没有自动带路线、带的是哪条 —— 前端要能解释
+                # "我没选路线，为什么详情里有路线"，不能让它变成黑箱
+                "route_id": data.get("route_id"),
+                "route_auto": ({"link_id": auto_route.get("link_id"),
+                                "route_id": auto_route.get("route_id"),
+                                "route_code": auto_route.get("route_code"),
+                                "route_name": auto_route.get("route_name"),
+                                "route_version": auto_route.get("route_version")}
+                               if auto_route else None)}
+
+    async def _fill_default_route(self, data: dict) -> Optional[dict]:
+        """建单没指定路线时，按产品默认路线回填 `route_id`。
+
+        ## 为什么必须做这一步
+
+        前端 `CreateWorkOrder.vue` **根本没有选路线的入口**，route_id 从来不提交。
+        而 `_last_operation_code()` 拿不到路线就返回 None →
+        `is_finish_report` 恒为 True → **每一条报工都被判成"完工"** →
+        完工口径（`total_output`）与工序流转量（`total_wip_output`）恒等，
+        双口径退化成单口径，且全程不报错。
+
+        实测（2026-11-06）本地 2076 张工单里 1482 张 route_id 为 NULL。
+
+        ## 口径
+
+        * 显式传了 `route_id` → **一律不动**（人工选择优先）
+        * 没有产品编码 → 无从解析，原样返回
+        * 产品没维护默认路线 / 默认路线今天不在生效期 → 返回 None，
+          由 `_validate_resources` 里那条既有的"未关联工艺路线"告警兜住
+          （口径是"没配也能先跑起来"，不拦）。
+        """
+        if data.get("route_id") is not None:
+            return None
+        code = (data.get("product_code") or "").strip()
+        if not code:
+            return None
+
+        from app.repositories.product_route_repo import ProductRouteRepository
+
+        # ★ 必须 inherit_context_from，不能只 set_tenant_id（同历史踩坑）：
+        #   只设租户、丢掉 _org_scope/_write_org_id 会让派生 repo 的**读过滤**
+        #   也退化成"全租户不限组织"，这里读的是产品→路线映射，读错就会把
+        #   别的组织维护的默认路线回填到本单上。test_subtable_org_scope 里
+        #   那道白名单闸就是专门拦这个的。
+        repo = ProductRouteRepository(self.repo._session).inherit_context_from(self.repo)
+        hit = await repo.resolve_default(code, business_today())
+        if not hit:
+            return None
+        data["route_id"] = hit["route_id"]
+        return hit
 
     async def _validate_resources(self, data: dict) -> list:
         """建单/改单时校验工单挂的设备与工作中心（场景 C-E7）。
@@ -161,9 +221,12 @@ class ProductionService:
         else:
             # 不挂工艺不拦（新租户没配路线也能先跑起来），但要留一句话：
             # 没有工艺的工单，报工按工序归集、工艺纪律检查都无从谈起。
+            # ★ 这里已经先试过"按产品默认路线回填"（_fill_default_route），
+            #   所以走到这里意味着**该产品确实没有生效中的默认路线** ——
+            #   文案要说清是哪种情况，否则用户会以为系统漏了自动带路线。
             warnings.append(
-                "工单未关联工艺路线（route_id）：报工将无法按工序归集，"
-                "建议建单时指定已发布的工艺路线")
+                "工单未关联工艺路线（route_id）：该产品没有生效中的默认路线，"
+                "报工将无法按工序归集；建议在产品的工艺路线里设一条默认路线")
 
         # ── B-E5：产品无 BOM 预警（不拦，与下达 no_bom 口径一致）──
         # 拦死的方案被明确否过（C-44：没配 BOM 不等于缺料，拦它只会让

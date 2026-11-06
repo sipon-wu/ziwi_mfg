@@ -1,12 +1,12 @@
 {
-  "total": 458,
-  "hit": 458,
+  "total": 462,
+  "hit": 462,
   "miss": 0,
   "uncovered": [],
   "by_module": {
     "M00": {
-      "total": 32,
-      "hit": 32
+      "total": 36,
+      "hit": 36
     },
     "M01": {
       "total": 24,
@@ -61,5 +61,5 @@
       "hit": 98
     }
   },
-  "updated": "2026-11-04 10:29"
+  "updated": "2026-11-06 13:20"
 }

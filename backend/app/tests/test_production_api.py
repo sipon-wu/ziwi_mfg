@@ -24,6 +24,16 @@ class TestProductionAPI:
                 "app.repositories.production_repo.ProductionRepository.query_one",
                 new_callable=AsyncMock,
             ) as mock_query_one,
+            # 建单会按「产品默认工艺路线」回填 route_id（断链修复：前端原本
+            # 没有选路线入口，route_id 恒 NULL → 每条报工都被判"完工"）。
+            # 本测试只关心建单本身 → 显式桩成"该产品没有默认路线"。
+            # 不打桩的话会 new 出真实的 ProductRouteRepository 去 execute，
+            # 而这里的 session 是 mock，拿回来的是 coroutine 不是结果集。
+            patch(
+                "app.repositories.product_route_repo.ProductRouteRepository.resolve_default",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             mock.return_value = 1
             mock_query_one.return_value = None

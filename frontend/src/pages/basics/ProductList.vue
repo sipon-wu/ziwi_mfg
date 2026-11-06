@@ -58,6 +58,109 @@ function onSearchSubmit(c: SearchCondition[]) {
   conditions.value = c
   showSearch.value = false
 }
+
+/* ── 产品默认工艺路线 ──────────────────────────────────────────
+ * 这张关联表此前零 API、零入口。没有默认路线的产品，建工单时
+ * route_id 永远是 NULL → 报工每条都被判成"完工" → 完工口径与
+ * 工序流转量恒等，双口径静默退化成单口径。
+ * 所以这个入口不是"锦上添花"，是上面那条断链的维护点。
+ * ──────────────────────────────────────────────────────────── */
+interface RouteLink {
+  id: number
+  route_id: number
+  is_default: boolean
+  effective_from: string | null
+  effective_to: string | null
+  route_code: string | null
+  route_name: string | null
+  route_version: number | null
+  route_status: string | null
+  step_count: number | null
+  effective_now?: boolean
+}
+
+const showRouteSheet = ref(false)
+const routeProduct = ref<Product | null>(null)
+const routeLinks = ref<RouteLink[]>([])
+const routeHasEffectiveDefault = ref(false)
+const routeLoading = ref(false)
+const allRoutes = ref<Array<{ id: number; code: string; name: string; version: number }>>([])
+const newRouteId = ref<number | ''>('')
+const newIsDefault = ref(true)
+
+async function openRoutes(p: Product) {
+  routeProduct.value = p
+  showRouteSheet.value = true
+  await loadRoutes()
+  if (!allRoutes.value.length) {
+    try {
+      const res: any = await get('/routes', { params: { page: 1, page_size: 100 } })
+      allRoutes.value = (res?.items || res || []).map((r: any) => ({
+        id: r.id, code: r.code, name: r.name, version: r.version,
+      }))
+    } catch { allRoutes.value = [] }
+  }
+}
+
+async function loadRoutes() {
+  if (!routeProduct.value) return
+  routeLoading.value = true
+  try {
+    const res: any = await get(`/products/${routeProduct.value.id}/routes`)
+    routeLinks.value = res?.items || []
+    routeHasEffectiveDefault.value = !!res?.has_effective_default
+  } catch (e: any) {
+    showToast(errorText(e, '读取产品工艺路线失败'))
+    routeLinks.value = []
+  } finally { routeLoading.value = false }
+}
+
+async function attachRoute() {
+  if (!routeProduct.value || newRouteId.value === '') {
+    showToast('请先选择要挂接的工艺路线')
+    return
+  }
+  try {
+    const res: any = await post(`/products/${routeProduct.value.id}/routes`, {
+      route_id: newRouteId.value,
+      is_default: newIsDefault.value,
+    })
+    // 后端会在 warnings 里说明"第一条自动设为默认""路线尚未发布"这类事，
+    // 不能吞 —— 用户否则不知道为什么多了一条默认
+    const w = res?.warnings || []
+    showToast(w.length ? w[0] : '已挂接')
+    newRouteId.value = ''
+    await loadRoutes()
+  } catch (e: any) {
+    showToast(errorText(e, '挂接失败'))
+  }
+}
+
+async function setDefaultRoute(link: RouteLink) {
+  if (!routeProduct.value) return
+  try {
+    const res: any = await put(
+      `/products/${routeProduct.value.id}/routes/${link.id}`, { is_default: true })
+    const w = res?.warnings || []
+    showToast(w.length ? w[0] : '已设为默认路线')
+    await loadRoutes()
+  } catch (e: any) {
+    showToast(errorText(e, '设置失败'))
+  }
+}
+
+async function removeRoute(link: RouteLink) {
+  if (!routeProduct.value) return
+  try {
+    const res: any = await del(`/products/${routeProduct.value.id}/routes/${link.id}`)
+    const w = res?.warnings || []
+    showToast(w.length ? w[0] : '已解除挂接')
+    await loadRoutes()
+  } catch (e: any) {
+    showToast(errorText(e, '解除失败'))
+  }
+}
+
 function onResetSubmit() {
   conditions.value = []
   showSearch.value = false
@@ -278,6 +381,7 @@ onMounted(fetchData)
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
                 <div class="ziwi-row-actions">
                   <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
+                  <van-button plain icon="guide-o" @click.stop="openRoutes(item)">工艺路线</van-button>
                   <van-button type="danger" plain icon="delete" @click.stop="handleDelete(item)">删除</van-button>
                 </div>
               </td>
@@ -322,6 +426,90 @@ onMounted(fetchData)
       @search="onSearchSubmit"
       @reset="onResetSubmit"
     />
+
+    <!-- 产品 · 默认工艺路线。
+         没有默认路线的产品，建工单不会自动带路线 → 报工每条都被判成完工
+         → 双口径退化成单口径。所以这一屏要点明"有没有生效中的默认路线"。 -->
+    <van-popup v-model:show="showRouteSheet" position="bottom" round
+               :style="{ maxHeight: '82%' }">
+      <div class="route-sheet">
+        <div class="route-sheet__head">
+          <div class="route-sheet__title">
+            工艺路线 · {{ routeProduct?.name || '' }}
+          </div>
+          <div class="route-sheet__sub">{{ routeProduct?.code || '' }}</div>
+        </div>
+
+        <div class="route-sheet__banner" :class="{ 'is-warn': !routeHasEffectiveDefault }">
+          <template v-if="routeHasEffectiveDefault">
+            已有生效中的默认路线：建工单不选路线时会自动关联它
+          </template>
+          <template v-else>
+            ⚠️ 没有生效中的默认路线：建工单不会自动带路线，报工将无法按工序归集
+          </template>
+        </div>
+
+        <van-loading v-if="routeLoading" class="route-sheet__loading" size="20" />
+
+        <van-empty v-else-if="!routeLinks.length" description="还没有挂接任何工艺路线" />
+
+        <div v-else class="route-sheet__list">
+          <div v-for="lk in routeLinks" :key="lk.id" class="route-item">
+            <div class="route-item__main">
+              <div class="route-item__name">
+                {{ lk.route_name || '（路线已删除）' }}
+                <span class="route-item__ver" v-if="lk.route_version !== null">
+                  v{{ lk.route_version }}
+                </span>
+                <van-tag v-if="lk.is_default" type="primary" class="route-item__tag">默认</van-tag>
+                <van-tag v-if="lk.is_default && lk.effective_now === false" type="warning"
+                         class="route-item__tag">今天不在生效期</van-tag>
+              </div>
+              <div class="route-item__meta">
+                {{ lk.route_code || '-' }} · {{ lk.step_count ?? 0 }} 道工序
+                <span v-if="lk.route_status && lk.route_status !== 'published'"
+                      class="route-item__draft">
+                  · 未发布（{{ lk.route_status }}）
+                </span>
+              </div>
+              <div class="route-item__meta">
+                生效期：{{ lk.effective_from || '不限' }} ~ {{ lk.effective_to || '不限' }}
+              </div>
+            </div>
+            <div class="route-item__ops">
+              <van-button v-if="!lk.is_default" size="small" plain type="primary"
+                          @click="setDefaultRoute(lk)">设为默认</van-button>
+              <van-button size="small" plain type="danger"
+                          @click="removeRoute(lk)">解除</van-button>
+            </div>
+          </div>
+        </div>
+
+        <div class="route-sheet__add">
+          <van-field label="挂接路线">
+            <template #input>
+              <van-radio-group v-model="newRouteId" direction="horizontal" class="route-add-group">
+                <van-radio v-for="r in allRoutes" :key="r.id" :name="r.id">
+                  {{ r.name }}（{{ r.code }}）
+                </van-radio>
+              </van-radio-group>
+              <div v-if="!allRoutes.length" class="route-sheet__hint">
+                没有可选的工艺路线，请先在「工艺路线」里新建并发布
+              </div>
+            </template>
+          </van-field>
+          <van-cell center title="设为默认路线">
+            <template #right-icon>
+              <van-switch v-model="newIsDefault" size="20" />
+            </template>
+          </van-cell>
+          <div class="route-sheet__actions">
+            <van-button round block type="primary" @click="attachRoute">挂接</van-button>
+            <van-button round block plain @click="showRouteSheet = false">关闭</van-button>
+          </div>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -399,4 +587,47 @@ onMounted(fetchData)
     padding: 8px 10px;
   }
 }
+
+/* ── 产品工艺路线弹层 ─────────────────────────────────────────── */
+.route-sheet {
+  padding: var(--ziwi-gap-md, 12px) var(--ziwi-gap-md, 12px) calc(var(--ziwi-gap-md, 12px) + env(safe-area-inset-bottom));
+}
+.route-sheet__head { margin-bottom: 8px; }
+.route-sheet__title { font-size: 16px; font-weight: 600; }
+.route-sheet__sub { font-size: 12px; color: var(--ziwi-text-2, #646566); margin-top: 2px; }
+
+.route-sheet__banner {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #eef7ee;
+  color: #2e7d32;
+  margin-bottom: 10px;
+}
+/* 没有默认路线是"会让数据口径出问题"的状态，用警示色而不是安静灰 */
+.route-sheet__banner.is-warn { background: #fff7e6; color: #b26a00; }
+
+.route-sheet__loading { padding: 24px 0; text-align: center; }
+.route-sheet__list { max-height: 42vh; overflow-y: auto; }
+
+.route-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ziwi-border, #ebedf0);
+}
+.route-item__main { flex: 1; min-width: 0; }
+.route-item__name { font-size: 14px; font-weight: 500; }
+.route-item__ver { font-size: 12px; color: var(--ziwi-text-2, #969799); margin-left: 4px; }
+.route-item__tag { margin-left: 6px; }
+.route-item__meta { font-size: 12px; color: var(--ziwi-text-2, #646566); margin-top: 3px; }
+.route-item__draft { color: #b26a00; }
+.route-item__ops { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+
+.route-sheet__add { margin-top: 12px; }
+.route-add-group { display: flex; flex-direction: column; gap: 4px; max-height: 22vh; overflow-y: auto; }
+.route-sheet__hint { font-size: 12px; color: var(--ziwi-text-2, #969799); }
+.route-sheet__actions { display: flex; gap: 10px; margin-top: 12px; }
 </style>

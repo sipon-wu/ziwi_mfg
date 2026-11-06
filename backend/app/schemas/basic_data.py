@@ -405,3 +405,26 @@ class CalendarInitRequest(BaseModel):
 class CalendarYearResponse(BaseModel):
     year: int
     months: dict  # {month: {workday_count, total_days, days: [CalendarResponse]}}
+
+
+# ==================== M01 产品 · 工艺路线关联 ====================
+
+class ProductRouteAttach(BaseModel):
+    """把一条工艺路线挂到产品上。
+
+    `is_default` 用 ``Optional[bool] = None`` 而不是 ``False``：调用方
+    **没表态**和**明确说不是默认**是两件事 —— 前者在"该产品还没有任何路线"
+    时会自动成为默认（只有一条路线时它必然是默认，逼用户多点一次不会更安全），
+    后者必须尊重。
+    """
+    route_id: int
+    is_default: Optional[bool] = None
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
+
+
+class ProductRouteUpdate(BaseModel):
+    """改关联。全部可选：缺省 = 不改这个字段。"""
+    is_default: Optional[bool] = None
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None

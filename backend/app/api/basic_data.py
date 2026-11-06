@@ -13,12 +13,15 @@ from app.services.basic_data_service import (
     ProductService, CalendarService,
 )
 from app.repositories.supplier_repo import SupplierRepository
+from app.repositories.product_route_repo import ProductRouteRepository
+from app.services.product_route_service import ProductRouteService
 from app.schemas.basic_data import (
     OperationCreate, OperationUpdate,
     WorkCenterCreate, WorkCenterUpdate,
     ProcessRouteCreate, ProcessRouteUpdate,
     RouteStepCreate, RouteStepUpdate,
     ProductCreate, ProductUpdate,
+    ProductRouteAttach, ProductRouteUpdate,
     CalendarCreate, CalendarBatchCreate, CalendarInitRequest,
 )
 from typing import Optional, List
@@ -485,3 +488,59 @@ async def get_supplier(
     if not data:
         raise HTTPException(404, detail={"code": "404-0000", "message": "供应商不存在"})
     return {"code": 0, "message": "success", "data": data}
+
+
+# ==================== M01 产品 · 默认工艺路线 ====================
+#
+# 这张关联表此前零 API、零引用、零行（详见 repositories/product_route_repo.py
+# 的文件头）。它不是"补个功能"，是把一条断链接上：工单不带路线 → 报工每条都被
+# 判成完工 → 完工口径与工序流转量恒等，双口径退化成单口径。
+#
+# 权限码由路径自动推导：静态段是 products + routes → 资源 `product_route`，
+# 即 M00:product_route:read / create / update / delete。这四个是**全新码**，
+# 默认没有任何角色拥有 —— 由 migrations/20261106c_product_route_perm.py
+# 从 M00:product:read / M00:product:update 克隆授权，避免"除 admin 外全员 403"。
+
+@router.get("/products/{product_id}/routes")
+async def list_product_routes(
+    product_id: int,
+    repo: ProductRouteRepository = Depends(
+        get_tenant_repo(ProductRouteRepository, require_auth=True)),
+):
+    svc = ProductRouteService(repo)
+    data = await svc.list(product_id)
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/products/{product_id}/routes")
+async def attach_product_route(
+    product_id: int,
+    req: ProductRouteAttach,
+    repo: ProductRouteRepository = Depends(get_tenant_repo(ProductRouteRepository)),
+):
+    svc = ProductRouteService(repo)
+    data = await svc.attach(product_id, req.model_dump())
+    return {"code": 0, "message": "已挂接工艺路线", "data": data}
+
+
+@router.put("/products/{product_id}/routes/{link_id}")
+async def update_product_route(
+    product_id: int,
+    link_id: int,
+    req: ProductRouteUpdate,
+    repo: ProductRouteRepository = Depends(get_tenant_repo(ProductRouteRepository)),
+):
+    svc = ProductRouteService(repo)
+    data = await svc.update(link_id, req.model_dump(exclude_unset=True))
+    return {"code": 0, "message": "已更新", "data": data}
+
+
+@router.delete("/products/{product_id}/routes/{link_id}")
+async def detach_product_route(
+    product_id: int,
+    link_id: int,
+    repo: ProductRouteRepository = Depends(get_tenant_repo(ProductRouteRepository)),
+):
+    svc = ProductRouteService(repo)
+    data = await svc.detach(link_id)
+    return {"code": 0, "message": "已解除挂接", "data": data}
