@@ -151,6 +151,105 @@ _SUMMARY_RE = re.compile(
     r"|(?:(?P<ok5>\d+)\s*/\s*(?P<bad5>\d+)\s*通过)", re.IGNORECASE)
 
 
+# ── 租户自解析 ────────────────────────────────────────────────────
+# 36 个探针各自写着 ``E2E_TENANT = os.environ.get("E2E_TENANT", "AH-THR")``。
+# 这套默认值在 staging 上成立（AH-THR 就是靶场，mfg_admin 在里头），
+# 但在本地不成立：本地种子数据与 ``mfg_admin`` 都在 ``MFG1``（tenant_id
+# ``mfg_demo``），``AH-THR`` 是空壳租户。
+#
+# 结果是本地一跑就是 **36 个探针集体 [FATAL] 登录失败 401**：
+# 看上去像认证服务挂了，实际是探针拿着对的密码去了错的租户。
+# 再叠一层危害：整道闸恒红 → 没人再看它 → 真断了也发现不了。
+#
+# 所以这里在跑探针之前先用**真实登录**确认哪个租户能进，再统一下发。
+# 判据只认 HTTP 200，不读本地库、不猜配置。
+_RESOLVED_TENANT = ""
+
+
+def _login_tenant(api_base: str, user: str, pwd: str, tenant: str,
+                  timeout: float = 10.0):
+    """试登录一次；成功则返回 token 里的**规范 tenant_id**，失败返回 None。
+
+    为什么返回 tenant_id 而不是用户填的租户编码：
+    ``tenants`` 表里 ``code``（MFG1 / AH-THR）与 ``tenant_id``（mfg_demo /
+    t_1692982c9cb7）是两套值，而**业务表的 tenant_id 列存的是后者**。
+    探针里有几条要绕过 API 直写库（doc_no_unique 的 D10/D11），把编码当
+    tenant_id 写进去就永远撞不上唯一索引 —— 表现为"库级约束没生效"，
+    实际是自己写错租户键。既然登录接口两种写法都认，就统一下发规范值。
+    """
+    import base64
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    url = api_base.rstrip("/") + "/auth/login"
+    body = _json.dumps({"username": user, "password": pwd,
+                        "tenant_id": tenant}).encode()
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    # ★ 显式清空代理：本机常挂工作代理，打自己/打 staging 都不该过它
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            payload = _json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        # 401 是"这组账号/租户不对"，属于正常的尝试失败，不是异常
+        return None
+    except Exception:
+        return None
+
+    token = payload.get("access_token") or ""
+    try:
+        seg = token.split(".")[1]
+        seg += "=" * (-len(seg) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(seg).decode())
+        return claims.get("tenant_id") or None
+    except Exception:
+        return None
+
+
+def _resolve_tenant(api_base: str) -> str:
+    """决定本次回归用哪个租户，并把它统一注入子探针。
+
+    * 用户显式给了 ``E2E_TENANT`` → 完全尊重，不自动改（显式意图优先）
+    * 没给 → 按「探针默认值优先」的顺序试登录，第一个能进的就是本次租户
+    * 全都进不去 → 不下发，让探针如实报 [FATAL]（不掩盖问题）
+    """
+    env_tenant = (os.environ.get("E2E_TENANT") or "").strip()
+    user = os.environ.get("E2E_USER", "mfg_admin")
+    pwd = os.environ.get("E2E_PWD", "admin123")
+
+    if env_tenant:
+        # ★ 显式指定也要归一。否则用户照着提示写 E2E_TENANT=MFG1（编码），
+        #   拿到的却是编码本身 —— 直写库的探针又会对不上 tenant_id。
+        tid = _login_tenant(api_base, user, pwd, env_tenant)
+        if tid:
+            print(f"租户：{env_tenant} → tenant_id={tid}（E2E_TENANT 显式指定）")
+            return tid
+        print(f"⚠️  租户：E2E_TENANT={env_tenant} 但 {user} 登不进这个租户；"
+              f"按原值下发，探针大概率会报 [FATAL] 登录失败。")
+        return env_tenant
+
+    # ★ 顺序有讲究：AH-THR 必须排第一。它是 staging 的靶场，探针默认值也是它，
+    #   放第一位可以保证 staging 行为的判定口径一个字都不变。
+    candidates = ["AH-THR", "MFG1", "mfg_demo"]
+    for code in candidates:
+        tid = _login_tenant(api_base, user, pwd, code)
+        if tid:
+            if code == "AH-THR":
+                print(f"租户：AH-THR → tenant_id={tid}（探针默认值，{user} 可登录）")
+            else:
+                print(f"⚠️  租户：已自动改用 {code} → tenant_id={tid}"
+                      f"（探针默认的 AH-THR 登不上 {user}，本环境种子数据在 {code}）")
+                print(f"   如需固定下来：E2E_TENANT={code} 再跑一次")
+            return tid
+    print(f"⚠️  租户：解析失败 —— {user} 在 {candidates} 里一个都登不进。"
+          f"下面的 [FATAL] 登录失败是如实反映，不是门禁误报。")
+    return ""
+
+
 def _child_env() -> dict:
     """给子探针补齐基址环境变量。
 
@@ -170,6 +269,14 @@ def _child_env() -> dict:
     """
     env = dict(os.environ)
     api = env.get("API_BASE", "").rstrip("/")
+    # ★ 必须兜底。`closed_loop_test` 自己是 ``os.environ.get("API_BASE",
+    #   "https://mfg1.ziwi.cn/api/v1")`` —— 没传 API_BASE 时它**默默打 staging**，
+    #   而其他探针默默打本地。一次"本地回归"里一半探针在打预发布，还是拿本地
+    #   解析出来的租户去登，必然 401。
+    #   run_all 的前提本来就是"后端已在 127.0.0.1:8000 运行"，所以这里显式兜底为
+    #   本地；真要打 staging 就显式传 API_BASE，别靠各探针自带的默认值。
+    if not api:
+        api = "http://127.0.0.1:8000/api/v1"
     if api:
         # ★把去掉尾斜杠的值写回去。探针都是 f"{API}/auth/login" 拼路径，
         #   传 https://host/api/v1/ 就会拼出 //auth/login → 全站 405
@@ -179,6 +286,10 @@ def _child_env() -> dict:
     if api and not env.get("BASE_URL"):
         root = api[:-len("/api/v1")] if api.endswith("/api/v1") else api
         env["BASE_URL"] = root
+
+    # 统一租户：探针各自的默认值不再单独生效，一律用本次解析出来的那个
+    if _RESOLVED_TENANT:
+        env["E2E_TENANT"] = _RESOLVED_TENANT
 
     host = ""
     for v in (env.get("BASE_URL", ""), api):
@@ -398,6 +509,14 @@ def main():
         print("=" * 62)
         print("判据自证（run_all 自己的 PASS/FAIL/SKIP 判定）")
         judge_fail = _judge_selftest() != 0
+
+    print("=" * 62)
+    # ── 租户自解析（必须在第一个探针之前）──────────────────────────
+    # 探针各自的默认租户分两套环境不一致：staging 是 AH-THR，本地是 MFG1。
+    # 不先钉下来，本地就是 36 个探针集体 401 —— 一个恒红的闸，没人会再看它。
+    global _RESOLVED_TENANT
+    _RESOLVED_TENANT = _resolve_tenant(
+        os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1"))
 
     print("=" * 62)
     print(f"E2E 全量回归：{len(probes)} 个探针\n" + "=" * 62)
