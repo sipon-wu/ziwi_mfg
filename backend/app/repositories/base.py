@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from sqlalchemy import text
+from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants.modules import ORG_AUTO_OWNED_TABLES, ORG_SCOPED_TABLES
@@ -152,6 +153,18 @@ class Repository(ABC):
         result = await self._session.execute(text(sql), params or {})
         row = result.first()
         return self._row_to_dict(row) if row else None
+
+    async def query_all(self, sql, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """返回全部行（列表查询用，不套分页）。
+
+        允许传已经 ``bindparams()`` 过的 ``TextClause`` —— ``IN :ids`` 这类
+        多值绑定必须先 ``bindparam("ids", expanding=True)``，否则 SQLite 静默
+        匹配 0 行（"查出来是空的"看着像没数据）。``text()`` 再包一层会把这个
+        设置丢掉，所以这里按类型放行。
+        """
+        stmt = sql if isinstance(sql, TextClause) else text(sql)
+        result = await self._session.execute(stmt, params or {})
+        return [self._row_to_dict(row) for row in result.fetchall()]
 
     async def query_page(self, sql: str, params: Dict[str, Any] = None, page: int = 1, page_size: int = 20) -> dict:
         # 先查总数

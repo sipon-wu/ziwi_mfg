@@ -108,6 +108,41 @@ export function wcTypeLabel(code: string | null | undefined): string {
   return hit ? hit.label : `未知（${code}）`
 }
 
+/**
+ * 工艺性质 —— **从工序派生**的值域，不是工位档案里那个字段。
+ *
+ * 工位到底在干什么活，取决于它在工艺路线上承担的工序（`operations.op_type`），
+ * 由后端每次现算，不落库。这里只负责把派生结果翻成中文。
+ *
+ * ★ 为什么单独一份、不复用 `WC_TYPE_OPTIONS`：
+ *   后者是工作中心**档案字段**的写入值域（混了粒度与工艺性质），而工艺性质
+ *   是 `op_type` 归一的结果（4 种检验 → quality）。曾经借用过一次，结果
+ *   `filling`（灌装）在 wc_type 表里查不到 → 界面显示「未知（filling）」。
+ *   后端真源 `core/enums.py::PROCESS_NATURE_LABELS`，两边逐项同序。
+ */
+export const PROCESS_NATURE_OPTIONS: EnumOption[] = [
+  { value: 'machining', label: '机加工' },
+  { value: 'assembly', label: '装配' },
+  { value: 'heat_treat', label: '热处理' },
+  { value: 'surface_treat', label: '表面处理' },
+  { value: 'quality', label: '检验' },
+  { value: 'pack', label: '包装' },
+  { value: 'reaction', label: '反应' },
+  { value: 'blend', label: '混合' },
+  { value: 'separation', label: '分离' },
+  { value: 'filling', label: '灌装' },
+  { value: 'transport', label: '转运' },
+]
+
+/**
+ * 工艺性质 → 中文。未知值给「未知（原文）」，**不允许 `|| v` 回退**。
+ */
+export function natureLabel(code: string | null | undefined): string {
+  if (!code) return ''
+  const hit = PROCESS_NATURE_OPTIONS.find((o) => o.value === code)
+  return hit ? hit.label : `未知（${code}）`
+}
+
 /* ────────────────────────────────────────────────────────────
  * 非状态类枚举：类型 / 级别 / 来源 / 通道
  *

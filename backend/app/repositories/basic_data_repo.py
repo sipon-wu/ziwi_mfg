@@ -1,8 +1,9 @@
 # ── 基础数据模块 — Operation Repository ──────────────────────────
 from typing import Optional, Dict, List
 from datetime import date
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from app.repositories.base import MultiTenantRepository
+from app.core.work_center_nature import derive, display_nature, is_conflict
 
 
 def _month_range(year: int, month: int):
@@ -106,12 +107,57 @@ class WorkCenterRepository(MultiTenantRepository):
             sql += " AND w.wc_type = :wc_type"
             params["wc_type"] = wc_type
         sql += " ORDER BY w.code ASC"
-        return await self.query_page(sql, params, page, page_size)
+        page_data = await self.query_page(sql, params, page, page_size)
+        await self._attach_nature(page_data.get("items") or [])
+        return page_data
+
+    async def _attach_nature(self, rows: List[Dict]) -> None:
+        """给工位补上「工艺性质」（从工序派生）与「档案值是否打架」。
+
+        ★ 为什么不 join 进主查询：主查询是 ``query_page``，外面套了
+          ``SELECT COUNT(*) FROM (...)`` 做 total。多一条 ``route_steps``
+          join 会让行数翻倍，total 与 items 一起失真（一个工位挂 7 道工序
+          就数成 7 个工位）。所以**分页照旧，只对当前页的 id 补一次聚合**。
+
+        ★ ``IN :ids`` 必须 ``bindparam(expanding=True)``：直接塞列表在
+          SQLite 下静默匹配 0 行（此前车间回填就踩过，打印"回填 0 行"
+          看着像没数据）。
+        """
+        ids = [r["id"] for r in rows if r.get("id") is not None]
+        if not ids:
+            return
+
+        sql = text(
+            "SELECT rs.wc_id AS wc_id, o.op_type AS op_type, COUNT(*) AS steps"
+            " FROM route_steps rs"
+            " JOIN operations o ON o.id = rs.operation_id"
+            " WHERE rs.wc_id IN :ids AND rs.tenant_id = :tid"
+            " GROUP BY rs.wc_id, o.op_type"
+        ).bindparams(bindparam("ids", expanding=True))
+        got = await self.query_all(sql, {"ids": ids, "tid": self._tenant_id})
+
+        by_wc: Dict[int, List[tuple]] = {}
+        for r in got:
+            by_wc.setdefault(r["wc_id"], []).append((r["op_type"], int(r["steps"])))
+
+        for row in rows:
+            nature = derive(by_wc.get(row["id"], []))
+            stored = row.get("wc_type")
+            row["process_nature"] = nature.primary
+            row["process_nature_all"] = list(nature.all)
+            row["process_nature_mixed"] = nature.mixed
+            row["process_nature_steps"] = nature.total_steps
+            # 没挂工序时退回档案值（新工位先建档、后配路线是正常流程）
+            row["nature_display"] = display_nature(stored, nature)
+            row["wc_type_conflict"] = is_conflict(stored, nature)
 
     async def get_wc(self, id: int) -> Optional[Dict]:
-        return await self.query_one(
+        row = await self.query_one(
             "SELECT * FROM work_centers WHERE id = :id", {"id": id}
         )
+        if row:
+            await self._attach_nature([row])
+        return row
 
     async def create_wc(self, data: dict) -> int:
         return await self.execute(

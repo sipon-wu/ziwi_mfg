@@ -220,3 +220,49 @@ assert set(WC_TYPE_LABELS) - set(OP_TYPE_LABELS) == WC_TYPE_EXTRA_ALLOWED, (
     "WC_TYPE_LABELS 比 OP_TYPE_LABELS 多出的值必须恰好是白名单那一组；"
     "新增值请先在 WC_TYPE_EXTRA_ALLOWED 里写明理由"
 )
+
+
+# ── 工艺性质（从工序派生，不落库） ────────────────────────────────
+#: 「这个工位在干什么活」。它是 `OP_TYPE_LABELS` 的**归一结果**：
+#: 4 种检验（inspect / incoming_qc / process_qc / final_qc）在这个维度上是
+#: 同一件事，合成 `quality`；其余类型自成一类。
+#:
+#: ★ 为什么单独一张表，不直接借 `WC_TYPE_LABELS`：
+#:   `WC_TYPE_LABELS` 是工作中心**档案字段**的写入值域（混了粒度与工艺性质），
+#:   而工艺性质是派生的。两者一旦共用一张表，往任一方向加值都会污染另一边。
+#:   曾经试过借用，结果 `filling`（灌装）派生出来在 wc_type 表里查不到 →
+#:   界面显示「未知（filling）」，语义修好了却修出个"未知"。
+PROCESS_NATURE_LABELS: dict[str, str] = {
+    "machining": "机加工",
+    "assembly": "装配",
+    "heat_treat": "热处理",
+    "surface_treat": "表面处理",
+    "quality": "检验",
+    "pack": "包装",
+    "reaction": "反应",
+    "blend": "混合",
+    "separation": "分离",
+    "filling": "灌装",
+    "transport": "转运",
+}
+
+PROCESS_NATURES: tuple[str, ...] = tuple(PROCESS_NATURE_LABELS)
+
+ProcessNature = Literal[*PROCESS_NATURE_LABELS]
+
+
+def nature_label(code: str | None) -> str:
+    """工艺性质转中文；未知值给「未知（原文）」。"""
+    if not code:
+        return ""
+    return PROCESS_NATURE_LABELS.get(code, f"未知（{code}）")
+
+
+#: 归一后必须全部可渲染 —— 派生出一个没有中文标签的值，界面就只能印「未知」。
+NATURE_UNMAPPED: frozenset[str] = frozenset(
+    {"inspect", "incoming_qc", "process_qc", "final_qc"}
+)
+assert set(PROCESS_NATURE_LABELS) == (set(OP_TYPE_LABELS) - NATURE_UNMAPPED) | {"quality"}, (
+    "PROCESS_NATURE_LABELS 必须是 OP_TYPE_LABELS 把 4 种检验归一成 quality 的结果；"
+    "新增工序类型时这里要同步，否则界面会出现「未知（xxx）」"
+)

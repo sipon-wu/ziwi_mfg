@@ -113,7 +113,18 @@ class WorkCenterResponse(BaseModel):
     # ⚠️ 响应故意保持 `str` 而不是 `WcType`：库里若已存在域外脏值，
     #    用 Literal 会让**读取**直接 500（把数据问题变成可用性问题）。
     #    校验只挡写入，读出来交给前端显示「未知（原文）」。
+    #
+    # ★ 语义（2026-11-06 正名）：这是**兜底值**，不是工位的工艺性质。
+    #   工艺性质由该工位承担的工序派生（见 `core/work_center_nature.py`），
+    #   只有新工位还没挂任何工序时才拿它显示。
     wc_type: str
+    # ── 以下四项由 `WorkCenterRepository._attach_nature()` 补，不落库 ──
+    process_nature: Optional[str] = None
+    process_nature_all: list[str] = []
+    process_nature_mixed: bool = False
+    process_nature_steps: int = 0
+    nature_display: Optional[str] = None
+    wc_type_conflict: bool = False
     org_id: Optional[int] = None
     efficiency: float = 0.85
     equipment_count: int = 0

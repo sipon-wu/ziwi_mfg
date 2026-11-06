@@ -259,6 +259,32 @@ def main():
            f"报工 HTTP {r5.status_code}｜上月 +{d_prev}（期望 7） 本月 +{d_cur}"
            f"（期望 0）｜口径：report_date 落在哪个月，产出就归哪个月")
 
+    # ── C-Z 清理：C-E7 自建的工位/设备用后即删 ──
+    # 为什么必须删：这个探针每跑一次就往 work_centers / equipment 塞 2+2 条，
+    # 且都不挂组织、不进任何路线。2026-11-06 实测 staging 已累积 10 条
+    # `WC-EDGE-*` / `WC-OK-*`（每次回归都多两条），产能闸把它们算成新增偏差 ——
+    # 门禁红了，没人看得出是探针自己造的。
+    # 写法参照 `product_route_e2e.py` 的 finally 清理段：只删自己建的。
+    if ok_id:
+        # WO-OK 引用着 WC-OK / EQ-OK。本库几乎无外键，删父行不报错、只留孤儿，
+        # 所以先作废那张工单，再删资源 —— 别留一条指向已删工位的在制单。
+        c.post(f"{API}/work-orders/{ok_id}/cancel",
+               json={"reason": "边界探针清理", "force": True,
+                     "force_reason": "探针自建资源即将删除"})
+    cleaned = []
+    for path, rid, tag in (
+        (f"{API}/work-centers/{wc_id}", wc_id, "WC-EDGE"),
+        (f"{API}/work-centers/{wc_ok}", wc_ok, "WC-OK"),
+        (f"{API}/equipment/{eq_id}", eq_id, "EQ-EDGE"),
+        (f"{API}/equipment/{eq_ok}", eq_ok, "EQ-OK"),
+    ):
+        if rid:
+            rr = c.delete(path)
+            cleaned.append(f"{tag}={rr.status_code}")
+    report("C-Z1 ★探针自建的工位/设备已清理（不留垃圾给产能闸）",
+           len(cleaned) == 4 and all(x.endswith("=200") for x in cleaned),
+           " ".join(cleaned))
+
     summary()
     return 0
 

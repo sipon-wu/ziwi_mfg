@@ -9,14 +9,29 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
-import { WC_TYPE_OPTIONS, wcTypeLabel } from '@/config/enums'
+import { WC_TYPE_OPTIONS, natureLabel, wcTypeLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
 
 interface WorkCenter {
   id: number
   code: string
   name: string
+  /**
+   * ★ 兜底值，不是工艺性质（2026-11-06 正名）。
+   * 工位到底干什么，由它承担的工序派生（下面的 process_nature*），
+   * 只有还没挂工序的新工位才拿这个值显示。
+   */
   wc_type: string
+  /** 派生主工艺性质；并列第一或无工序时为 null */
+  process_nature?: string | null
+  /** 涉及的全部工艺性质，按步数降序 */
+  process_nature_all?: string[]
+  process_nature_mixed?: boolean
+  process_nature_steps?: number
+  /** 界面该显示的值：派生优先，无派生退回兜底 */
+  nature_display?: string | null
+  /** 档案兜底值与工序派生结论打架 */
+  wc_type_conflict?: boolean
   org_id: number | null
   /** 所属车间名称（后端 LEFT JOIN organizations 带出，只读；写入仍走 org_id） */
   org_name?: string | null
@@ -208,6 +223,33 @@ function getWcTypeLabel(v: string): string {
   return wcTypeLabel(v)
 }
 
+/**
+ * 「类型」列该显示什么 —— 派生优先，兜底在后。
+ *
+ * 为什么不是直接用 `wc_type`：那个字段是工位档案里手填的**副本**，
+ * 工序改了没人同步（实测 33 个工位里 5 个对不上）。真正的依据是
+ * 该工位在工艺路线上承担的工序，由后端每次现算。
+ *
+ * 并列第一（如「定子电检」同时做机加工与检验）时不硬挑一个，
+ * 显示「混合（检验/机加工）」—— 挑一个只是把不确定性藏起来。
+ */
+function natureText(item: WorkCenter): string {
+  if (item.process_nature) return natureLabel(item.process_nature)
+  const all = item.process_nature_all || []
+  if (all.length > 1) {
+    return `混合（${all.map((v) => natureLabel(v)).join('/')}）`
+  }
+  if (item.nature_display) return natureLabel(item.nature_display)
+  return '未指定'
+}
+
+/** 「待核对」的悬浮说明：档案填了什么、工序实为什么 */
+function conflictHint(item: WorkCenter): string {
+  const archive = getWcTypeLabel(item.wc_type)
+  const real = item.process_nature ? natureLabel(item.process_nature) : '多种'
+  return `档案填「${archive}」，而该工位承担的工序是「${real}」—— 请核对后修改工位类型`
+}
+
 onMounted(() => {
   fetchData()
   fetchWorkshops()
@@ -282,7 +324,13 @@ onMounted(() => {
               <td>{{ item.code }}</td>
               <td>{{ item.name }}</td>
               <td>
-                <van-tag type="primary" size="small">{{ getWcTypeLabel(item.wc_type) }}</van-tag>
+                <van-tag type="primary" size="small">{{ natureText(item) }}</van-tag>
+                <van-tag
+                  v-if="item.wc_type_conflict"
+                  type="warning"
+                  class="wc-conflict"
+                  :title="conflictHint(item)"
+                >待核对</van-tag>
               </td>
               <td>
                 <span v-if="item.org_name">{{ item.org_name }}</span>
@@ -377,6 +425,17 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 「待核对」与类型标签同格并排，别让两个 tag 粘在一起。
+ * 视觉尺寸靠 CSS 压到与旁边 size="small" 一致 —— 不写 `size="small"` 是因为
+ * Vant4 的 TagSize 里没有 small（那组是既有类型错误，本次不往上加）。 */
+.wc-conflict {
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: help;
+}
+
 .wc-table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
