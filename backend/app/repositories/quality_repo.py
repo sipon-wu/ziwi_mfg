@@ -251,7 +251,15 @@ class InspectionOrderRepository(MultiTenantRepository):
         )
 
     async def get_max_order_no(self, date_prefix: str) -> Optional[str]:
-        row = await self.query_one(
+        """取本租户当天已用的最大检验单号（流水号生成用）。
+
+        ★ 必须 ``query_one_unscoped``：``inspection_order`` 在
+        ``ORG_SCOPED_TABLES`` 里，跟着组织范围过滤会让不同部门同日都算出
+        同一个序号 → 撞 ``(tenant_id, order_no)`` 唯一约束 → 500，
+        而且只在跨部门同日开单时复现（本地单部门测永远绿）。
+        单号口径是"全租户当天第几号"，与唯一约束对齐。
+        """
+        row = await self.query_one_unscoped(
             "SELECT order_no FROM inspection_order WHERE order_no LIKE :prefix ORDER BY order_no DESC LIMIT 1",
             {"prefix": f"{date_prefix}%"},
         )

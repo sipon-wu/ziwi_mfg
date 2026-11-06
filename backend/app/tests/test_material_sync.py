@@ -42,6 +42,9 @@ class FakeBaseRepo:
         self.queries.append((sql, params))
         return self.returns.pop(0) if self.returns else None
 
+    # 入库单号走 query_one_unscoped（全租户流水），stub 复用同一队列保持时序不变
+    query_one_unscoped = query_one
+
 
 class FakeMaterialRepo:
     """记录 INSERT 的 payload；``fail`` 用于模拟并发撞键或连接异常。"""
@@ -234,6 +237,7 @@ async def test_production_receipt_auto_creates_material():
 
         async def query_one(self, sql, params=None):
             self.calls += 1
+            # 单号取最大号走的是 query_one_unscoped（全租户流水），同一个桩
             if "FROM receipt_orders" in sql:
                 return None
             if "receipt_no LIKE" in sql:
@@ -241,6 +245,8 @@ async def test_production_receipt_auto_creates_material():
             if "FROM warehouses" in sql:
                 return warehouse
             return None
+
+        query_one_unscoped = query_one
 
     created_receipt = {}
 
@@ -297,6 +303,8 @@ async def test_production_receipt_skips_when_material_unbuildable():
 
         async def query_one(self, sql, params=None):
             return None
+
+        query_one_unscoped = query_one
 
     order = {"id": 21, "tenant_id": "t1", "wo_no": "WO-1",
              "product_code": "PRO-001", "completed_qty": 5, "org_id": 5}

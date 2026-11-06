@@ -145,7 +145,7 @@ async def test_submit_inspection_creates_order_and_backfills():
     fake_qc.set_write_org_id = MagicMock()
     fake_qc.get_by_receipt_item = AsyncMock(return_value=None)
     fake_qc.create_inspection_order = AsyncMock(return_value=99)
-    fake_qc.query_one = AsyncMock(return_value=None)
+    fake_qc.query_one_unscoped = AsyncMock(return_value=None)
 
     with patch("app.repositories.quality_repo.InspectionOrderRepository",
                return_value=fake_qc):
@@ -201,13 +201,13 @@ async def test_next_iqc_no_increments():
     fake_qc = MagicMock()
     from datetime import date
     prefix = f"IQC-{date.today().strftime('%Y%m%d')}-"
-    fake_qc.query_one = AsyncMock(return_value={"order_no": f"{prefix}0007"})
+    fake_qc.query_one_unscoped = AsyncMock(return_value={"order_no": f"{prefix}0007"})
     assert await ReceiptOrderService._next_iqc_no(fake_qc) == f"{prefix}0008"
 
 
 async def test_next_iqc_no_starts_at_one():
     fake_qc = MagicMock()
-    fake_qc.query_one = AsyncMock(return_value=None)
+    fake_qc.query_one_unscoped = AsyncMock(return_value=None)
     no = await ReceiptOrderService._next_iqc_no(fake_qc)
     assert no.endswith("-0001") and no.startswith("IQC-")
 
@@ -217,7 +217,7 @@ async def test_next_iqc_no_tolerates_bad_suffix():
     fake_qc = MagicMock()
     from datetime import date
     prefix = f"IQC-{date.today().strftime('%Y%m%d')}-"
-    fake_qc.query_one = AsyncMock(return_value={"order_no": f"{prefix}ABC"})
+    fake_qc.query_one_unscoped = AsyncMock(return_value={"order_no": f"{prefix}ABC"})
     assert await ReceiptOrderService._next_iqc_no(fake_qc) == f"{prefix}0001"
 
 

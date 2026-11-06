@@ -1201,7 +1201,9 @@ class ProductionService:
                 repo.set_write_org_id(write_org_id)
 
         prefix = f"PRD-{business_today().strftime('%Y%m%d')}-"
-        row = await self.repo.query_one(
+        # ★ 必须 unscoped：receipt_orders 受组织数据范围约束，跟着过滤会让
+        #   两个部门同日都算出同一个序号 → 撞 (tenant_id, receipt_no) → 500。
+        row = await self.repo.query_one_unscoped(
             "SELECT receipt_no FROM receipt_orders WHERE receipt_no LIKE :p "
             "ORDER BY receipt_no DESC LIMIT 1",
             {"p": f"{prefix}%"},

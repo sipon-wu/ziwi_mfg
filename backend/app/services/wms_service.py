@@ -775,7 +775,10 @@ class ReceiptOrderService:
         混用同一前缀会让"今天检了几批来料"查不出来。
         """
         prefix = f"IQC-{business_today().strftime('%Y%m%d')}-"
-        row = await qc_repo.query_one(
+        # ★ 不能用 query_one：inspection_order 受组织数据范围约束，
+        #   跟着过滤会让不同部门同日都算出同一个序号 → 撞唯一约束 500。
+        #   单号口径是"全租户当天第几号"。
+        row = await qc_repo.query_one_unscoped(
             "SELECT order_no FROM inspection_order WHERE order_no LIKE :p "
             "ORDER BY order_no DESC LIMIT 1",
             {"p": f"{prefix}%"},

@@ -54,6 +54,10 @@ class FakeRepo:
                 return value
         return None
 
+    # 单号流水号走 query_one_unscoped（口径是全租户当天第几号，不吃组织范围）。
+    # stub 复用同一条应答队列 —— 编排顺序与改造前一致，断言不用改。
+    query_one_unscoped = query_one
+
     async def get_work_order(self, id):
         return dict(self.order) if self.order else None
 
@@ -218,6 +222,8 @@ async def test_receipt_no_sequence_increments():
 
     s, repo = build()
     repo.query_one = fake_query_one
+    # 单号查询走 query_one_unscoped（实例级注入，别名覆盖不到，得单独赋）
+    repo.query_one_unscoped = fake_query_one
 
     class R:
         def __init__(self, *a):
