@@ -399,6 +399,42 @@ def is_catch_all(path: str) -> bool:
 WILDCARD = "*"
 
 
+# ── 平台运营级权限：**任何通配都不算数，只认精确授权** ────────────────
+#
+# 为什么需要这份名单
+# ------------------
+# `permission_guard` 里有一条硬编码："用户的任一角色 code == 'admin' → 追加 `*`"。
+# 而 `admin` 这个 code 在**每个租户**各有一份，于是每个租户的管理员都拿到全局
+# 通配 —— 包括 `PLAT:tenant:read`。实测：租户 A 的 admin 能列出平台全部 123 个
+# 租户，并读到别人的联系人电话、package_modules、license 状态。这不是"漏了租户
+# 过滤"（`tenants` 是租户主表，加过滤会让接口只会返回自己），而是**租户级管理员
+# 与平台级管理员从来没分开过**。
+#
+# 为什么不能用 `PLAT:` 前缀判定
+# ----------------------------
+# `PLAT` 是「未登记到业务模块的路由」的兜底命名空间，**不代表平台运营**。
+# 全库 94 条 PLAT 路由里，绝大多数是租户自身功能（组织/角色/用户/字典/审批/
+# 消息/打印/同步/Copilot），租户 admin 必须能用。若按前缀一刀切，前端"方案配置"
+# "用户管理""权限配置"会集体 403。所以只能**显式列举**。
+#
+# 这 6 个码是全部「能跨出租户边界」的操作：
+#   tenant:create/read/update/execute  → 开通、列出、修改、初始化管理员
+#   tenant_license:read                → 读别的租户的 license
+#   tenant_preset_role:create          → 给别的租户预置角色
+# 其余 PLAT 端点都通过 `get_tenant_repo` 绑定当前登录租户，天然不跨租户。
+PLATFORM_OPS_PERMISSIONS: frozenset = frozenset({
+    "PLAT:tenant:create",
+    "PLAT:tenant:read",
+    "PLAT:tenant:update",
+    "PLAT:tenant:execute",
+    "PLAT:tenant_license:read",
+    "PLAT:tenant_preset_role:create",
+})
+
+# 平台运营角色编码（`migrations/20261106d_platform_admin.py` 负责建角色与授权）
+PLATFORM_ADMIN_ROLE_CODE = "platform_admin"
+
+
 def has_permission(user_permissions: List[str], required: str) -> bool:
     """权限判定，支持四级通配。
 
@@ -411,10 +447,17 @@ def has_permission(user_permissions: List[str], required: str) -> bool:
 
     这样角色分配时可以写 ``M01:*`` 而不必罗列 9 条，
     也可以写 ``*:read`` 表达"全平台只读"。
+
+    ★ **例外：平台运营码（见 ``PLATFORM_OPS_PERMISSIONS``）不吃任何通配。**
+      只认精确授权。否则"租户 admin 拥有 `*`"就等于"租户 admin 是平台管理员"，
+      而这正是本次要拆开的那件事。这条判断必须放在**最前面**，不能放在
+      通配判定之后 —— 放后面等于没写。
     """
     if not required:
         return True
     perms = set(user_permissions or [])
+    if required in PLATFORM_OPS_PERMISSIONS:
+        return required in perms
     if WILDCARD in perms or required in perms:
         return True
 
