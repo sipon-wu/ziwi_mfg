@@ -268,3 +268,97 @@ def test_receipt_order_model_has_work_order_id():
     from app.models.wms import ReceiptOrder
 
     assert "work_order_id" in ReceiptOrder.__table__.columns
+
+
+# ============================================================
+# 仓库按产品类型路由（2026-11-06）
+# ============================================================
+#
+# 改造前写死 `WHERE type = 'finished'`：半成品完工也进成品仓，库存报表里
+# 半成品与成品混在一个仓分不开。`products.product_type` 与 `warehouses.type`
+# 本来都有 `semi`，只是生产入库从不查它。
+#
+# ⚠️ 但本库 `warehouses.type` 是脏的（还有 raw/wip/line_side/finished_goods/
+#    spare_parts），且 staging 有 2 个半成品产品却没有 semi 仓。所以规则是
+#    "有 semi 仓就进 semi，没有就退回成品仓并把这件事标记出来"，两条都要钉住。
+
+SEMI_WH = {"id": 8, "name": "半成品库", "type": "semi"}
+
+
+async def test_semi_product_routes_to_semi_warehouse():
+    """半成品完工 → 进 type=semi 仓，不该占用成品仓。"""
+    s, _ = build(answers=[
+        ("FROM receipt_orders", None),
+        ("FROM products", {"product_type": "semi"}),
+        ("FROM materials", MATERIAL),
+        ("FROM warehouses", SEMI_WH),
+    ])
+
+    class _Repo:
+        def __init__(self, session): self._s = session
+        def set_tenant_id(self, tid): pass
+        def set_write_org_id(self, oid): pass
+        async def create(self, data): return 1
+
+    with patch("app.repositories.wms_repo.ReceiptOrderRepository", _Repo), \
+         patch("app.repositories.wms_repo.ReceiptOrderItemRepository", _Repo):
+        out = await s._raise_production_receipt(make_order())
+
+    assert out["created"] is True
+    assert out["warehouse_type"] == "semi"
+    assert out["warehouse_fallback"] is None
+
+
+async def test_semi_product_without_semi_warehouse_falls_back_and_is_flagged():
+    """半成品但没配 semi 仓 → 退回成品仓，且必须**标记出来**。
+
+    静默放进去 = 半成品混进成品仓，只能靠对账发现；直接拒绝建单 = 完工件数
+    不变成库存、更查不到。两条都比"退回 + 标记"差。
+    """
+    s, _ = build(answers=[
+        ("FROM receipt_orders", None),
+        ("FROM products", {"product_type": "semi"}),
+        ("FROM materials", MATERIAL),
+        # 先匹配更具体的 needle：semi 那条 SQL 用参数占位符 :t，
+        # 退回那条是字面量 type = 'finished'
+        ("type = :t", None),
+        ("FROM warehouses", {**WAREHOUSE, "type": "finished"}),
+    ])
+
+    class _Repo:
+        def __init__(self, session): self._s = session
+        def set_tenant_id(self, tid): pass
+        def set_write_org_id(self, oid): pass
+        async def create(self, data): return 1
+
+    with patch("app.repositories.wms_repo.ReceiptOrderRepository", _Repo), \
+         patch("app.repositories.wms_repo.ReceiptOrderItemRepository", _Repo):
+        out = await s._raise_production_receipt(make_order())
+
+    assert out["created"] is True
+    assert out["warehouse_type"] == "finished"
+    assert out["warehouse_fallback"], "退回成品仓必须留下标记，否则是静默放错仓"
+    assert "semi" in out["warehouse_fallback"]
+
+
+async def test_finished_product_keeps_finished_warehouse():
+    """成品仍然进成品仓，且不该出现 fallback 标记。"""
+    s, _ = build(answers=[
+        ("FROM receipt_orders", None),
+        ("FROM products", {"product_type": "finished"}),
+        ("FROM materials", MATERIAL),
+        ("FROM warehouses", {**WAREHOUSE, "type": "finished"}),
+    ])
+
+    class _Repo:
+        def __init__(self, session): self._s = session
+        def set_tenant_id(self, tid): pass
+        def set_write_org_id(self, oid): pass
+        async def create(self, data): return 1
+
+    with patch("app.repositories.wms_repo.ReceiptOrderRepository", _Repo), \
+         patch("app.repositories.wms_repo.ReceiptOrderItemRepository", _Repo):
+        out = await s._raise_production_receipt(make_order())
+
+    assert out["warehouse_type"] == "finished"
+    assert out["warehouse_fallback"] is None

@@ -26,7 +26,9 @@ const ok = (n, d = '') => console.log(`  [OK ] ${n}${d ? ' · ' + d : ''}`)
 const bad = (n, d = '') => { fails.push(`${n} · ${d}`); console.log(`  [FAIL] ${n}${d ? ' · ' + d : ''}`) }
 const chk = (n, cond, d = '') => (cond ? ok(n, d) : bad(n, d))
 
-const EXPECT_MODULES = ['M00', 'M01', 'M02', 'M03', 'M04', 'M05', 'M11', 'M12']
+// M06 = 设备管理 TPM（权威编号见 backend/app/constants/modules.py::MODULE_NAMES）。
+// 卡上原来写 M02，而 M02 是 BOM 管理 —— 与它自己的 perm 'M06:equipment:read' 自相矛盾。
+const EXPECT_MODULES = ['M00', 'M01', 'M03', 'M04', 'M05', 'M06', 'M11', 'M12']
 
 ;(async () => {
   const browser = await chromium.launch({
@@ -52,11 +54,23 @@ const EXPECT_MODULES = ['M00', 'M01', 'M02', 'M03', 'M04', 'M05', 'M11', 'M12']
   await page.waitForFunction(() => !location.hash.includes('/login'), { timeout: 25000 })
 
   await page.goto(`${BASE}/#/cockpit`, { waitUntil: 'domcontentloaded' })
-  // 等最后一格加载指示消失（每张 KPI 卡各自 loading）
-  await page.waitForFunction(
-    () => document.querySelectorAll('.ck .van-loading').length === 0,
-    { timeout: 25000 },
-  )
+  // 等最后一格加载指示消失（每张 KPI 卡各自 loading）。
+  // ★ 这里**不能**用裸 waitForFunction 直接抛：超时只会甩一句
+  //   `TimeoutError`，看不出是哪几张卡、为什么卡住（实际踩过：模块卡 code
+  //   改成 M06 而取数仍写 M02，setKpi 找不到卡 → 3 张卡永久 loading）。
+  //   所以先软等，再把"还剩几张在转"当成一条断言报出来。
+  let settled = true
+  try {
+    await page.waitForFunction(
+      () => document.querySelectorAll('.ck .van-loading').length === 0,
+      { timeout: 25000 },
+    )
+  } catch { settled = false }
+  const stillLoading = await page.$$eval('.ck', (els) =>
+    els.filter((e) => e.querySelector('.van-loading'))
+      .map((e) => `${e.closest('.mod')?.querySelector('.mod__code')?.textContent?.trim() || '?'}/${e.querySelector('.ck__label')?.textContent?.trim() || '?'}`))
+  chk('24 张 KPI 卡全部结束加载', settled && stillLoading.length === 0,
+    settled ? '' : `25s 后仍有 ${stillLoading.length} 张在转：${stillLoading.join(' ')}`)
   await page.waitForTimeout(400)
 
   // ── 1. 模块与 KPI 数量 ──

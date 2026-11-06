@@ -80,7 +80,11 @@ const modules = ref<ModuleInfo[]>([
     // ★ 编号沿用页面既有写法（M02 TPM 设备）。注意代码里设备权限码是
     //   `M06:equipment:*`、而 router 里 M02 指的是 BOM —— 模块编号体系本身
     //   存在两套，统一需要单独拍板，这里不顺手改。
-    name: 'TPM 设备', code: 'M02', to: '/equipment', perm: 'M06:equipment:read',
+    // ★ 编号必须是 M06。这里原来写 M02 —— 而同一行的权限码是
+    //   `M06:equipment:read`，卡上标 M02、实际校验 M06，自相矛盾。
+    //   权威编号在 backend/app/constants/modules.py::MODULE_NAMES：
+    //   M02=BOM 管理，M06=设备管理 TPM。驾驶舱不做 BOM 卡，所以这里应当是 M06。
+    name: 'TPM 设备', code: 'M06', to: '/equipment', perm: 'M06:equipment:read',
     kpis: [
       blank('设备', '', '设备台账总数'),
       blank('待保养', '', '保养任务 status=pending'),
@@ -141,7 +145,13 @@ const modules = ref<ModuleInfo[]>([
 
 function setKpi(code: string, idx: number, patch: Partial<KpiItem>) {
   const m = modules.value.find((x) => x.code === code)
-  if (m && m.kpis[idx]) m.kpis[idx] = { ...m.kpis[idx], ...patch }
+  if (!m || !m.kpis[idx]) {
+    // ★ 不许静默。编号写错（比如卡是 M06、取数写 M02）时这里若不吭声，
+    //   那几张卡就永远停在 loading，页面只是"看着在转"，没有任何报错。
+    console.error(`[cockpit] KPI 定位失败：code=${code} idx=${idx}（模块或 KPI 不存在）`)
+    return
+  }
+  m.kpis[idx] = { ...m.kpis[idx], ...patch }
 }
 
 /** 单个 KPI 的统一取数：成功记 real，异常记 unavailable（不冒泡） */
@@ -231,15 +241,18 @@ async function load() {
   await feed('M01', 2, () => total('/work-reports'))
   withRatio('M01', 1, num('M01', 1), num('M01', 0))
 
-  // ── M02 TPM ──
-  await feed('M02', 0, () => total('/equipment'))
-  await feed('M02', 1, () => totalByStatus('/maintenance-tasks', ['pending']))
-  await feed('M02', 2, async () => {
+  // ── M06 TPM ──
+  // ★ 这里的编号必须和上面模块卡的 `code` 逐字一致。`setKpi` 靠 code 找卡，
+  //   找不到时**什么都不做**（不抛错）→ 那 3 张卡永远停在 state='loading'，
+  //   `<van-loading>` 一直转，页面看起来只是在"慢慢加载"，实际是死等。
+  await feed('M06', 0, () => total('/equipment'))
+  await feed('M06', 1, () => totalByStatus('/maintenance-tasks', ['pending']))
+  await feed('M06', 2, async () => {
     const list = await get<any[]>('/maintenance-tasks/overdue')
     return Array.isArray(list) ? list.length : 0
   })
-  withRatio('M02', 2, num('M02', 2), num('M02', 1))
-  withSeverity('M02', 2, num('M02', 2), 'danger')
+  withRatio('M06', 2, num('M06', 2), num('M06', 1))
+  withSeverity('M06', 2, num('M06', 2), 'danger')
 
   // ── M03 品质 ──
   await feed('M03', 0, () => total('/inspection-orders'))

@@ -1,3 +1,5 @@
+import logging
+
 from app.constants.work_order_states import (
     REPORT_BLOCKED_STATUSES,
     action_of,
@@ -8,6 +10,8 @@ from app.constants.work_order_states import (
     status_label,
 )
 from app.repositories.production_repo import ProductionRepository
+
+logger = logging.getLogger(__name__)
 from app.repositories.bom_repo import BomRepository
 from app.repositories.basic_data_repo import ProductRepository
 from app.repositories.wms_repo import (
@@ -1073,12 +1077,48 @@ class ProductionService:
                     "reason": f"{synced['reason']}，无法生成生产入库单"}
         material_created = bool(synced["created"])
 
+        # 仓库按**产品类型**选，不是一律进成品仓。
+        #
+        # 原先写死 `type = 'finished'`：半成品完工也进成品仓，于是库存报表里
+        # 半成品与成品混在一个仓里分不开 —— 而 `products.product_type` 本来就有
+        # `semi` 这个值，`warehouses.type` 的值域里也本来就有 `semi`，只是生产
+        # 入库从不查它。
+        #
+        # ⚠️ 但本库的 `warehouses.type` 是脏的（模型声明 raw_material/semi/
+        #    finished/consumable，实测库里还有 raw / wip / line_side /
+        #    finished_goods / spare_parts），且 staging 有 2 个半成品产品却
+        #    **没有任何 semi 仓**。所以这里不能硬要求：配了 semi 仓就进 semi，
+        #    没配就退回成品仓并把这件事**标记出来**（`warehouse_fallback`），
+        #    而不是静默放进去、也不是直接拒绝生成入库单（那会让半成品完工后
+        #    库存凭空消失，比放错仓更难查）。
+        want_type = "finished"
+        prod = None
+        if product_code:
+            prod = await self.repo.query_one(
+                "SELECT product_type FROM products WHERE code = :c ORDER BY id LIMIT 1",
+                {"c": product_code},
+            )
+        if (prod or {}).get("product_type") == "semi":
+            want_type = "semi"
+
         warehouse = await self.repo.query_one(
-            "SELECT id, name FROM warehouses WHERE type = 'finished' "
-            "ORDER BY id LIMIT 1"
+            "SELECT id, name, type FROM warehouses WHERE type = :t ORDER BY id LIMIT 1",
+            {"t": want_type},
         )
+        fallback = None
+        if not warehouse and want_type == "semi":
+            warehouse = await self.repo.query_one(
+                "SELECT id, name, type FROM warehouses WHERE type = 'finished' "
+                "ORDER BY id LIMIT 1"
+            )
+            if warehouse:
+                fallback = ("半成品未配置 type=semi 仓库，已退回成品仓；"
+                            "半成品与成品会混在同一仓，请补建半成品仓")
+                logger.warning("生产入库：产品 %s 是半成品，但无 semi 仓 → 退回成品仓 %s",
+                               product_code, warehouse.get("name"))
         if not warehouse:
-            return {"skipped": True, "reason": "未配置成品仓（type=finished），无法生成生产入库单"}
+            need = "半成品仓（type=semi）" if want_type == "semi" else "成品仓（type=finished）"
+            return {"skipped": True, "reason": f"未配置{need}，无法生成生产入库单"}
 
         tenant_id = self.repo.tenant_id or order.get("tenant_id")
         session = self.repo._session
@@ -1141,6 +1181,10 @@ class ProductionService:
         return {
             "created": True, "receipt_id": receipt_id, "receipt_no": receipt_no,
             "warehouse_id": warehouse["id"], "warehouse_name": warehouse.get("name"),
+            "warehouse_type": warehouse.get("type"),
+            # 半成品没有 semi 仓时退回成品仓 —— 这件事必须能被调用方看见，
+            # 否则"半成品混进成品仓"就又变成一条只能靠对账才发现的数据问题。
+            "warehouse_fallback": fallback,
             "material_id": material["id"], "qty": qty,
             # 成品物料档案是否是本次自动补建的 —— 前端据此提示
             # "已自动为 XX 建立成品档案，可去物料页补充规格与安全库存"
