@@ -210,6 +210,14 @@ def run_one(name: str, py: str, timeout: int = 300):
                 "detail": f"超过 {timeout}s"}
     dur = time.time() - t0
 
+def judge(out: str) -> tuple:
+    """把探针输出判成 (status, ok, bad)。**纯函数**，不碰进程不碰网络。
+
+    抽出来的唯一动机是**能自证**。这个判据本身就是最容易"看起来对"的地方：
+    它之前把 SKIP（0 通 0 断）当成 NOSUMMARY、把 "6/6 通过" 当成 6 通 6 断，
+    两次都是"闸自己是错的、而闸报绿"。抽成纯函数以后 `--selftest-judge` 才能
+    用正反用例钉住它 —— 检测逻辑没有负向用例 = 没有闸。
+    """
     ok = bad = 0
     for m in _SUMMARY_RE.finditer(out):
         if m.group("ok5") is not None:
@@ -245,15 +253,97 @@ def run_one(name: str, py: str, timeout: int = 300):
         else:
             ok = max(ok, 1)
 
+    # ── SKIP 语义 ────────────────────────────────────────────────────
+    # 探针"本环境不适用"时（判定基线依赖艾华推进器厂的组织结构，却被跑到演示
+    # 租户上）会如实打印 `[SKIP]` + "合计 0 项：PASS 0 / FAIL 0"。但门禁原先没有
+    # SKIP 这一档：0 通 0 断 直接落进 NOSUMMARY（"跑完了但没输出汇总行"），照样
+    # 让整轮退出码非 0 —— 于是"如实跳过"和"跑崩了"在门禁里长得一模一样，而恒红
+    # 的闸等于没有闸（同产能闸那次的教训）。
+    #
+    # 条件收得很死，必须同时成立才算 SKIP：打了 [SKIP]、0 断、没有 [FATAL]、
+    # 没有 Traceback、没有一条 [FAIL]。任一不满足就退回原判定 —— 宁可红，不可假绿。
+    # （`--selftest-judge` 里有 6 条负向用例专门钉这一点。）
+    _skipped = ("[SKIP]" in out and bad == 0
+                and "[FATAL]" not in out
+                and "[FAIL]" not in out
+                and "Traceback (most recent call last)" not in out)
+
+    if _skipped:
+        return ("SKIP", ok, bad)
     if "[FATAL]" in out or "Traceback (most recent call last)" in out:
-        status = "ERROR"
-        bad = max(bad, 1)
-    elif bad:
-        status = "FAIL"
-    elif ok:
-        status = "PASS"
-    else:
-        status = "NOSUMMARY"   # 跑完了但没输出可识别的汇总行（需人工确认）
+        return ("ERROR", ok, max(bad, 1))
+    if bad:
+        return ("FAIL", ok, bad)
+    if ok:
+        return ("PASS", ok, bad)
+    return ("NOSUMMARY", ok, bad)   # 跑完了但没输出可识别的汇总行（需人工确认）
+
+
+def _judge_selftest() -> int:
+    """判据自证：正反用例各若干，全过返 0。
+
+    没有这一层，`judge()` 就是那段"看着很合理、错了也没人知道"的逻辑 ——
+    summary 里那句 1549 通 / 1 断 的可信度，全部来自这里。
+    """
+    cases = [
+        # (说明, 输出片段, 期望 status, 期望 ok, 期望 bad)
+        ("常规全绿", "===== 合计 12 项：PASS 12 / FAIL 0 =====", "PASS", 12, 0),
+        ("常规有断点", "===== 合计 12 项：PASS 9 / FAIL 3 =====", "FAIL", 9, 3),
+        # 负向一：带了 [FATAL] 的 SKIP 绝不许算跳过（login 失败后又打 SKIP 就是这种）
+        ("SKIP 但夹着 [FATAL]",
+         "[FATAL] 登录失败 ah_dh: 401\n[SKIP] 本环境不具备\n"
+         "===== 合计 0 项：PASS 0 / FAIL 0 =====", "ERROR", 0, 1),
+        # 负向二：SKIP 之外还有一条真失败
+        ("SKIP 但夹着 [FAIL]",
+         "[SKIP] 前置缺失\n  [FAIL] S3 报工 org_id 落 NULL\n"
+         "===== 合计 1 项：PASS 0 / FAIL 1 =====", "FAIL", 0, 1),
+        # 负向三：Traceback
+        ("SKIP 但抛了异常",
+         "[SKIP] 前置缺失\nTraceback (most recent call last):\nValueError: x",
+         "ERROR", 0, 1),
+        # 负向四：只打 [SKIP] 却打了非零计数（探针自己写错汇总行）
+        ("SKIP 但汇总行报断",
+         "[SKIP] 前置缺失\n===== 合计 3 项：PASS 1 / FAIL 2 =====", "FAIL", 1, 2),
+        # 正向：干净跳过
+        ("干净 SKIP",
+         "[SKIP] 本探针判定基线来自 AH-THR，当前租户 mfg_demo 不适用\n"
+         "===== 合计 0 项：PASS 0 / FAIL 0（SKIP）=====", "SKIP", 0, 0),
+        # 兜底口径不许被这次改动弄坏
+        ("6/6 通过 = 6 通 0 断", "端到端烟测：6/6 通过", "PASS", 6, 0),
+        ("ALL PASS 兜底", "══ 全流程 E2E: ✅ ALL PASS ══", "PASS", 1, 0),
+        ("0 bugs 兜底", "closed loop: 0 bugs — 全通", "PASS", 1, 0),
+        ("BUGLIST 兜底", "BUGLIST\n1. [P0] 场景 | 端点", "FAIL", 0, 1),
+        ("无汇总行", "随便打了点什么", "NOSUMMARY", 0, 0),
+    ]
+    bad = 0
+    for desc, out, want_status, want_ok, want_bad in cases:
+        got = judge(out)
+        okflag = got == (want_status, want_ok, want_bad)
+        if not okflag:
+            bad += 1
+        print(f"  [{'PASS' if okflag else 'FAIL'}] {desc}"
+              + ("" if okflag else f" · 得到 {got}，期望 {(want_status, want_ok, want_bad)}"))
+    print(f"\n判据自证：{len(cases) - bad}/{len(cases)} 通过")
+    return 1 if bad else 0
+
+
+def run_one(name: str, py: str, timeout: int = 300):
+    path = os.path.join(HERE, f"{name}.py")
+    if not os.path.exists(path):
+        return {"name": name, "status": "MISSING", "ok": 0, "bad": 0, "detail": "文件不存在"}
+
+    t0 = time.time()
+    try:
+        p = subprocess.run([py, path], capture_output=True, text=True,
+                           timeout=timeout, cwd=os.path.join(HERE, "..", "backend"),
+                           env=_child_env())
+        out = (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return {"name": name, "status": "TIMEOUT", "ok": 0, "bad": 1,
+                "detail": f"超过 {timeout}s"}
+    dur = time.time() - t0
+
+    status, ok, bad = judge(out)
 
     last = [l for l in out.strip().splitlines() if l.strip()]
     return {"name": name, "status": status, "ok": ok, "bad": bad,
@@ -281,7 +371,14 @@ def main():
                     help="跳过 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）")
     ap.add_argument("--skip-ui-labels", action="store_true",
                     help="跳过界面枚举中文化闸（模板裸渲染 status/type 原码）")
+    ap.add_argument("--skip-judge-selftest", action="store_true",
+                    help="跳过判据自证（run_all 自己的 PASS/FAIL/SKIP 判定逻辑的正反用例）")
+    ap.add_argument("--selftest-judge", action="store_true",
+                    help="只跑判据自证然后退出（改过 judge() 时先跑这个）")
     a = ap.parse_args()
+
+    if a.selftest_judge:
+        return _judge_selftest()
 
     py = sys.executable
     probes = DEFAULT_PROBES
@@ -291,13 +388,26 @@ def main():
         skip = {x.strip() for x in a.skip.split(",")}
         probes = [p for p in probes if p not in skip]
 
+    # ── 判据自证（第 0 道闸）────────────────────────────────────────
+    # 放在最前面，因为它判的是**后面所有结论**本身。judge() 一旦有错，这里报绿
+    # 的 1500 多条断言就全是"用错的尺子量出来的"——比探针红了更危险，红了至少
+    # 还有人看。四类问题（6/6 当 6 通 6 断、SKIP 当 NOSUMMARY、FATAL 藏在 SKIP
+    # 里、兜底口径被改坏）各配负向用例，纯毫秒级，不连库不起服务。
+    judge_fail = False
+    if not a.skip_judge_selftest:
+        print("=" * 62)
+        print("判据自证（run_all 自己的 PASS/FAIL/SKIP 判定）")
+        judge_fail = _judge_selftest() != 0
+
+    print("=" * 62)
     print(f"E2E 全量回归：{len(probes)} 个探针\n" + "=" * 62)
     results = []
     for name in probes:
         r = run_one(name, py, a.timeout)
         results.append(r)
         mark = {"PASS": "✅", "FAIL": "❌", "ERROR": "💥",
-                "TIMEOUT": "⏱", "MISSING": "—", "NOSUMMARY": "⚠️"}[r["status"]]
+                "TIMEOUT": "⏱", "MISSING": "—", "NOSUMMARY": "⚠️",
+                "SKIP": "⏭"}[r["status"]]
         print(f"{mark} {r['name']:<28} 通 {r['ok']:>3} / 断 {r['bad']:>3} "
               f"({r.get('sec', '-')}s) {r['detail']}")
 
@@ -325,6 +435,13 @@ def main():
         print("未输出可识别汇总（需人工确认是否真跑完）：")
         for n in nosum:
             print(f"  - {n}")
+    # ★ 跳过的一律列出来。SKIP 不计入断点，但也**不许悄悄消失** —— 沉默跳过的
+    #   探针和被删掉的探针是一个形状：都表现为"这场没跑，但全绿"。
+    skips = [r for r in results if r["status"] == "SKIP"]
+    if skips:
+        print(f"已跳过 {len(skips)} 个（本环境不适用，不计断点）：")
+        for r in skips:
+            print(f"  - {r['name']} · {r['detail']}")
     # ── 覆盖棘轮 ────────────────────────────────────────────────────
     # 探针全绿只证明"跑到的都是好的"，证明不了"该跑的都跑到了"。后者正是
     # 这一轮检验挖出 17 个缺陷的原因 —— 它们全落在没人跑的端点上。
@@ -401,8 +518,17 @@ def main():
                   "mfg1-backend:/app/scripts/ && docker exec mfg1-backend python "
                   "/app/scripts/check_capacity_consistency.py --check")
         else:
+            # ★ 靶场租户**显式锚定**，不吃 `TENANT_CODE`。
+            #   产能闸读的是 `TENANT_CODE`（默认 AH-THR），而 `TENANT_CODE` 同时也是
+            #   `platform_base_e2e` 的登录租户 —— 两个用途共用一个变量名，副作用是：
+            #   为了让探针登上有种子数据的租户而设 `TENANT_CODE=MFG1` 时，产能闸会
+            #   跟着去扫 mfg_demo 那 1700+ 张探针工单，把 60 条"全线未挂工作中心"的
+            #   测试路线当成新增偏差，闸直接红。实测踩过一次。
+            #   产能闸的靶场是固定的（推进器厂），跟 E2E 跑在哪个租户无关。
+            cap_tenant = os.environ.get("CAPACITY_TENANT", "AH-THR")
             cap = subprocess.run(
-                [py, os.path.join(root, "scripts", "check_capacity_consistency.py"), "--check"],
+                [py, os.path.join(root, "scripts", "check_capacity_consistency.py"),
+                 "--check", cap_tenant],
                 capture_output=True, text=True, cwd=os.path.join(root, "backend"),
                 env=_child_env())
             cout = (cap.stdout or "") + (cap.stderr or "")
@@ -450,7 +576,7 @@ def main():
         ui_fail = ui.returncode != 0
 
     return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
-                 or cap_fail or pg_fail or ui_fail) else 0
+                 or cap_fail or pg_fail or ui_fail or judge_fail) else 0
 
 
 if __name__ == "__main__":

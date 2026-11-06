@@ -510,12 +510,26 @@ def main() -> int:
     report("P9-2 模块开关可写回（幂等，值不变）",
            r.status_code == 200, f"HTTP {r.status_code} {msg(r)}")
 
-    r = c.get(f"{API}/tenants", params={"page_size": 100})
-    all_tenants = items(r)
-    self_tenant = next((t for t in all_tenants if str(t.get("code")) == TENANT), {})
+    # ★ 必须翻页找自己。原写法只取 `page_size=100` 的第一页 —— 库里租户满 100 个
+    #   之后，最早建的那个（mfg_demo）会被后来的挤出第一页，于是"找不到自己"。
+    #   实测就红过：共 100 个租户，本租户 tenant_id=mfg_demo 却不在第一页。
+    self_tenant: dict = {}
+    all_tenants: list = []
+    pages_read = 0
+    for page_no in range(1, 21):          # 上限 20 页 = 2000 个租户，够用且不会死循环
+        r = c.get(f"{API}/tenants", params={"page_size": 100, "page": page_no})
+        rows = items(r)
+        if not rows:
+            break
+        pages_read += 1
+        all_tenants.extend(rows)
+        self_tenant = next((t for t in rows if str(t.get("code")) == TENANT), {})
+        if self_tenant or len(rows) < 100:
+            break
     tid = self_tenant.get("tenant_id") or real_tid
     report("P9-3 租户列表可读且能找到自己",
-           bool(self_tenant), f"共 {len(all_tenants)} 个租户，本租户 tenant_id={tid}")
+           bool(self_tenant),
+           f"共 {len(all_tenants)} 个租户（翻了 {pages_read} 页），本租户 tenant_id={tid}")
 
     r = c.get(f"{API}/tenants/{tid}")
     t = data(r) or {}

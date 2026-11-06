@@ -7,7 +7,10 @@ import os, json, datetime, uuid, traceback
 import httpx as requests
 
 BASE = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1").rstrip("/")
-TENANT = "AH-THR"
+# ★ 必须读 E2E_TENANT：写死 AH-THR 的话，API_BASE 指到本地、账号却是 mfg_admin
+#   时必然 401（mfg_admin 属 mfg_demo，不在艾华租户）—— 报出来是"登录失败"，
+#   看着像认证挂了，实际是探针自己把租户写死了。
+TENANT = os.environ.get("E2E_TENANT", "AH-THR")
 # 账号口令走环境变量：原写死的是演示租户 `test_admin`，2026-11-05
 # 单租户收敛删掉演示租户后该账号不存在，登录直接 401。
 USER = os.environ.get("E2E_USER", "mfg_admin")
