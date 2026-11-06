@@ -293,7 +293,7 @@ def main():
     # 现实约束：`DELETE /routes/{id}` 只允许**草稿**（服务层 status 判定），而
     # B-S3 验证"发布后升级版本"必须把 v1 发布出去 —— **发布过的路线没有任何
     # API 能删**（归档后也不是草稿）。所以这里只能删 v2（草稿），v1 留给
-    # `scripts/clean_e2e_residue.py` 在库层面清。
+    # `scripts/probe_artifacts.py` 在库层面回收。
     #
     # 不删的后果实测过：每次回归留一条"全线未挂工作中心"的 RT-S3-* 路线，
     # 产能闸把它算成新增偏差（2026-11-06 staging 累积 5 条），门禁红了却没人
@@ -303,7 +303,7 @@ def main():
     print(f"  [info] 清理自建路线：v2(草稿) HTTP "
           f"{del_v2.status_code if del_v2 else '-'}｜"
           f"v1(已发布) HTTP {del_v1.status_code if del_v1 else '-'}"
-          f"（发布会话的路线无 API 可删，需 scripts/clean_e2e_residue.py）")
+          f"（发布会话的路线无 API 可删，需 scripts/probe_artifacts.py）")
 
     print("\n" + "=" * 56)
     print(f"PASS {len(PASS)} / FAIL {len(FAIL)}")
