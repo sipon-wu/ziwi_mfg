@@ -35,6 +35,11 @@
     S6  ah_dh 读根节点检验单的明细 → 空；admin 读同一张 → 非空
         （inspection_result 继承父单组织，子表不能比父单更宽）
     S7  ah_dh 看不到自己建的工单以外的东西：工单列表也严格小于 admin
+    S8  客诉 / 召回（2026-11-06 才登记进白名单）：
+        - 列表差分同 S2（admin 全量、部门账号严格更少）
+        - 部门账号建客诉，org_id 落自己的组织（不是 NULL）
+        - **跨组织同日开单不撞号**：admin 先建一张，部门账号再建 —— 单号必须
+          递增。编号若跟着组织范围过滤，部门账号会算回 0001 撞唯一约束 500
 """
 import os
 import sys
@@ -260,6 +265,66 @@ def main():
         check("S6 部门账号读同一张单的明细为空（不能比父单更宽）",
               r_scoped.status_code in (403, 404) or n_scoped == 0,
               f"HTTP {r_scoped.status_code} 明细 {n_scoped} 条")
+
+    # ── S8 客诉 / 召回：org_id 列建了但没接线的那批 ──
+    # 这两张表的模型注释写的是"归属组织ID（数据范围过滤用）"，列也早就建好了，
+    # 但一直没登记进 ORG_SCOPED_TABLES —— 写不填、读不过滤，白建一列。
+    # 2026-11-06 补登记 + 回填，这里把"真的接线了"钉住。
+    print("── S8 客诉 / 召回 ──")
+    base_cc = total_of(admin.get(f"{API}/complaints", params={"page_size": 1}))
+    scoped_cc = total_of(scoped.get(f"{API}/complaints", params={"page_size": 1}))
+    check("S8 admin 能看到客诉（列表非空）", base_cc > 0, f"total={base_cc}")
+    check("S8 部门账号可见客诉数严格小于 admin（数据范围生效）",
+          0 <= scoped_cc < base_cc, f"scoped={scoped_cc} < admin={base_cc}")
+
+    base_rc = total_of(admin.get(f"{API}/recalls", params={"page_size": 1}))
+    scoped_rc = total_of(scoped.get(f"{API}/recalls", params={"page_size": 1}))
+    if base_rc > 0:
+        check("S8 部门账号可见召回数严格小于 admin", 0 <= scoped_rc < base_rc,
+              f"scoped={scoped_rc} < admin={base_rc}")
+    else:
+        # 没有存量召回单据时差分无从比起 —— 如实说明，不报红（本环境没数据 ≠ 过滤坏了）
+        print(f"  [SKIP] 召回：本租户没有存量召回单（admin total={base_rc}），"
+              f"差分不可判定")
+
+    # 跨组织同日开单：admin 先占一个小号，部门账号必须续上而不是算回 0001。
+    # 编号查询若跟着组织范围过滤，部门账号看不到 admin 刚开的单 → 又算 0001
+    # → 撞 uq_complaint_tenant_no → 500。这条同时验证写入归属与编号口径。
+    r = admin.post(f"{API}/complaints", json={
+        "customer_name": f"组织归属探针A{tag}", "severity": "minor",
+        "description": "org-scope e2e：编号基准"})
+    no_admin = data_of(r).get("complaint_no")
+    check("S8 admin 建客诉成功（取编号基准）", r.status_code == 200 and bool(no_admin),
+          f"HTTP {r.status_code} no={no_admin} {'' if no_admin else r.text[:160]}")
+
+    r = scoped.post(f"{API}/complaints", json={
+        "customer_name": f"组织归属探针B{tag}", "severity": "minor",
+        "description": "org-scope e2e：部门账号开单"})
+    no_scoped = data_of(r).get("complaint_no")
+    cc_id = data_of(r).get("id")
+    check("S8 部门账号建客诉成功（编号不吃组织范围，不撞唯一约束）",
+          r.status_code == 200 and bool(no_scoped),
+          f"HTTP {r.status_code} no={no_scoped} {'' if no_scoped else r.text[:200]}")
+    check("S8 部门账号拿到的单号在 admin 之后（全租户序列，非部门内序列）",
+          bool(no_admin) and bool(no_scoped) and no_scoped > no_admin,
+          f"admin={no_admin} → scoped={no_scoped}")
+
+    if cc_id:
+        # 归属回读：admin 读该条（ALL 范围不过滤），断言落的是部门账号自己的组织。
+        # ★不写死「制造部=2」：组织 id 各环境自增，基准取 /auth/me。
+        rr = admin.get(f"{API}/complaints/{cc_id}")
+        org = (data_of(rr) or {}).get("org_id")
+        want = me_scoped.get("org_id")
+        check("S8 客诉行 org_id = 开单人所属组织（写入归属生效）",
+              rr.status_code == 200 and org is not None and org == want,
+              f"org_id={org} 期望={want}")
+
+    scoped_cc_after = total_of(scoped.get(f"{API}/complaints", params={"page_size": 50}))
+    admin_cc_after = total_of(admin.get(f"{API}/complaints", params={"page_size": 50}))
+    check("S8 部门账号可见客诉恰好 +1（自己建的看得见）",
+          scoped_cc_after == scoped_cc + 1, f"{scoped_cc} → {scoped_cc_after}")
+    check("S8 admin 可见客诉恰好 +2（没误伤）",
+          admin_cc_after == base_cc + 2, f"{base_cc} → {admin_cc_after}")
 
     # ── 汇总 ──
     print(f"\n===== 合计 {len(PASS) + len(FAIL)} 项：PASS {len(PASS)} / FAIL {len(FAIL)} =====")
