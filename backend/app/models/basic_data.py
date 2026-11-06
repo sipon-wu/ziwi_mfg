@@ -42,6 +42,17 @@ class Operation(Base):
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # 工序编码在租户内唯一。
+    #
+    # 没有这条约束时，同一租户可以有两条 code 完全相同的工序，而**没有任何一处
+    # 会报错**：`route_steps` 按 operation_id 引用（不重），但凡是按 code 查找的
+    # 地方（导入模板、报表聚合、print 模板）都会随机命中其中一条 —— 表现为
+    # "同一个工序有时显示 A 名、有时显示 B 名"，且换了顺序结果就变。
+    # 库级约束是唯一能挡住它的地方：应用层查重总有并发窗口。
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_operations_tenant_code"),
+    )
+
 
 # ── M05 工作中心 ────────────────────────────────────────────────
 

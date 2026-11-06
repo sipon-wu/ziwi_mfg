@@ -83,7 +83,7 @@ const statusOptions = [
   { value: 'cancelled', label: '已取消' },
 ]
 
-function isToday(dateStr?: string): boolean {
+function isToday(dateStr?: string | null): boolean {
   if (!dateStr) return false
   const d = new Date(dateStr)
   if (isNaN(d.getTime())) return false
@@ -103,7 +103,10 @@ async function loadKpi() {
       if (c.status === 'pending') pending++
       else if (c.status === 'in_progress' || c.status === 'acknowledged') responding++
       else if (c.status === 'resolved') {
-        if (isToday(c.resolve_at) || isToday(c.created_at)) resolvedToday++
+        // ★ 字段是 `resolved_at`，不是 `resolve_at`。旧写法取到的永远是
+        //   undefined → isToday() 恒 false →「今日已解决」这块 KPI 恒为 0，
+        //   页面不报错、数字也不动，最难发现的一类。
+        if (isToday(c.resolved_at) || isToday(c.created_at)) resolvedToday++
       }
     }
     kpi.value = { pending, responding, resolvedToday }

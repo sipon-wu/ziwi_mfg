@@ -258,7 +258,8 @@ onMounted(load)
           <span class="c-num">完工</span>
           <span class="c-num">流转</span>
           <span class="c-num">报废</span>
-          <span class="c-num">工时</span>
+          <span class="c-num">人工</span>
+          <span class="c-num">机时</span>
         </div>
         <div v-for="row in rows" :key="row.wo_no" class="ziwi-report__row">
           <span class="c-wo">
@@ -269,6 +270,10 @@ onMounted(load)
           <span class="c-num muted">{{ fmt(row.wip_output) }}</span>
           <span class="c-num" :class="{ danger: row.total_scrap > 0 }">{{ fmt(row.total_scrap) }}</span>
           <span class="c-num muted">{{ fmt(row.total_hours) }}</span>
+          <!-- ★ 明细原来只有一列「工时」，而汇总 KPI 有「人工/设备机时」两列 ——
+               同一页上两层口径对不上，下行数字加起来永远等于人工那一列，
+               机时在明细里根本看不见。后端 `total_machine_hours` 一直有值。 -->
+          <span class="c-num muted">{{ fmt(row.total_machine_hours) }}</span>
         </div>
         <div v-if="!rows.length" class="ziwi-report__empty">
           {{ mode === 'daily' ? '当日无报工' : '当月无报工' }}
@@ -333,7 +338,9 @@ onMounted(load)
 .ziwi-report__head,
 .ziwi-report__row {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr));
+  /* 工单 + 完工/流转/报废/人工/机时 共 6 列（加机时列时同步改这里，
+     否则第六个 span 会换行到下一行，整张表错位） */
+  grid-template-columns: minmax(0, 1.7fr) repeat(5, minmax(0, 1fr));
   align-items: center;
   column-gap: 6px;
   padding: 0 8px;

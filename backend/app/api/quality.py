@@ -94,7 +94,7 @@ async def create_qc_point(
     repo: QcPointRepository = Depends(get_tenant_repo(QcPointRepository)),
 ):
     result = await repo.create_qc_point({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
-    return {"code": 0, "message": "创建成功"}
+    return {"code": 0, "message": "创建成功", "data": {"id": result}}
 
 
 @router.put("/qc-points/{qc_id}")
@@ -165,7 +165,7 @@ async def create_standard(
     repo: InspectionStandardRepository = Depends(get_tenant_repo(InspectionStandardRepository)),
 ):
     result = await repo.create_inspection_standard({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
-    return {"code": 0, "message": "创建成功"}
+    return {"code": 0, "message": "创建成功", "data": {"id": result}}
 
 
 @router.put("/inspection-standards/{std_id}")
@@ -225,7 +225,7 @@ async def create_item(
     repo: InspectionItemRepository = Depends(get_tenant_repo(InspectionItemRepository)),
 ):
     result = await repo.create_inspection_item({**req.model_dump(), "tenant_id": repo.tenant_id or "default"})
-    return {"code": 0, "message": "创建成功"}
+    return {"code": 0, "message": "创建成功", "data": {"id": result}}
 
 
 @router.put("/inspection-items/{item_id}")
@@ -852,7 +852,7 @@ async def create_result(
     result = await repo.create_result({**req.model_dump(),
                                        "tenant_id": repo.tenant_id or "default",
                                        "created_by": current_user.get("id")})
-    return {"code": 0, "message": "创建成功"}
+    return {"code": 0, "message": "创建成功", "data": {"id": result}}
 
 
 @router.put("/inspection-results/{result_id}")

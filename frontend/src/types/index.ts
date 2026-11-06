@@ -364,21 +364,57 @@ export interface InspectionResult {
 // M05 — 安灯系统
 // ============================================================
 
+/**
+ * 安灯呼叫。
+ *
+ * ★ 这一版是**照后端 `AndonCallResponse` + `andon_call` 表逐列核对**过的。
+ *   旧版本一半字段是凭印象写的，属于"类型撒谎"——TS 不会报错、运行时静默
+ *   `undefined`：
+ *     · `urgency`      → 后端是 `priority`（域也不是 low/medium/high）
+ *     · `call_source`  → 后端是 `source`
+ *     · `source_id`    → 后端没有这个列，拆成 `equipment_id` / `work_order_id` / `station`
+ *     · `response_at`  → 后端是 `acknowledged_at`
+ *     · `resolve_at`   → 后端是 `resolved_at`
+ *   实测代价：`AndonList` 的「今日已解决」用 `c.resolve_at` 取值，永远
+ *   `undefined` → 这个 KPI **恒为 0**，页面看起来正常、数字永远不动。
+ *
+ * `call_title` / `source_desc` 是 `list_calls` 的 SQL 别名（来自 description /
+ * station），列表页在用它渲染标题与副标题，所以一并声明，别再各写 `any`。
+ */
+export type AndonCallStatus =
+  | 'pending' | 'open' | 'acknowledged' | 'in_progress'
+  | 'responding' | 'escalated' | 'resolved' | 'closed'
+
 export interface AndonCall {
   id: number
   tenant_id: string
   call_no: string
   call_type: string
-  call_source: string
-  source_id: string
+  /** 来源：manual / auto / iot（安灯域，与检验结果的 web/miniapp/device 不是一套） */
+  source?: string
+  equipment_id?: number | null
+  work_order_id?: number | null
+  station?: string | null
   caller_id: number
-  description: string
-  urgency: 'low' | 'medium' | 'high' | 'critical'
-  status: 'pending' | 'responding' | 'processing' | 'resolved' | 'closed'
-  response_at?: string
-  resolve_at?: string
-  created_at: string
-  updated_at: string
+  caller_name?: string | null
+  description?: string
+  priority?: string
+  /** 值域以库为准：open / responding 是库里真实存在而模型注释漏掉的值 */
+  status: AndonCallStatus
+  acknowledged_at?: string | null
+  acknowledged_by?: number | null
+  resolved_at?: string | null
+  resolved_by?: number | null
+  resolution?: string | null
+  escalation_level?: number
+  response_deadline?: string | null
+  resolve_deadline?: string | null
+  response_count?: number
+  // —— 列表 SQL 别名（list_calls / get_call）——
+  call_title?: string | null
+  source_desc?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 // ============================================================

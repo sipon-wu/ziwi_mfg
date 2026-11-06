@@ -177,8 +177,10 @@ def bom_need(m: dict) -> dict:
 def ensure_iqc_standard(c: C, m: dict) -> int:
     """来料通用检验标准：库里 9 条标准全是过程/成品口径，来料检验没标准可挂。
 
-    ★ ``POST /inspection-standards`` 只回 ``{"code":0,"message":"创建成功"}``，
+    ★ ``POST /inspection-standards`` 原先只回 ``{"code":0,"message":"创建成功"}``，
       **不回 id**（其余创建接口都回 ``data.id``）→ 建完必须回查列表拿 id。
+      2026-11-06 已统一为 ``data.id``；这里优先用返回值，回查只作兜底 ——
+      拿不到就回查，兼容尚未重新部署的后端。
     """
     name = "来料通用检验标准（IQC）"
     found = [s for s in paged(c, "/inspection-standards") if s.get("name") == name]
@@ -191,10 +193,12 @@ def ensure_iqc_standard(c: C, m: dict) -> int:
                     "remark": "推进器厂来料通用：外观 / 关键尺寸 / 材质证明"})
         if r.status_code != 200:
             raise RuntimeError(f"建来料检验标准失败 {r.status_code} {msg(r)}")
-        found = [s for s in paged(c, "/inspection-standards") if s.get("name") == name]
-        if not found:
-            raise RuntimeError("建来料检验标准后回查不到")
-        sid = min(s["id"] for s in found)
+        sid = ((r.json().get("data") or {}) or {}).get("id")
+        if not sid:
+            found = [s for s in paged(c, "/inspection-standards") if s.get("name") == name]
+            if not found:
+                raise RuntimeError("建来料检验标准后既没回 id、回查也查不到")
+            sid = min(s["id"] for s in found)
         ok("建来料检验标准", f"id={sid}")
 
     have = {i["item_name"] for i in paged(c, "/inspection-items") if i["standard_id"] == sid}
