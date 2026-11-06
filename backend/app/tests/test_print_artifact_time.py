@@ -87,17 +87,37 @@ class TestArtifactCreatedAtTimezone:
         assert got == "2026-11-06 07:25:42", "SQLite 丢 tz 偏移的行为变了，请重新评估本用例"
         assert got != "2026-11-05 23:25:42", "旧写法竟然对了 —— 不要据此回退，PG 上才是准的"
 
-    def test_service_does_not_bind_created_at_to_wall_clock(self):
-        """源码守卫：`created_at=printed_at` 不能回来。
+    def test_now_local_converts_a_given_instant(self):
+        """给了时刻就按它换算，不再取当前时刻 —— 单一瞬间的前提。"""
+        from app.services.print_service import _now_local
 
-        这类回归不会报错、单测也未必覆盖到（打印要 PDF + 库），
-        但一行字符串就能钉死。
+        assert _now_local(UTC_NOW).strftime("%Y-%m-%d %H:%M:%S") == "2026-11-05 23:25:42"
+        # 同一瞬间换多次必须稳定（曾经两次各自取 now() → 跨秒差 1 秒）
+        assert _now_local(UTC_NOW) == _now_local(UTC_NOW) == business_now(UTC_NOW)
+
+    def test_service_takes_the_print_instant_exactly_once(self):
+        """源码守卫：一次打印只许取**一次**"瞬间"。
+
+        纸面时间（纸上的打印时间 + `X-Print-At` 头）与留痕行 `created_at`
+        必须来自同一时刻。曾经两者各取一次 now()，中间隔着整段 PDF 渲染 ——
+        跨秒就差 1 秒，实测 2026-11-06 本地与 staging 各命中一次：
+
+            纸面 X-Print-At = 22:46:00 / 核验页 printed_at = 22:46:01
+
+        P8-3b 因此间歇性红，被当成"抖动"复跑放过了。这条用源码钉死。
         """
         import app.services.print_service as mod
 
         path = Path(mod.__file__).resolve()
         text = path.read_text(encoding="utf-8")
-        assert "created_at=printed_at" not in text, (
-            "PrintArtifact.created_at 又被绑成业务墙钟了 —— 本地 SQLite 会丢时区偏移，"
-            "核验页显示会 +8 小时（P8-3b）"
+
+        assert text.count("datetime.now(timezone.utc)") == 1, (
+            "打印链路里取了不止一次 now() —— 纸面与留痕会差 1 秒（P8-3b）；"
+            "注释里也别写这个字面量，本断言按字面量计数"
+        )
+        assert "printed_at_utc = datetime.now(timezone.utc)" in text
+        assert "_now_local(printed_at_utc)" in text, "纸面墙钟没从同一瞬间派生"
+        assert "created_at=printed_at_utc" in text, "留痕行没复用同一瞬间"
+        assert "created_at=printed_at," not in text, (
+            "created_at 又被绑成业务墙钟了 —— SQLite 会丢时区偏移，核验页 +8 小时（P8-3b）"
         )

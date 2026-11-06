@@ -73,15 +73,20 @@ PAPER_LABEL = "label80"
 PAPERS = (PAPER_A4, PAPER_LABEL)
 
 
-def _now_local() -> datetime:
+def _now_local(at: datetime | None = None) -> datetime:
     """车间当地时间（纸面上印的「打印时间」）。
 
     ★ 不要在这里自己算偏移：时区偏移的唯一真源是
     ``BUSINESS_UTC_OFFSET_HOURS``（见 ``core/business_time.py``）。
     曾经这里单独读一个 ``PRINT_TZ_OFFSET_HOURS``，与业务日历日各存一份 ——
     改一处漏一处就会出现"纸面按 +9 打、拣选效期按 +8 判"，而两处都不报错。
+
+    ★ ``at`` 给定时按其换算，不再取当前时刻 —— 一次打印只许有**一个瞬间**。
+    纸面墙钟与留痕行 ``created_at`` 必须来自同一时刻，否则两者之间夹着的
+    PDF 渲染耗时会让"纸上是 22:46:00、核验页说 22:46:01"（实测 2026-11-06，
+    本地与 staging 各命中一次，P8-3b 间歇性红）。
     """
-    return business_now()
+    return as_business_time(at) if at is not None else business_now()
 
 
 def _jsonable(value: Any) -> Any:
@@ -273,7 +278,11 @@ class PrintService:
             )
         template_code, template_version = template_map[doc_type]
         verify_code = await self._new_verify_code()
-        printed_at = _now_local()
+        # ★ 这一次打印只取一次"瞬间"。纸面墙钟与留痕行 created_at 都从它派生：
+        #   曾经纸面走 business_now()、存储另取一次 now()，两者中间夹着整段
+        #   PDF 渲染 —— 跨秒就差 1 秒，纸面与数字留痕互相打架。
+        printed_at_utc = datetime.now(timezone.utc)
+        printed_at = _now_local(printed_at_utc)
 
         meta = RenderMeta(
             verify_code=verify_code,
@@ -325,7 +334,9 @@ class PrintService:
             #   同一份代码在本地和线上印出两个时间，P8-3b 就是靠这条抓到的。
             #   存储列一律记 UTC 瞬时（与「库里存 UTC-naive」的约定一致），
             #   展示层再 `as_business_time()` 换算出墙钟。
-            created_at=datetime.now(timezone.utc),
+            #   ★ 必须复用 printed_at_utc，**不许再取一次 now()** —— 再取一次就等于
+            #   给同一次打印盖两个章（两次取时刻之间隔着 PDF 渲染，跨秒差 1 秒）。
+            created_at=printed_at_utc,
         )
         self._session.add(artifact)
         await self._session.flush()   # 取 id（asyncpg 没有 lastrowid，flush 走 RETURNING）
