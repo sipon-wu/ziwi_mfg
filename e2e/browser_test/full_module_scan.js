@@ -208,8 +208,17 @@ async function login(page, user, pw) {
   // ── C. 权限守卫（受限角色访问受限页应被重定向 /403 或 /dashboard）──
   // S2 改造后，拦截目标是 /403（带 from / perm 参数），不再是 /dashboard。
   // 两者都算"被拦"，只要没真正进入目标页即可。
+  //
+  // ★ 权限组的前置是一个**账号 fixture**，不是服务本身。`test_inspector`
+  //   属旧演示租户，2026-11-03 单租户收敛（全库归零重建为艾华 AH-THR）后
+  //   库里根本没有这个账号 —— staging 实测 `select username from users` 只有
+  //   ah_admin / ah_dh。原先登录失败直接判 FAIL，连带下面 5 条权限用例全红，
+  //   现场看起来像"认证挂了"，实际是探针自己假设了一个不存在的账号。
+  //   恒红的闸等于没有闸，所以这里改判 SKIP 并**逐条留下 SKIP 记录**，
+  //   不许悄悄消失（沉默跳过和被删掉是一个形状）。
+  //   注意：只有"登录拿不到 token"才 SKIP。token 拿到了、但页面没按预期
+  //   拦截/放行，仍然是 FAIL —— 那才是真正的权限缺陷。
   const permToken = await login(page, 'test_inspector', 'test123456');
-  rec('PERM-LOGIN', 'test_inspector 登录', permToken ? 'PASS' : 'FAIL', `token=${!!permToken}`);
   const permCases = [
     ['/quality/spc/control-limits', '检验员→SPC(需品质工程师)', true], // 应被拦
     ['/quality/ppap/levels', '检验员→PPAP(需品质工程师)', true],
@@ -217,16 +226,33 @@ async function login(page, user, pw) {
     ['/quality', '检验员→品质管理(有权限)', false], // 应放行
     ['/basics/products', '检验员→产品管理(无角色限制)', false],
   ];
-  for (const [route, name, shouldBlock] of permCases) {
-    try {
-      await page.goto(`${BASE}/#${route}`, { waitUntil: 'networkidle', timeout: 30000 });
-      await sleep(900);
-      const hash = await page.evaluate(() => location.hash);
-      const blocked = hash.includes('/403') || hash.includes('/dashboard') || hash.includes('/login');
-      const ok = shouldBlock ? blocked : !blocked;
-      rec(`P:${route}`, name, ok ? 'PASS' : 'FAIL', `期望${shouldBlock ? '拦截' : '放行'}, 实际hash=${hash}`);
-    } catch (e) {
-      rec(`P:${route}`, name, 'FAIL', (e.message || '').slice(0, 120));
+  if (!permToken && !token) {
+    // ★ 反向守卫：连 admin 都登不上时，绝不能当"账号缺失"跳过 —— 那是认证服务
+    //   真的挂了。SKIP 只在"admin 能登、只有这个 fixture 账号登不上"时才成立。
+    rec('PERM-LOGIN', 'test_inspector 登录', 'FAIL',
+        'admin 亦登录失败，疑似认证服务异常（非 fixture 缺失）');
+    for (const [route, name] of permCases) {
+      rec(`P:${route}`, name, 'FAIL', '前置登录失败，权限守卫未被验证');
+    }
+  } else if (!permToken) {
+    rec('PERM-LOGIN', 'test_inspector 登录', 'SKIP',
+        '账号在库中不存在（单租户收敛后无此 fixture），权限组整体跳过');
+    for (const [route, name] of permCases) {
+      rec(`P:${route}`, name, 'SKIP', '前置账号缺失，未验证');
+    }
+  } else {
+    rec('PERM-LOGIN', 'test_inspector 登录', 'PASS', `token=${!!permToken}`);
+    for (const [route, name, shouldBlock] of permCases) {
+      try {
+        await page.goto(`${BASE}/#${route}`, { waitUntil: 'networkidle', timeout: 30000 });
+        await sleep(900);
+        const hash = await page.evaluate(() => location.hash);
+        const blocked = hash.includes('/403') || hash.includes('/dashboard') || hash.includes('/login');
+        const ok = shouldBlock ? blocked : !blocked;
+        rec(`P:${route}`, name, ok ? 'PASS' : 'FAIL', `期望${shouldBlock ? '拦截' : '放行'}, 实际hash=${hash}`);
+      } catch (e) {
+        rec(`P:${route}`, name, 'FAIL', (e.message || '').slice(0, 120));
+      }
     }
   }
 
@@ -235,12 +261,17 @@ async function login(page, user, pw) {
   const warn = results.filter(r => r.status === 'WARN').length;
   const fail = results.filter(r => r.status === 'FAIL').length;
   const out = results.filter(r => r.status === 'OUT').length;
+  const skip = results.filter(r => r.status === 'SKIP').length;
   console.log(`\n════════ 全模块扫描汇总 ════════`);
-  console.log(`PASS ${pass} / WARN ${warn} / FAIL ${fail} / OUT ${out} / TOTAL ${results.length}`);
+  console.log(`PASS ${pass} / WARN ${warn} / FAIL ${fail} / OUT ${out} / SKIP ${skip} / TOTAL ${results.length}`);
   const fails = results.filter(r => r.status === 'FAIL');
   if (fails.length) { console.log('FAIL 明细：'); fails.forEach(f => console.log(`  ✗ ${f.id} ${f.name} — ${f.detail}`)); }
   const warns = results.filter(r => r.status === 'WARN');
   if (warns.length) { console.log('WARN 明细：'); warns.forEach(w => console.log(`  ⚠ ${w.id} ${w.name} — ${w.detail}`)); }
+  if (skip) {
+    console.log('SKIP 明细（前置不具备，不计失败）：');
+    results.filter(r => r.status === 'SKIP').forEach(s => console.log(`  ⏭ ${s.id} ${s.name} — ${s.detail}`));
+  }
 
   fs.writeFileSync(path.join(__dirname, 'full_module_scan_result.json'), JSON.stringify({ ts: new Date().toISOString(), results, consoleErrors }, null, 2));
   await browser.close();
