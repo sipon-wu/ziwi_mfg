@@ -80,15 +80,32 @@ class WorkCenterRepository(MultiTenantRepository):
 
     async def list_wc(self, page: int = 1, page_size: int = 20,
                       keyword: str = None, wc_type: str = None) -> dict:
-        sql = "SELECT * FROM work_centers WHERE 1=1"
+        # 带出"所属车间"名字（2026-11-06）：此前 `org_id` 只有列、没有出口 ——
+        # 工位列表页拿不到它，界面上就等于没有这个字段（"填了没人看"）。
+        #
+        # ★ 所有列必须用 ``w.`` 限定：join 上 organizations 之后两边都有
+        #   ``code`` / ``name``，不限定 PG 直接报
+        #   "column reference \"name\" is ambiguous"（SQLite 只是不报错但取错列）。
+        #   同理 ``ORDER BY`` 也要限定 —— 分页 SQL 外面还套了一层
+        #   ``SELECT COUNT(*) FROM (...)``，限定符丢了就取不到值。
+        #
+        # ★ 只**读**组织名，不要因为这里出现了 organizations 就顺手把
+        #   work_centers 登记进 ORG_SCOPED_TABLES：那是业务属性不是数据范围，
+        #   详见 constants/modules.py 的 EXCLUDED_FROM_ORG_SCOPE。
+        sql = (
+            "SELECT w.*, o.name AS org_name FROM work_centers w"
+            " LEFT JOIN organizations o"
+            "        ON o.id = w.org_id AND o.tenant_id = w.tenant_id"
+            " WHERE 1=1"
+        )
         params = {}
         if keyword:
-            sql += " AND (name LIKE :kw OR code LIKE :kw)"
+            sql += " AND (w.name LIKE :kw OR w.code LIKE :kw)"
             params["kw"] = f"%{keyword}%"
         if wc_type:
-            sql += " AND wc_type = :wc_type"
+            sql += " AND w.wc_type = :wc_type"
             params["wc_type"] = wc_type
-        sql += " ORDER BY code ASC"
+        sql += " ORDER BY w.code ASC"
         return await self.query_page(sql, params, page, page_size)
 
     async def get_wc(self, id: int) -> Optional[Dict]:

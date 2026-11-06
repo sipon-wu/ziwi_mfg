@@ -17,6 +17,8 @@ interface WorkCenter {
   name: string
   wc_type: string
   org_id: number | null
+  /** 所属车间名称（后端 LEFT JOIN organizations 带出，只读；写入仍走 org_id） */
+  org_name?: string | null
   efficiency: number
   equipment_count: number
   labor_count: number
@@ -33,6 +35,25 @@ const WC_TYPE_OPTIONS = [
   { value: 'work_cell', label: '工作单元' },
   { value: 'workstation', label: '工位' },
 ]
+
+/** 所属车间下拉：只取 org_type=workshop 的组织，避免把部门和班组也列进来 */
+const workshopOptions = ref<Array<{ value: number; label: string }>>([])
+async function fetchWorkshops() {
+  try {
+    // 返回体走的是 `data` 层（与 fetchData 一致），client 未标泛型 → 显式断言
+    const res: any = await get('/organizations', {
+      params: { org_type: 'workshop', page: 1, page_size: 100 },
+    })
+    workshopOptions.value = ((res?.items || []) as any[]).map((o) => ({
+      value: o.id,
+      label: o.name,
+    }))
+  } catch {
+    // 组织接口不可用（无权限/租户未建车间）时下拉留空，不影响其它字段保存。
+    // 这里刻意不弹 toast：工位页的首要用途是维护产能参数，不该被一个可选字段拦住。
+    workshopOptions.value = []
+  }
+}
 
 const rawList = ref<WorkCenter[]>([])
 const page = ref(1)
@@ -182,6 +203,7 @@ function getWcTypeLabel(v: string): string {
 
 onMounted(() => {
   fetchData()
+  fetchWorkshops()
 })
 </script>
 
@@ -238,6 +260,7 @@ onMounted(() => {
             <th>工作中心编码</th>
             <th>工作中心名称</th>
             <th>类型</th>
+            <th>所属车间</th>
             <th class="num">效率</th>
             <th class="num">设备数</th>
             <th class="num">人员数</th>
@@ -253,6 +276,10 @@ onMounted(() => {
               <td>{{ item.name }}</td>
               <td>
                 <van-tag type="primary" size="small">{{ getWcTypeLabel(item.wc_type) }}</van-tag>
+              </td>
+              <td>
+                <span v-if="item.org_name">{{ item.org_name }}</span>
+                <span v-else class="ziwi-text-muted">未指定</span>
               </td>
               <td class="num">{{ (item.efficiency * 100).toFixed(0) }}%</td>
               <td class="num">{{ item.equipment_count }}</td>
@@ -280,7 +307,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
-              <td :colspan="9">
+              <td :colspan="10">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
                 <div class="ziwi-row-actions">
                   <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
@@ -307,6 +334,17 @@ onMounted(() => {
         <van-field label="工作中心类型" required>
           <template #input>
             <SelectField v-model="editing.wc_type" :options="WC_TYPE_OPTIONS" class="ziwi-w-full" />
+          </template>
+        </van-field>
+        <van-field label="所属车间">
+          <template #input>
+            <SelectField
+              v-model="editing.org_id"
+              :options="workshopOptions"
+              placeholder="未指定"
+              class="ziwi-w-full"
+              clearable
+            />
           </template>
         </van-field>
         <van-field v-model.number="editing.efficiency" label="效率因子" type="number" placeholder="0.85" />
