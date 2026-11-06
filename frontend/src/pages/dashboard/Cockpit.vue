@@ -341,48 +341,58 @@ onMounted(load)
       <van-button size="small" plain type="primary" :loading="loading" @click="load">刷新</van-button>
     </div>
 
-    <!-- 今日摘要：把当日几个"经营级"数字串成一句话，避免在模块卡里东找西找 -->
+    <!-- 今日摘要：当日几个"经营级"数字，避免在模块卡里东找西找。
+         ★ 必须是**块**，不能是线分隔的文字带 —— 顶部一条 5 段的竖线，扫过去
+         就是"一堆点线"，和下面 24 块 KPI 完全不成一片。这里直接复用
+         CockpitKpi，顶部与模块区共用同一套块样式：改一处两边一起变，
+         也免得又长出一套"看起来差不多但数值字号差 2px"的第二视觉。 -->
     <section class="today">
-      <div class="today__lead">
+      <header class="today__head">
         <span class="today__title">今日生产</span>
         <span class="today__hint">完工口径 · 只认末道工序</span>
+        <button type="button" class="today__more" @click="router.push('/reports')">
+          生产报表<van-icon name="arrow" />
+        </button>
+      </header>
+      <div class="today__blocks">
+        <CockpitKpi
+          label="完工产出"
+          :value="summary ? summary.out : '—'"
+          :unit="summary ? '件' : ''"
+          :state="dailyState"
+          hint="只统计路线末道工序的完工量，不是各工序产量相加"
+        />
+        <CockpitKpi
+          label="工序流转"
+          :value="summary ? summary.wip : '—'"
+          :unit="summary ? '件' : ''"
+          :state="dailyState"
+          hint="全部工序的报工量累计，含在制；与完工产出不同口径，不可相加"
+        />
+        <CockpitKpi
+          label="报废"
+          :value="summary ? summary.scrap : '—'"
+          :unit="summary ? '件' : ''"
+          :state="dailyState"
+          :severity="summary && summary.scrap > 0 ? 'danger' : 'normal'"
+          hint="报工时报废的件数（投入侧已计入报废量）"
+        />
+        <CockpitKpi
+          label="报废率"
+          :value="summary && summary.scrapRate !== null ? summary.scrapRate : '—'"
+          :unit="summary && summary.scrapRate !== null ? '%' : ''"
+          :state="dailyState"
+          :severity="summary && summary.scrapRate !== null && summary.scrapRate > 0 ? 'danger' : 'normal'"
+          hint="报废 ÷ 完工产出。完工为 0 时不给率 —— 0% 会被读成质量很好"
+        />
+        <CockpitKpi
+          label="人工工时"
+          :value="summary ? summary.hours : '—'"
+          :unit="summary ? 'h' : ''"
+          :state="dailyState"
+          hint="运行时间 + 换型时间，按人计；与设备机时不是同一个口径"
+        />
       </div>
-      <div class="today__items">
-        <div class="today__item">
-          <span class="today__k">完工产出</span>
-          <span class="today__v">
-            {{ summary ? summary.out : '—' }}<i v-if="summary">件</i>
-          </span>
-        </div>
-        <div class="today__item">
-          <span class="today__k">工序流转</span>
-          <span class="today__v">
-            {{ summary ? summary.wip : '—' }}<i v-if="summary">件</i>
-          </span>
-        </div>
-        <div class="today__item">
-          <span class="today__k">报废</span>
-          <span class="today__v" :class="{ 'today__v--warn': summary && summary.scrap > 0 }">
-            {{ summary ? summary.scrap : '—' }}<i v-if="summary">件</i>
-          </span>
-        </div>
-        <div class="today__item">
-          <span class="today__k">报废率</span>
-          <span class="today__v">
-            {{ summary && summary.scrapRate !== null ? summary.scrapRate : '—'
-            }}<i v-if="summary && summary.scrapRate !== null">%</i>
-          </span>
-        </div>
-        <div class="today__item">
-          <span class="today__k">人工工时</span>
-          <span class="today__v">
-            {{ summary ? summary.hours : '—' }}<i v-if="summary">h</i>
-          </span>
-        </div>
-      </div>
-      <button type="button" class="today__more" @click="router.push('/reports')">
-        生产报表<van-icon name="arrow" />
-      </button>
     </section>
 
     <ZiwiStateView
@@ -456,24 +466,26 @@ onMounted(load)
 }
 .cockpit__dot { color: var(--ziwi-text-placeholder); }
 
-/* ── 今日摘要条 ── */
+/* ── 今日摘要（块状）──
+   旧写法是「一段文字标题 + 5 个左边框竖线分隔的数字」，整条又扁又长，
+   和下面 24 块 KPI 是两种语言：上面是线、下面是块，页面被切成两截。
+   现在把它也变成一张"卡 + 块"：卡头和模块卡同规格（48 触控高 + 标题 +
+   右侧入口），5 个数字各占一块，块样式直接来自 CockpitKpi（浅色实心底、
+   块内居中、无描边），于是从页面顶部到底部只有一种块面语言。 */
 .today {
-  display: flex;
-  align-items: center;
-  gap: var(--ziwi-gap-lg);
-  flex-wrap: wrap;
-  padding: var(--ziwi-gap-md) var(--ziwi-gap-lg);
-  margin-bottom: var(--ziwi-gap-md);
   background: var(--ziwi-bg-white);
   border: 1px solid var(--ziwi-border-card);
   border-radius: var(--ziwi-radius-card);
   box-shadow: var(--ziwi-shadow-card);
+  padding: var(--ziwi-gap-sm) var(--ziwi-gap-md) var(--ziwi-gap-md);
+  margin-bottom: var(--ziwi-gap-md);
 }
-.today__lead {
+.today__head {
   display: flex;
-  flex-direction: column;
-  gap: var(--ziwi-gap-2xs);
-  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--ziwi-gap-sm);
+  min-height: var(--ziwi-touch-min, 48px);
+  margin-bottom: var(--ziwi-gap-sm);
 }
 .today__title {
   font-size: var(--ziwi-font-size-lg);
@@ -484,44 +496,19 @@ onMounted(load)
   font-size: var(--ziwi-font-size-xs);
   color: var(--ziwi-text-muted);
 }
-.today__items {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+.today__blocks {
+  display: grid;
+  /* ★ 5 块固定等分。`minmax(0, 1fr)` 的下限必须显式写 0 —— 默认下限是
+     min-content，"工序流转""人工工时"这类标签加上数字会把列撑宽，
+     5 块就变成宽窄不一的色块，矩阵又塌了。 */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--ziwi-gap-sm);
 }
-.today__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ziwi-gap-2xs);
-  min-width: 72px;
-  padding-left: var(--ziwi-gap-lg);
-  border-left: 1px solid var(--ziwi-border-light);
+@media (max-width: 900px) {
+  .today__blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.today__item:first-child {
-  padding-left: 0;
-  border-left: none;
-}
-.today__k {
-  font-size: var(--ziwi-font-size-xs);
-  color: var(--ziwi-text-muted);
-}
-.today__v {
-  font-size: var(--ziwi-font-size-2xl);
-  font-weight: 700;
-  line-height: var(--ziwi-lineheight-tight);
-  color: var(--ziwi-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.today__v i {
-  font-style: normal;
-  font-size: var(--ziwi-font-size-sm);
-  font-weight: 400;
-  color: var(--ziwi-text-muted);
-  margin-left: 2px;
-}
-.today__v--warn { color: var(--ziwi-danger); }
 .today__more {
+  margin-left: auto;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;

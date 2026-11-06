@@ -74,18 +74,42 @@ const EXPECT_MODULES = ['M00', 'M01', 'M02', 'M03', 'M04', 'M05', 'M11', 'M12']
       .map((e) => `${e.closest('.mod')?.querySelector('.mod__code')?.textContent?.trim()}/${e.querySelector('.ck__label')?.textContent?.trim()}`))
   chk('无「未接入」占位', unavailableLabels.length === 0, unavailableLabels.join(' '))
 
-  // ── 3. 今日摘要条：先证明值可读，再谈数字 ──
-  const today = await page.$$eval('.today__item', (els) =>
-    els.map((e) => ({
-      k: e.querySelector('.today__k')?.textContent?.trim() || '',
-      v: e.querySelector('.today__v')?.textContent?.trim() || '',
-    })))
-  chk('今日摘要 5 项', today.length === 5, today.map((t) => t.k).join('/'))
+  // ── 3. 今日摘要：先证明值可读，再证明它是"块"而不是线 ──
+  // ★ 这一组原先断的是"5 个 span 的文字内容"。但顶部摘要条曾经是**线分隔的
+  //   文字带** —— 5 个 span 一个不少、值也都可读，断言全绿，而页面上半截仍是
+  //   "一堆点线"。所以这里加两条只在"块"成立时才过的断言：5 块等宽、
+  //   且每块有实心浅底（背景不是透明）。
+  const today = await page.$$eval('.today__blocks .ck', (els) =>
+    els.map((e) => {
+      const r = e.getBoundingClientRect()
+      const bg = getComputedStyle(e).backgroundColor
+      return {
+        k: e.querySelector('.ck__label')?.textContent?.trim() || '',
+        v: e.querySelector('.ck__value')?.textContent?.trim() || '',
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        bg,
+      }
+    }))
+  chk('今日摘要 5 块', today.length === 5, today.map((t) => t.k).join('/'))
+  const todayWidths = today.map((t) => t.w)
+  chk('今日摘要 5 块等宽', today.length === 5
+    && Math.max(...todayWidths) - Math.min(...todayWidths) <= 2,
+    todayWidths.join('/'))
+  // rgba(0, 0, 0, 0) / transparent = 还是白底文字，没做成块
+  // ★ 必须同时要求 length > 0：空数组上跑 filter 得到 0 条，`=== 0` 恒真 ——
+  //   整块都没渲染出来时这条断言反而是绿的（自己踩了一次：选择器改名后
+  //   0 块被"全部都有底色"判为通过）。
+  const transparent = today.filter((t) => /rgba?\(0,\s*0,\s*0,\s*0\)|transparent/.test(t.bg))
+  chk('今日摘要每块有实心底色（不是裸文字）',
+    today.length === 5 && transparent.length === 0,
+    today.map((t) => `${t.k}:${t.bg}`).join(' ') || '一块都没渲染出来')
+
   // ★ 完工产出必须可读（它是这一条的主指标）；
   //   报废率在"完工 0 件"时**有意**给 '—'（0% 会被读成"质量很好"），不算缺席。
   const outItem = today.find((t) => t.k === '完工产出')
   const rateItem = today.find((t) => t.k === '报废率')
-  chk('完工产出可读', !!outItem && /^\d/.test(outItem.v), outItem ? outItem.v : '整条缺失')
+  chk('完工产出可读', !!outItem && /^\d/.test(outItem.v), outItem ? outItem.v : '整块缺失')
   const outNum = outItem ? parseInt(outItem.v, 10) : NaN
   chk('报废率仅在完工为 0 时可留空',
     !!rateItem && (Number.isFinite(outNum) && outNum > 0 ? /^[\d.]+/.test(rateItem.v) : rateItem.v === '—'),

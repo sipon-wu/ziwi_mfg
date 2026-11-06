@@ -209,16 +209,34 @@ async function login(page, user, pw) {
   // S2 改造后，拦截目标是 /403（带 from / perm 参数），不再是 /dashboard。
   // 两者都算"被拦"，只要没真正进入目标页即可。
   //
-  // ★ 权限组的前置是一个**账号 fixture**，不是服务本身。`test_inspector`
-  //   属旧演示租户，2026-11-03 单租户收敛（全库归零重建为艾华 AH-THR）后
-  //   库里根本没有这个账号 —— staging 实测 `select username from users` 只有
-  //   ah_admin / ah_dh。原先登录失败直接判 FAIL，连带下面 5 条权限用例全红，
-  //   现场看起来像"认证挂了"，实际是探针自己假设了一个不存在的账号。
-  //   恒红的闸等于没有闸，所以这里改判 SKIP 并**逐条留下 SKIP 记录**，
-  //   不许悄悄消失（沉默跳过和被删掉是一个形状）。
-  //   注意：只有"登录拿不到 token"才 SKIP。token 拿到了、但页面没按预期
-  //   拦截/放行，仍然是 FAIL —— 那才是真正的权限缺陷。
-  const permToken = await login(page, 'test_inspector', 'test123456');
+  // ★ 权限组的前置是一个**账号 fixture**，不是服务本身，而两套环境的
+  //   fixture 恰好不一样（实测）：
+  //     本地 SQLite：有 test_inspector（旧回归账号），无 ah_qc1 / ah_qc2
+  //     staging PG ：只有艾华种子，有 ah_qc1/ah_qc2（品质检验员），无 test_inspector
+  //   写死任何一个都会在另一套环境判红，看着像"认证挂了"，实际是探针假设错了
+  //   一个不存在的账号。所以按候选顺序试，用第一个能登上的。
+  //   优先级：环境变量显式指定 > 艾华种子 ah_qc1 > 旧回归账号 test_inspector。
+  //
+  //   为什么选 ah_qc1 当主候选：它是真实业务账号（刘敏·来料检验员，
+  //   role=inspector，scope=DEPT_CHILD），权限形状正好对上本组期望 ——
+  //   有 M03:inspection_order:read（能进 /quality），没有
+  //   M10:spc_control_limit / ppap_submission / fmea_document（进不去那三页）。
+  //   新建一个"专用测试账号"反而会多一份要维护、又和生产数据对不上的影子数据。
+  const PERM_CANDIDATES = [
+    { user: process.env.PERM_USER || '', pwd: process.env.PERM_PWD || '',
+      tag: '环境变量指定的账号' },
+    { user: 'ah_qc1', pwd: 'Ah@2026user', tag: '艾华种子·品质检验员' },
+    { user: 'test_inspector', pwd: 'test123456', tag: '旧回归账号' },
+  ].filter(x => x.user);
+
+  let permToken = null;
+  let permWho = '';
+  for (const cand of PERM_CANDIDATES) {
+    const t = await login(page, cand.user, cand.pwd);
+    if (t) { permToken = t; permWho = `${cand.user}（${cand.tag}）`; break; }
+    console.log(`      ↳ 候选 ${cand.user} 登不上，换下一个`);
+  }
+
   const permCases = [
     ['/quality/spc/control-limits', '检验员→SPC(需品质工程师)', true], // 应被拦
     ['/quality/ppap/levels', '检验员→PPAP(需品质工程师)', true],
@@ -228,20 +246,23 @@ async function login(page, user, pw) {
   ];
   if (!permToken && !token) {
     // ★ 反向守卫：连 admin 都登不上时，绝不能当"账号缺失"跳过 —— 那是认证服务
-    //   真的挂了。SKIP 只在"admin 能登、只有这个 fixture 账号登不上"时才成立。
-    rec('PERM-LOGIN', 'test_inspector 登录', 'FAIL',
+    //   真的挂了。SKIP 只在"admin 能登、只有受限角色账号登不上"时才成立。
+    rec('PERM-LOGIN', '受限角色登录', 'FAIL',
         'admin 亦登录失败，疑似认证服务异常（非 fixture 缺失）');
     for (const [route, name] of permCases) {
       rec(`P:${route}`, name, 'FAIL', '前置登录失败，权限守卫未被验证');
     }
   } else if (!permToken) {
-    rec('PERM-LOGIN', 'test_inspector 登录', 'SKIP',
-        '账号在库中不存在（单租户收敛后无此 fixture），权限组整体跳过');
+    // 三个候选全登不上：本环境没有受限角色 fixture。如实跳过并点名试过谁 ——
+    // 沉默跳过和被删掉是一个形状，下次没人知道该补哪个账号。
+    const tried = PERM_CANDIDATES.map(x => x.user).join(' / ');
+    rec('PERM-LOGIN', '受限角色登录', 'SKIP',
+        `${tried} 全部登不上（本环境缺检验员 fixture），权限组整体跳过`);
     for (const [route, name] of permCases) {
       rec(`P:${route}`, name, 'SKIP', '前置账号缺失，未验证');
     }
   } else {
-    rec('PERM-LOGIN', 'test_inspector 登录', 'PASS', `token=${!!permToken}`);
+    rec('PERM-LOGIN', '受限角色登录', 'PASS', `token=OK · 使用 ${permWho}`);
     for (const [route, name, shouldBlock] of permCases) {
       try {
         await page.goto(`${BASE}/#${route}`, { waitUntil: 'networkidle', timeout: 30000 });
