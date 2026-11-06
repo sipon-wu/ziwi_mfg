@@ -4,6 +4,7 @@ from datetime import date
 from sqlalchemy import bindparam, text
 from app.repositories.base import MultiTenantRepository
 from app.core.work_center_nature import derive, display_nature, is_conflict
+from app.core.env_req import decode_env_req, encode_env_req, flat_clean_level
 
 
 def _month_range(year: int, month: int):
@@ -11,6 +12,25 @@ def _month_range(year: int, month: int):
     start = date(year, month, 1)
     end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
     return start, end
+
+
+def shape_operation(row: Optional[Dict]) -> Optional[Dict]:
+    """把 ``env_req`` 的 JSON 文本解成结构化值，并物化平铺的 ``clean_level``。
+
+    ★ 为什么在仓储层做而不是在接口层：``operations`` 的行有多个出口
+    （列表 / 详情 / 更新回读 / 排产 / 打印）。逐出口各补一次，迟早漏一个；
+    放在 ``*_op`` 读方法里，出口再多也只走这一条路。
+
+    ★ 平铺 ``clean_level`` 是**现算的派生值**（不落库），因为前端高级检索
+    只认平铺 key（``item[cond.field]``），不会走 ``env_req.clean_level`` 点号路径。
+    派生不落库 → 不存在两份真源分叉。
+    """
+    if not row:
+        return row
+    decoded = decode_env_req(row.get("env_req"))
+    row["env_req"] = decoded
+    row["clean_level"] = flat_clean_level(decoded)
+    return row
 
 
 class OperationRepository(MultiTenantRepository):
@@ -26,12 +46,15 @@ class OperationRepository(MultiTenantRepository):
             sql += " AND op_type = :op_type"
             params["op_type"] = op_type
         sql += " ORDER BY code ASC"
-        return await self.query_page(sql, params, page, page_size)
+        data = await self.query_page(sql, params, page, page_size)
+        for row in data.get("items") or []:
+            shape_operation(row)
+        return data
 
     async def get_op(self, id: int) -> Optional[Dict]:
-        return await self.query_one(
+        return shape_operation(await self.query_one(
             "SELECT * FROM operations WHERE id = :id", {"id": id}
-        )
+        ))
 
     async def create_op(self, data: dict) -> int:
         """插入工序。
@@ -41,6 +64,7 @@ class OperationRepository(MultiTenantRepository):
         """
         data = {**data}
         data.setdefault("is_critical", False)
+        data["env_req"] = encode_env_req(data.get("env_req"))
         return await self.execute(
             """INSERT INTO operations (tenant_id, code, name, op_type, setup_time, unit_time,
                labor_cert, equip_req, material_reqs, sop_refs, env_req, remark, is_active,
@@ -52,6 +76,10 @@ class OperationRepository(MultiTenantRepository):
         )
 
     async def update_op(self, id: int, data: dict) -> int:
+        # 只在本次真的要写这一列时才编码：`exclude_unset` 里没有它，
+        # 就不该凭空把 env_req 覆盖成 NULL。
+        if "env_req" in data:
+            data = {**data, "env_req": encode_env_req(data["env_req"])}
         sets = self._build_set_clause(data)
         params = {**data, "id": id}
         return await self.execute(

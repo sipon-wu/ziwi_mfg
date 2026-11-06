@@ -266,3 +266,37 @@ assert set(PROCESS_NATURE_LABELS) == (set(OP_TYPE_LABELS) - NATURE_UNMAPPED) | {
     "PROCESS_NATURE_LABELS 必须是 OP_TYPE_LABELS 把 4 种检验归一成 quality 的结果；"
     "新增工序类型时这里要同步，否则界面会出现「未知（xxx）」"
 )
+
+
+# ── 洁净度等级（工序「环」要素里的无尘度） ──────────────────────────
+#: 存储码用 ``isoN``（ISO 14644-1 等级号，与 GB/T 25915 一致），中文名按车间口头
+#: 习惯把「X 级」放在前面、ISO 号放括号里 —— 客户说的是"万级"、"十万级"，
+#: 不是"ISO 7"。渲染出来的必须是客户能对上话的那几个字。
+#:
+#: ★ 为什么要有 ``none``（无洁净要求）：
+#:   它区分的是「评估过，确实不需要」和「压根没填」。两者在无尘车间排产、
+#:   工序外协判定里是完全不同的结论，混成一个"空"就永远分不清。
+#:
+#: ★ 为什么不只给万级/十万级两个"常用值"：
+#:   这是**客户报什么就得存什么**的客观属性，不是我们替客户归并的主观分类。
+#:   值域收窄的唯一后果是客户报了百级，我们只能往十万级塞 —— 数据当场失真。
+CLEAN_LEVEL_LABELS: dict[str, str] = {
+    "none": "无洁净要求",
+    "iso5": "百级（ISO 5）",
+    "iso6": "千级（ISO 6）",
+    "iso7": "万级（ISO 7）",
+    "iso8": "十万级（ISO 8）",
+    "iso9": "三十万级（ISO 9）",
+}
+
+CLEAN_LEVELS: tuple[str, ...] = tuple(CLEAN_LEVEL_LABELS)
+
+CleanLevel = Literal[*CLEAN_LEVEL_LABELS]
+
+
+def clean_level_label(code: str | None) -> str:
+    """洁净度等级转中文；未知值给「未知（原文）」，不回显原文冒充正常值。"""
+    if not code:
+        return ""
+    return CLEAN_LEVEL_LABELS.get(code, f"未知（{code}）")
+

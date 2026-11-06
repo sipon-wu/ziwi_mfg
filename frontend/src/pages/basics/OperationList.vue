@@ -9,8 +9,34 @@ import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import AdvancedSearchPanel from '@/components/AdvancedSearchPanel.vue'
 import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
-import { OP_TYPE_OPTIONS, opTypeLabel } from '@/config/enums'
+import { OP_TYPE_OPTIONS, opTypeLabel, CLEAN_LEVEL_OPTIONS, cleanLevelLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
+
+/** 环境要求（环）。后端真源 app/schemas/basic_data.py::EnvReq，存储为 JSON 文本。 */
+interface EnvReq {
+  clean_level: string | null
+  temp_min: number | null
+  temp_max: number | null
+  humidity_min: number | null
+  humidity_max: number | null
+  /** 旧自由文本的暂存位：解析不了的旧数据会落到这里，保存时原样带回，不静默丢。 */
+  legacy_text?: string | null
+}
+
+/**
+ * 表单态。有意与 `EnvReq` 分开：Vant 的 van-field `v-model` 只收
+ * `string | number | undefined`，绑 `number | null` 直接 TS2322；
+ * 空输入时 `.number` 修饰符又给出 `''` 而不是 null。
+ * 所以表单里用 `''` 表示"没填"，提交前由 `cleanEnv()` 统一转回 null。
+ */
+interface EnvForm {
+  clean_level: string
+  temp_min: number | string
+  temp_max: number | string
+  humidity_min: number | string
+  humidity_max: number | string
+  legacy_text?: string | null
+}
 
 interface Operation {
   id: number
@@ -23,7 +49,10 @@ interface Operation {
   equip_req: string | null
   material_reqs: string | null
   sop_refs: string | null
-  env_req: string | null
+  /** 结构化环境要求（温度/湿度/洁净度）。此前是自由文本且无输入框 → 全库 0 条有值。 */
+  env_req: EnvReq | null
+  /** env_req.clean_level 的派生平铺值（后端读取时现算，不落库），供检索/列直取。 */
+  clean_level: string | null
   remark: string | null
   is_active: boolean
   // 关键工序：PFMEA 发布时按 fmea_hierarchies.operation_id 自动置真，
@@ -44,6 +73,48 @@ const opTypeFilter = ref('')
 const showDialog_ = ref(false)
 const editing = ref<Partial<Operation>>({})
 const isEdit = ref(false)
+
+/** 空环境要求。用独立 ref 而不是 editing.env_req：editing 是 Partial，
+ *  env_req 可能为 null，模板里 `editing.env_req.temp_min` 会踩空。 */
+function emptyEnv(): EnvForm {
+  return {
+    clean_level: '',
+    temp_min: '',
+    temp_max: '',
+    humidity_min: '',
+    humidity_max: '',
+    legacy_text: null,
+  }
+}
+
+/** 接口值 → 表单值。null 统一落成 `''`，别把 null 绑进 van-field。 */
+function toEnvForm(e: EnvReq | null): EnvForm {
+  if (!e) return emptyEnv()
+  return {
+    clean_level: e.clean_level || '',
+    temp_min: e.temp_min ?? '',
+    temp_max: e.temp_max ?? '',
+    humidity_min: e.humidity_min ?? '',
+    humidity_max: e.humidity_max ?? '',
+    legacy_text: e.legacy_text ?? null,
+  }
+}
+
+const envForm = ref<EnvForm>(emptyEnv())
+
+/** 表单值 → 提交值：空的数值不留 `''`（后端会收到字符串，float 校验直接 422）。 */
+function cleanEnv(v: EnvForm): EnvReq | null {
+  const out: Record<string, any> = {}
+  if (v.clean_level) out.clean_level = v.clean_level
+  for (const k of ['temp_min', 'temp_max', 'humidity_min', 'humidity_max'] as const) {
+    const n = v[k]
+    if (n === null || n === undefined || n === '') continue
+    const num = Number(n)
+    if (Number.isFinite(num)) out[k] = num
+  }
+  if (v.legacy_text) out.legacy_text = v.legacy_text
+  return Object.keys(out).length ? (out as EnvReq) : null
+}
 
 // 高级检索 + 行展开（并集方式多列并排）
 const cfg = getSearchConfig('operations')
@@ -124,13 +195,37 @@ function openCreate() {
     is_active: true,
     is_critical: false,
   }
+  envForm.value = emptyEnv()
   showDialog_.value = true
 }
 
 function openEdit(item: Operation) {
   isEdit.value = true
   editing.value = { ...item }
+  envForm.value = toEnvForm(item.env_req)
   showDialog_.value = true
+}
+
+/** 环境要求的前置校验。后端也会拦（EnvReq model_validator），
+ *  这里先拦一次是为了给一句人话，而不是让 422 的英文 detail 直接弹给车间。 */
+function checkEnvRange(v: EnvReq | null): string {
+  if (!v) return ''
+  if (v.temp_min != null && v.temp_max != null && Number(v.temp_min) > Number(v.temp_max)) {
+    return '温度下限不能大于上限'
+  }
+  if (v.humidity_min != null && v.humidity_max != null && Number(v.humidity_min) > Number(v.humidity_max)) {
+    return '湿度下限不能大于上限'
+  }
+  const pairs: Array<[keyof EnvReq, string]> = [
+    ['humidity_min', '湿度下限'],
+    ['humidity_max', '湿度上限'],
+  ]
+  for (const [k, label] of pairs) {
+    const n = v[k]
+    if (n == null) continue
+    if (!(Number(n) >= 0 && Number(n) <= 100)) return `${label}要填 0~100 的百分数`
+  }
+  return ''
 }
 
 const saving = ref(false)
@@ -138,9 +233,15 @@ const saving = ref(false)
 async function handleSave() {
   // 提交中不重复受理（UE-P0-05）：按钮已 loading，这里再兜一道
   if (saving.value) return
+  const env = cleanEnv(envForm.value)
+  const envErr = checkEnvRange(env)
+  if (envErr) {
+    showToast(envErr)
+    return
+  }
   saving.value = true
   try {
-    const data = { ...editing.value }
+    const data = { ...editing.value, env_req: env }
     if (isEdit.value) {
       await put(`/operations/${data.id}`, data)
       showToast('工序更新成功')
@@ -246,6 +347,7 @@ onMounted(() => {
             <th>工序编码</th>
             <th>工序名称</th>
             <th>工序类型</th>
+            <th>洁净度</th>
             <th>关键</th>
             <th class="num">准备时间(min)</th>
             <th class="num">单件时间(min/件)</th>
@@ -260,6 +362,14 @@ onMounted(() => {
               <td>{{ item.name }}</td>
               <td>
                 <van-tag type="primary" size="small">{{ getOpTypeLabel(item.op_type) }}</van-tag>
+              </td>
+              <td>
+                <!-- 洁净度：无尘车间排产第一眼要看的字段。空值给「—」而不是留白，
+                     否则看起来像漏渲染；`cleanLevelLabel` 对未知值显「未知（原文）」。 -->
+                <van-tag v-if="item.clean_level" type="warning" plain class="op-clean">
+                  {{ cleanLevelLabel(item.clean_level) }}
+                </van-tag>
+                <span v-else class="op-dash">—</span>
               </td>
               <td>
                 <van-tag v-if="item.is_critical" type="danger">关键</van-tag>
@@ -282,7 +392,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="expandedId === item.id" class="row-detail-row">
-              <td :colspan="8">
+              <td :colspan="9">
                 <ListRowDetail :item="item" :fields="cfg.rowDetailFields" />
                 <div class="ziwi-row-actions">
                   <van-button type="primary" plain icon="edit" @click.stop="openEdit(item)">编辑</van-button>
@@ -313,6 +423,39 @@ onMounted(() => {
         </van-field>
         <van-field v-model.number="editing.setup_time" label="准备时间(min)" type="number" placeholder="0" />
         <van-field v-model.number="editing.unit_time" label="单件时间(min/件)" type="number" placeholder="0" />
+
+        <!-- 环境要求（环）：温度 / 湿度 / 洁净度。设计文档早就定义了这个字段
+             （docs/basic-data-code-plan.md:66），但一直只有类型声明、没有输入框，
+             于是全库 233 条工序 0 条有值、Tab7「环」是纸面。 -->
+        <div class="op-form-section">
+          <div class="op-form-section-title">环境要求（环）</div>
+          <van-field label="洁净度等级">
+            <template #input>
+              <SelectField
+                v-model="envForm.clean_level"
+                :options="CLEAN_LEVEL_OPTIONS"
+                placeholder="未评估"
+                class="ziwi-w-full"
+              />
+            </template>
+          </van-field>
+          <div class="op-env-pair">
+            <van-field v-model.number="envForm.temp_min" type="number" label="温度下限" placeholder="—" />
+            <van-field v-model.number="envForm.temp_max" type="number" label="温度上限" placeholder="—" />
+          </div>
+          <div class="op-env-pair">
+            <van-field v-model.number="envForm.humidity_min" type="number" label="湿度下限" placeholder="—" />
+            <van-field v-model.number="envForm.humidity_max" type="number" label="湿度上限" placeholder="—" />
+          </div>
+          <div class="op-env-hint">
+            温度单位 ℃、湿度单位 %RH（填 0~100 的百分数）。只填能确定的，留空表示未规定；「无洁净要求」是明确结论，和留空不是一回事。
+          </div>
+          <div v-if="envForm.legacy_text" class="op-env-legacy">
+            <span>旧自由文本：{{ envForm.legacy_text }}（不参与排产/外协判定，请按上面字段重填）</span>
+            <van-button size="mini" plain type="primary" @click="envForm.legacy_text = null">清除</van-button>
+          </div>
+        </div>
+
         <van-field label="关键工序">
           <template #input>
             <van-switch v-model="editing.is_critical" />
@@ -343,7 +486,9 @@ onMounted(() => {
 
 .op-table {
   width: 100%;
-  min-width: 840px;
+  /* 9 列（多了「洁净度」）。窄于此值就整体横滚，不压缩列宽 ——
+     压到 840 会出现「十万级（ISO 8）」折成三行。 */
+  min-width: 940px;
   border-collapse: collapse;
   font-size: 14px;
   color: var(--ziwi-text-primary, #1e293b);
@@ -394,6 +539,57 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: var(--ziwi-text-secondary, #64748b);
+}
+
+/* 洁净度列：Vant4 的 Tag 没有 size="small"，靠字号压到与相邻 tag 同高
+   （加 size 会触发 TS2322，vue-tsc 错误数只许不增）。 */
+.op-clean {
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* 表单里的分组区块：环境要求是独立一"环"，跟上面的工时字段不是一类东西，
+   加一条分隔线，避免看成"又两个数字输入框"。 */
+.op-form-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ziwi-border, #ebedf0);
+}
+
+.op-form-section-title {
+  padding: 8px 16px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ziwi-text-primary, #1e293b);
+}
+
+/* 温湿度上下限成对录入：宽屏两列、窄屏单列。
+   用 grid 而不是 flex，是为了让两个 van-field 的 label 宽度自动对齐。 */
+.op-env-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 480px) {
+  .op-env-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.op-env-hint,
+.op-env-legacy {
+  padding: 0 16px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ziwi-text-secondary, #64748b);
+}
+
+.op-env-legacy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ziwi-text-tertiary, #94a3b8);
 }
 
 /* 行展开（并集详情）整行底色弱化，凸显多列并排明细 */

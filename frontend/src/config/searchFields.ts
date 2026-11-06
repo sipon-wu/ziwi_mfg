@@ -9,7 +9,11 @@
  */
 import type { FieldDef, Operator, ResourceSearchConfig, SearchCondition } from '@/types/search'
 import { OPERATOR_LABELS } from '@/types/search'
-import { OP_TYPE_OPTIONS as OP_TYPE, WC_TYPE_OPTIONS as WC_TYPE } from '@/config/enums'
+import {
+  OP_TYPE_OPTIONS as OP_TYPE,
+  WC_TYPE_OPTIONS as WC_TYPE,
+  CLEAN_LEVEL_OPTIONS as CLEAN_LEVEL,
+} from '@/config/enums'
 
 // ============================================================
 // 各枚举候选项（收敛自各列表页散落的 *_OPTIONS 常量）
@@ -168,6 +172,9 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       { key: 'code', label: '工序编码', type: 'string' },
       { key: 'name', label: '工序名称', type: 'string' },
       { key: 'op_type', label: '工序类型', type: 'enum', options: OP_TYPE },
+      // 洁净度：值埋在 env_req（JSON）里，后端读取时物化成平铺字段 clean_level。
+      // 高级检索是客户端求值、只认平铺 key，所以这里不能用 env_req.clean_level。
+      { key: 'clean_level', label: '洁净度等级', type: 'enum', options: CLEAN_LEVEL },
       { key: 'setup_time', label: '准备时间(min)', type: 'number' },
       { key: 'unit_time', label: '单件时间(min)', type: 'number' },
       { key: 'is_critical', label: '关键工序', type: 'boolean' },
@@ -178,6 +185,9 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       { key: 'code', label: '工序编码', type: 'string', group: 'basic' },
       { key: 'name', label: '工序名称', type: 'string', group: 'basic' },
       { key: 'op_type', label: '工序类型', type: 'enum', options: OP_TYPE, group: 'basic' },
+      // 洁净度是 env_req 的派生平铺值（不落库）。单独出一格，因为无尘车间
+      // 排产时第一眼要看的就它，不该翻进「环境要求」那一串里找。
+      { key: 'clean_level', label: '洁净度等级', type: 'enum', options: CLEAN_LEVEL, group: 'basic' },
       { key: 'is_critical', label: '关键工序', type: 'boolean', group: 'basic' },
       { key: 'setup_time', label: '准备时间(min)', type: 'number', group: 'basic' },
       { key: 'unit_time', label: '单件时间(min/件)', type: 'number', group: 'basic' },
@@ -189,7 +199,9 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       { key: 'equip_req', label: '采集点（设备·数据·方式）', type: 'string', format: 'collect-spec', group: 'basic' },
       { key: 'material_reqs', label: '物料要求', type: 'string', group: 'basic' },
       { key: 'sop_refs', label: 'SOP', type: 'string', group: 'basic' },
-      { key: 'env_req', label: '环境要求', type: 'string', group: 'basic' },
+      // env_req 现在是结构化对象（温度/湿度/洁净度），按 string 渲染会落到
+      // display() 的 object 分支 → 行展开里直接吐 `{"clean_level":"iso8"}`。
+      { key: 'env_req', label: '环境要求（温度/湿度/洁净度）', type: 'string', format: 'env-spec', group: 'basic' },
       { key: 'remark', label: '备注', type: 'string', hidden: true, group: 'audit' },
       { key: 'created_at', label: '创建时间', type: 'date', hidden: true, group: 'audit' },
     ],

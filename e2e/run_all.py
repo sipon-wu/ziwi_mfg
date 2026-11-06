@@ -74,6 +74,7 @@ DEFAULT_PROBES = [
     "wms_edge_e2e",
     "quality_edge_e2e",
     "basic_data_edge_e2e",
+    "env_req_e2e",
     "tpm_edge_e2e",
     "trial_edge_e2e",
     "perm_base_edge_e2e",

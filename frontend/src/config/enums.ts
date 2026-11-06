@@ -143,6 +143,36 @@ export function natureLabel(code: string | null | undefined): string {
   return hit ? hit.label : `未知（${code}）`
 }
 
+/**
+ * 洁净度等级 —— 工序「环」要素里的无尘度。
+ *
+ * 后端真源 `core/enums.py::CLEAN_LEVEL_LABELS`，两边**逐项同序**，
+ * `test_env_req_domain.py::test_frontend_domain_matches_backend_exactly` 钉住。
+ *
+ * 存储码用 `isoN`（ISO 14644-1 等级号，与 GB/T 25915 一致），中文名把车间口头
+ * 说的「万级/十万级」放前面、ISO 号放括号里 —— 客户不会说"ISO 7"。
+ *
+ * `none`（无洁净要求）是独立值，「评估过确实不需要」和「压根没填」必须分得开：
+ * 前者能排进普通车间，后者得先去问工艺。
+ */
+export const CLEAN_LEVEL_OPTIONS: EnumOption[] = [
+  { value: 'none', label: '无洁净要求' },
+  { value: 'iso5', label: '百级（ISO 5）' },
+  { value: 'iso6', label: '千级（ISO 6）' },
+  { value: 'iso7', label: '万级（ISO 7）' },
+  { value: 'iso8', label: '十万级（ISO 8）' },
+  { value: 'iso9', label: '三十万级（ISO 9）' },
+]
+
+/**
+ * 洁净度等级 → 中文。未知值给「未知（原文）」，**不允许 `|| v` 回退**。
+ */
+export function cleanLevelLabel(code: string | null | undefined): string {
+  if (!code) return ''
+  const hit = CLEAN_LEVEL_OPTIONS.find((o) => o.value === code)
+  return hit ? hit.label : `未知（${code}）`
+}
+
 /* ────────────────────────────────────────────────────────────
  * 非状态类枚举：类型 / 级别 / 来源 / 通道
  *

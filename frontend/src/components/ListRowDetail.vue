@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import type { FieldDef } from '@/types/search'
+import { cleanLevelLabel } from '@/config/enums'
 
 /**
  * ListRowDetail —— 「并集方式」行展开详情
@@ -96,6 +97,45 @@ function formatCollectSpec(v: any): string {
 }
 
 /**
+ * 环境要求渲染：`{clean_level, temp_min, temp_max, humidity_min, humidity_max}`
+ * → `十万级（ISO 8） · 温度 20~26℃ · 湿度 45~60%RH`。
+ *
+ * 这一格以前是 `type: 'string'`，而值其实是 JSON 对象 —— 走到 `display()` 的
+ * `typeof v === 'object'` 分支，直接把 `{"clean_level":"iso8",...}` 印到界面上。
+ *
+ * 旧自由文本（`legacy_text`）显式标成「旧文本：…」而不是当成正常环境要求：
+ * 它没有结构化字段，不能参与排产/外协判定，得让人看到"这条要重填"。
+ */
+function formatEnvSpec(v: any): string {
+  if (v == null || v === '') return '--'
+  if (typeof v === 'string') return v
+  if (typeof v !== 'object') return String(v)
+  if (v.legacy_text) return `旧文本：${v.legacy_text}`
+  const parts: string[] = []
+  if (v.clean_level) parts.push(cleanLevelLabel(v.clean_level))
+  if (v.temp_min != null || v.temp_max != null) {
+    parts.push(`温度 ${envBound(v.temp_min, v.temp_max)}℃`)
+  }
+  if (v.humidity_min != null || v.humidity_max != null) {
+    parts.push(`湿度 ${envBound(v.humidity_min, v.humidity_max)}%RH`)
+  }
+  return parts.length ? parts.join(' · ') : '--'
+}
+
+/** 单边缺失时不留空洞：20~空 会读成"20 到 空"，用「≥ / ≤」表达开区间。 */
+function fmtNum(x: any): string {
+  if (x == null || x === '') return ''
+  return String(Number(x))
+}
+
+function envBound(lo: any, hi: any): string {
+  if (lo != null && hi != null) return `${fmtNum(lo)}~${fmtNum(hi)}`
+  if (lo != null) return `≥${fmtNum(lo)}`
+  if (hi != null) return `≤${fmtNum(hi)}`
+  return ''
+}
+
+/**
  * 统一的字段值格式化（保留 v2 逻辑）：
  *  - boolean -> 是/否
  *  - enum -> 选项 label
@@ -107,6 +147,7 @@ function display(f: FieldDef): string {
   const v = props.item?.[f.key]
   if (v === null || v === undefined || v === '') return '--'
   if (f.format === 'collect-spec') return formatCollectSpec(v)
+  if (f.format === 'env-spec') return formatEnvSpec(v)
   if (f.type === 'boolean') return v === true || v === 'true' || v === 1 || v === '1' ? '是' : '否'
   if (f.type === 'enum' && f.options) {
     const opt = f.options.find((o) => String(o.value) === String(v))

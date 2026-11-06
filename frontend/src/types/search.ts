@@ -52,8 +52,12 @@ export interface FieldDef {
    *   `[{equip_type, capability, collect_method, count}]`，渲染成
    *   「设备 · 采什么 · 怎么采」。不新开 FieldType 是为了不动
    *   `defaultOperatorsFor` / 高级检索面板的分支。
+   * - `env-spec`：`operations.env_req` 专用 —— 值是
+   *   `{clean_level, temp_min, temp_max, humidity_min, humidity_max}`，
+   *   渲染成「十万级（ISO 8） · 温度 20~26℃ · 湿度 45~60%RH」。
+   *   它**不是** string：按 string 渲染会走 `display()` 的 object 分支直接吐 JSON。
    */
-  format?: 'collect-spec'
+  format?: 'collect-spec' | 'env-spec'
 }
 
 // ============================================================

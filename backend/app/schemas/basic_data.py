@@ -1,14 +1,62 @@
 # ── 基础数据模块 Pydantic Schema ─────────────────────────────────
 # M04 工序定义 | M05 工作中心 | M03 工艺路线 | M01 产品管理 | M06 工厂日历
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Optional, List
 from datetime import date, datetime
 
-from app.core.enums import OpType, WcType
+from app.core.enums import OpType, WcType, CleanLevel
+from app.core.env_req import decode_env_req
 
 
 # ==================== M04 工序定义 ====================
+
+class EnvReq(BaseModel):
+    """工序「环」要素：温度 / 湿度 / 洁净度。
+
+    口径与 ``docs/basic-data-code-plan.md:66`` 的列注释一致。此前这里是
+    ``Optional[str]`` 自由文本，页面又没有输入框 —— 于是"无尘度"在系统里
+    没有任何落点，全库 233 条工序 0 条有值。
+
+    存储仍是 ``operations.env_req`` 一个 Text 列（JSON）；本模型只做形状与
+    范围校验，编解码在 :mod:`app.core.env_req`。
+    """
+
+    clean_level: Optional[CleanLevel] = None
+    temp_min: Optional[float] = None
+    temp_max: Optional[float] = None
+    humidity_min: Optional[float] = None
+    humidity_max: Optional[float] = None
+    #: 旧自由文本的暂存位（见 core/env_req.py）。不是业务字段，只用于不丢数据。
+    legacy_text: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_stored_string(cls, v):
+        """兼容旧数据/旧前端：DB 里存的 JSON 文本、或客户端直接送字符串。"""
+        if isinstance(v, str):
+            return decode_env_req(v) or {}
+        return v
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if (
+            self.temp_min is not None
+            and self.temp_max is not None
+            and self.temp_min > self.temp_max
+        ):
+            raise ValueError("温度下限不能大于上限")
+        if (
+            self.humidity_min is not None
+            and self.humidity_max is not None
+            and self.humidity_min > self.humidity_max
+        ):
+            raise ValueError("湿度下限不能大于上限")
+        for name in ("humidity_min", "humidity_max"):
+            v = getattr(self, name)
+            if v is not None and not 0 <= v <= 100:
+                raise ValueError(f"{name} 必须是 0~100 的百分数")
+        return self
 
 class OperationCreate(BaseModel):
     code: str
@@ -22,7 +70,7 @@ class OperationCreate(BaseModel):
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None
     sop_refs: Optional[str] = None
-    env_req: Optional[str] = None
+    env_req: Optional[EnvReq] = None
     remark: Optional[str] = None
     is_active: bool = True
     # 关键工序标记（2026-11-04 新增）。PFMEA 发布时按 fmea_hierarchies.operation_id
@@ -40,7 +88,7 @@ class OperationUpdate(BaseModel):
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None
     sop_refs: Optional[str] = None
-    env_req: Optional[str] = None
+    env_req: Optional[EnvReq] = None
     remark: Optional[str] = None
     is_active: Optional[bool] = None
     is_critical: Optional[bool] = None
@@ -58,10 +106,12 @@ class OperationResponse(BaseModel):
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None
     sop_refs: Optional[str] = None
-    env_req: Optional[str] = None
+    env_req: Optional[EnvReq] = None
     remark: Optional[str] = None
     is_active: bool = True
     is_critical: bool = False
+    #: 由 env_req 现算的平铺值（不落库），供客户端检索/列表列直取
+    clean_level: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
