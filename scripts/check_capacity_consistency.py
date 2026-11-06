@@ -12,20 +12,40 @@
 
 所以产能填了多少、填得对不对，跑完全量回归也发现不了——**没有任何断言会去读它**。
 
-## 算法（关键：按**工位**聚合，不是按工序）
+## 算法（两个口径，别混）
 
 一个工作中心上常挂多道工序（推进器的灌胶区一个工位就挂了 7 道：
 预热 / 混合抽真空 / 灌胶 / 灌胶后抽真空 / 固化烘烤 / 冷却拆治具）。
-**该工位每班能出几件，取决于这些工序的占机合计**，而不是最快那道。
 
-因此：
+**口径 A —— 工位产能（`capacity_per_shift` 字段该填什么）**
+= 单班分钟数 ÷ **该工位最慢那道工序**的占机（整件取整）。
+即"这个工位被它最慢的那道工序卡住时，每班能出几件"。
+2026-11-07 Kane 拍板：**按最慢那道，不是最快那道**。
+
+**口径 B —— 真实吞吐（月产能 / 路线瓶颈用）**
+= 单班分钟数 ÷ 该工位**全部工序占机之和**（整件取整）。
+一件产品要依次过完这个工位的每一道工序，所以物理吞吐是合计，不是单道。
+
+两个口径必然不同（7 道工序的灌胶区：口径 A 5 件、口径 B 2 件），
+**它们不是"谁对谁错"，是回答两个不同问题**：
+- A 回答"工位被哪道工序卡住、单工序产能下限是多少"→ 粗排产、工位负荷看板
+- B 回答"这个工位一班到底能出几件"→ 月产能、路线瓶颈、45 台/月 对账
+
+因此本闸**分开比**：
+- `capacity_per_shift` ↔ 口径 A（字段口径一致性）
+- 月产能 / 瓶颈工位 ↔ 口径 B（物理吞吐 vs 设计纲领）
+
+⚠️ 2026-11-07 之前这里只有口径 B，却拿它去比 `capacity_per_shift` —— 于是一个工位
+挂 7 道工序时，字段 11（口径 A）被判定成"对 2（口径 B）高估 450%"，**报出来的
+是两个不同口径的差，不是填错**。而汇总行还写着"字段会按最快那道工序填"，
+把口径说反了。
 
 1. 按 `(路线, 工作中心)` 聚合 `unit_time`（`route_steps.unit_time_override` 优先）；
-2. 工位实际产能 = `班时 × efficiency ÷ 合计占机`；
-3. 瓶颈 = 该路线里**实际产能最低**的工位；
+2. 工位真实产能 = `班时 × 1 ÷ 合计占机`（不乘 efficiency，见下）；工位产能 = `班时 ÷ 最慢一道`；
+3. 瓶颈 = 该路线里**口径 B 产能最低**的工位；
 4. 月产能 = 每班产出 × 班数 × 月工作日；
-5. 同时拿 `capacity_per_shift` 字段值与实算值比对 —— 字段是按单道工序填的，
-   一个工位多工序时它会**高估**，这个差额就是要报出来的东西。
+5. 同时拿 `capacity_per_shift` 字段值与**口径 A（最慢一道）**比对 ——
+   一个工位多工序时，若有人按"最快那道"或"合计"填，这里就会报出来。
 
 ## 用法
 
@@ -41,11 +61,17 @@
 ⚠️ 这个脚本**不吃 `--check` 就只是报告，不是闸**。而 `capacity_per_shift` 的教训
 正是"填了没人读"——所以必须有 `--check` 这一档，由 `run_all.py` 每轮执行。
 
-**判据是棘轮，不是"零偏差"**：存量已有 3 处偏差（灌胶区 11 vs 2、轴承压入 48 vs 18、
-转子线 +780%），它们要么口径待 Kane 拍板、要么是零件线快于总装线的正常现象。
-把闸写成"零偏差"会让它从接上那天起就恒红——**恒红的闸等于没有闸**（annex I 的结论）。
-所以：偏差签名全部落进 `scripts/capacity_baseline.json`，**只拦新增**；
-存量修掉了基线会报"已经不再命中"，跑 `--update-baseline` 缩一处。
+**判据是棘轮，不是"零偏差"**：接上这条闸时（2026-11-05）存量已有 3 处偏差 ——
+灌胶区字段 11（口径 A 应为 5、口径 B 是 2）、轴承压入 48（应为 36 / 18）、
+转子线单班 396 台/月 vs 纲领 45（+780%）。把闸写成"零偏差"会让它从接上那天起就
+恒红——**恒红的闸等于没有闸**（annex I 的结论）。所以：偏差签名全部落进
+`scripts/capacity_baseline.json`，**只拦新增**；存量修掉了基线会报"已经不再命中"，
+跑 `--update-baseline --prune` 缩一处。
+
+2026-11-07 口径拍板后清掉了两条 `field:`（种子脚本从"480÷均值"改成"720÷最慢一道"，
+staging 33 个工位逐个重算，21 个被纠正、12 个本就合口径，现在 0 个不一致）。
+基线只剩 1 条 `design:RTE-AH-ROTOR +780%` —— 那条不是填错，是**零件线配置本身
+是否合理**，要业务拍板，不属于脚本能碰的范围。
 """
 import argparse
 import asyncio
@@ -80,8 +106,13 @@ DEFAULT_TENANT = os.environ.get("TENANT_CODE", "AH-THR")
 #: 已知存量偏差基线。与 `contracts_baseline.json` 同一套用法：只拦新增。
 BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "capacity_baseline.json")
-BASELINE_NOTE = ("产能闸基线：已知存量偏差（口径待拍板 / 属正常现象），只拦新增。"
-                 "修完用 --update-baseline 缩减。")
+BASELINE_NOTE = (
+    "产能闸基线：已知存量偏差，只拦新增。修完用 --update-baseline --prune 缩减。"
+    "本地 SQLite 与 staging PG 是两套数据（本地 capacity_per_shift 多为 NULL），"
+    "所以默认取**并集**，按覆盖写会抹掉另一套环境已接受的条目。"
+    "known 里的文本必须与脚本算出来的一致，否则每轮报「描述变化」；"
+    "给人看的理由写在「备注」里。"
+)
 
 #: 设计纲领：月产 45 台（用户 2026-11-05 明确）。
 DESIGN_MONTHLY = 45.0
@@ -96,6 +127,20 @@ DESIGN_TOLERANCE_PCT = 15.0
 
 #: 工艺占机类工序（预热/固化/老化/真空/烘烤…）—— 产能天花板的主要来源。
 PROCESS_WAIT_RE = ("预热", "固化", "冷却", "烘烤", "老化", "真空", "保温", "跑合", "浸胶", "灌胶")
+
+
+def station_capacity(max_occupancy: float, shift_minutes: float) -> int | None:
+    """口径 A：单班分钟数 ÷ 该工位**最慢一道**工序占机，按整件取整。
+
+    ★ 这是 `capacity_per_shift` 该填什么**唯一的算式**。种子脚本
+      `scripts/seed_thruster_supplement.py::capacity_per_shift_for()` 与它必须
+      对同一组占机给出同一结果 —— `backend/app/tests/test_capacity_formula.py`
+      拿同一批样例对跑两边。两处任何一处改了班时（720/480）或取整方式
+      （floor/round），那个测试立刻红。
+    """
+    if not max_occupancy or max_occupancy <= 0:
+        return None
+    return math.floor(shift_minutes / max_occupancy)
 
 
 async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
@@ -161,10 +206,12 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                         "wc_code": s[11], "wc_name": s[12],
                         "cap": s[13], "eff": s[14] or 1.0, "shift": s[15],
                         "eq": s[16], "lab": s[17],
-                        "ops": [], "sum_unit": 0.0,
+                        "ops": [], "sum_unit": 0.0, "max_op": 0.0,
                     })
                     st["ops"].append(s)
                     st["sum_unit"] += float(s[8] or 0) + float(s[9] or 0)
+                    # 口径 A 的分子：该工位**最慢**那道工序的占机（2026-11-07 拍板口径）
+                    st["max_op"] = max(st["max_op"], float(s[8] or 0) + float(s[9] or 0))
 
                 if orphan:
                     print(f"  ⚠️ {len(orphan)} 道工序未挂工作中心（不参与产能核算）："
@@ -195,9 +242,14 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                     if not st["sum_unit"]:
                         st["implied"] = None
                         st["implied_eff"] = None
+                        st["slowest"] = None
                         continue
                     st["implied"] = math.floor(shift_minutes / st["sum_unit"])
                     st["implied_eff"] = math.floor(shift_minutes * st["eff"] / st["sum_unit"])
+                    # 口径 A：最慢一道 —— 这就是 capacity_per_shift 该填的数
+                    st["slowest"] = station_capacity(st["max_op"], shift_minutes)
+                # 留给文末「全厂工位口径对照」用（那里要跨路线去重）
+                info["stations"] = stations
                 scored = [st for st in stations.values() if st["implied"]]
                 if not scored:
                     print("  ⚠️ 全线工位占机都超过一个班时，出不了整件")
@@ -220,26 +272,31 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                       f"（floor({shift_hours:g}h×60 ÷ {gate['sum_unit']:g} 分)）"
                       + (f"；若再乘效率 {gate['eff']:g} 只剩 {gate['implied_eff']} 件/班"
                          if gate["implied_eff"] != gate["implied"] else ""))
+                slow_op = max(gate["ops"],
+                              key=lambda s: float(s[8] or 0) + float(s[9] or 0))
+                print(f"  工位产能  {gate['slowest']} 件/班"
+                      f"（floor({shift_hours:g}h×60 ÷ 最慢一道 {gate['max_op']:g} 分"
+                      f"「{slow_op[6]} {slow_op[7]}」）← capacity_per_shift 该填这个")
 
-                # ④ 与字段值比对
+                # ④ 与字段值比对（★ 比的是口径 A「最慢一道」，不是上面的口径 B 合计）
                 field_cap = gate["cap"]
                 if field_cap:
-                    delta = (float(field_cap) - gate["implied"]) / gate["implied"]
+                    delta = (float(field_cap) - gate["slowest"]) / gate["slowest"]
                     if abs(delta) <= TOLERANCE:
-                        print(f"  字段核对  ✅ capacity_per_shift={field_cap:g} 与实算相符")
+                        print(f"  字段核对  ✅ capacity_per_shift={field_cap:g} 与最慢一道相符")
                     else:
                         sign = "高估" if delta > 0 else "低估"
                         print(f"  字段核对  ❌ capacity_per_shift={field_cap:g} "
-                              f"{sign} {abs(delta) * 100:.0f}%（按单道工序填的？）")
-                        problems.append(f"{code} {gate['wc_code']} 字段 {field_cap:g} vs 实算 "
-                                        f"{gate['implied']}")
+                              f"{sign} {abs(delta) * 100:.0f}%（应为最慢一道 {gate['slowest']}）")
+                        problems.append(f"{code} {gate['wc_code']} 字段 {field_cap:g} vs "
+                                        f"最慢一道 {gate['slowest']}")
                         # ★ 签名**不带数值**：本地 SQLite 与 staging PG 不是同一份数据
                         #   （本地这些工位的 capacity_per_shift 还是 NULL，staging 填了
                         #   11 / 48）。带数值的话两套环境互相判对方"新增"，闸就废了。
                         #   数值进 detail，只用于人读与"描述变化"提示。
                         findings[f"field:{code}/{gate['wc_code']}"] = (
                             f"{code} {gate['wc_code']} capacity_per_shift {field_cap:g}"
-                            f" 实算 {gate['implied']}（{sign} {abs(delta) * 100:.0f}%）")
+                            f" 应为最慢一道 {gate['slowest']}（{sign} {abs(delta) * 100:.0f}%）")
                 else:
                     print("  字段核对  ⚠️ 该工位没填 capacity_per_shift")
 
@@ -270,9 +327,37 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 print(f"  {code:<18} v{ver}  单班 {s1:>6} 台/月 ｜ 按配置 {sn:>6} 台/月   {tag}")
 
             if problems:
-                print("\n字段与实算不符（一个工位多工序时，字段会按最快那道工序填）：")
+                print("\n字段与「最慢一道」不符（capacity_per_shift 的口径 = 单班 ÷ 该工位最慢那道工序）：")
                 for p in problems:
                     print(f"  - {p}")
+
+            # ── 全厂工位口径对照（信息项，**不参与拦截**）───────────────
+            # 上面只比"每条路线的瓶颈工位"，也就是 16 个工位里只查了 3 个。
+            # 字段填错的其余工位没人看 —— 这正是 `capacity_per_shift` 最初的病
+            # （2026-11-05：全库零消费方，填 11 实算 2 也不报错）。所以这里把
+            # **全部**工位摊开来，让"还有几个对不上"每轮都看得见。
+            # 暂不进棘轮的理由：其余工位没有业务口径兜底，是否接受这批数值要
+            # 业务拍板；先让它可见，别先让它变成基线里的一行字。
+            seen_wc: dict = {}
+            for (code, _ver), info in routes.items():
+                for st in info["stations"].values():
+                    if not st.get("cap") or st.get("slowest") is None:
+                        continue
+                    seen_wc.setdefault(st["wc_code"], st)
+
+            if seen_wc:
+                print("\n全厂工位口径对照（capacity_per_shift vs 最慢一道 · 信息项，不拦截）：")
+                off = []
+                for wc_code, st in sorted(seen_wc.items()):
+                    d = (float(st["cap"]) - st["slowest"]) / st["slowest"]
+                    flag = "✅" if abs(d) <= TOLERANCE else f"⚠️ {d * 100:+.0f}%"
+                    if abs(d) > TOLERANCE:
+                        off.append(f"{wc_code}({st['cap']:g}→{st['slowest']})")
+                    print(f"  {wc_code:<14} {st['wc_name']:<22} "
+                          f"{len(st['ops'])} 道工序  最慢一道 {st['slowest']:>4}  "
+                          f"字段 {st['cap']:>6g}  {flag}")
+                print(f"  → {len(seen_wc)} 个工位，{len(off)} 个与本口径不一致"
+                      + ("：" + "、".join(off) if off else ""))
 
             bad = [v for v in verdicts if not str(v[2]).startswith("OK")]
             print(f"\n结论：{len(verdicts)} 条路线，单班口径 {len(verdicts) - len(bad)} 条与 "

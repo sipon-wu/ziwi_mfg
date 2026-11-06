@@ -18,11 +18,13 @@
 
 跑法（必须在仓库根，且带 NO_PROXY）：
     NO_PROXY='*' no_proxy='*' backend/.venv/Scripts/python.exe scripts/seed_thruster_supplement.py
+只跑某一节：
+    ... scripts/seed_thruster_supplement.py s1        # 或 s1,s4
 """
 from __future__ import annotations
 
+import math
 import os
-import statistics
 import sys
 
 
@@ -88,41 +90,98 @@ def paged(c: httpx.Client, path: str, params: dict | None = None) -> list[dict]:
 
 # ────────────────────────── S1 工作中心产能与班次 ──────────────────────────
 
+#: 单班分钟数 = 12h。必须与 `shift_config`（白班 08:00-20:00）和产能闸
+#: `check_capacity_consistency.py` 的 `FALLBACK_SHIFT_HOURS` 是同一个数。
+SHIFT_MINUTES = 12 * 60
+
+#: 写进 `work_centers.shift_config` 的班次配置。产能闸从这里解析班数/班时
+#: （`_parse_shift`），所以它和 `SHIFT_MINUTES` **必须互相能对上** ——
+#: 只改其中一个，闸算出来的月产能=单班×2，而字段按 12h 算，两边永远对不齐。
+SHIFT_CONFIG = "白班 08:00-20:00；夜班 20:00-08:00"
+
+#: 与口径不符到多少才覆盖已有值。取 5%（比产能闸的 20% 容差严），是为了让
+#: **凡是本脚本写过的工位都精确等于口径 A**，不留 19.2 vs 24 这种"在容差里但
+#: 明显不是这个数"的边界值 —— 那种值在闸里正好卡在 ±20% 的浮点边界上，
+#: 每次跑都可能换一个判定。
+RECALC_TOLERANCE = 0.05
+
+
+def capacity_per_shift_for(occupancies: list[float]) -> int | None:
+    """口径 A：单班分钟数 ÷ 该工位**最慢那道**工序的占机，按整件取整。
+
+    `occupancies` 是该工位各道工序的占机（单件加工 + 准备，准备按批量 1 摊到每件）。
+
+    ★ 2026-11-07 Kane 拍板：**按最慢那道，不是最快那道，也不是合计**。
+      - 最慢那道 = 这个工位被它卡住时的单工序产能下限 → 这就是
+        `capacity_per_shift` 字段该填的数（粗排产 / 工位负荷看板的输入）
+      - 合计 = 一件产品要依次过完该工位每道工序的物理吞吐 → 那是月产能与瓶颈的算法，
+        由产能闸单独算，**不写进这个字段**
+    ★ 与产能闸 `check_capacity_consistency.py::station_capacity()` 必须给出同一结果，
+      `backend/app/tests/test_capacity_formula.py` 拿同一组样例对跑两边锁住。
+    ★ 历史教训：改之前这里是 `round(480 / statistics.mean(uts), 1)` ——
+      8 小时 ÷ **均值**。三个错叠在一起：班时少算（480 而非 720）、除的是均值
+      而不是最慢一道、还带小数。staging 上 33 个工位里 11 个因此对不上。
+    """
+    if not occupancies:
+        return None
+    slowest = max(occupancies)
+    if slowest <= 0:
+        return None
+    return math.floor(SHIFT_MINUTES / slowest)
+
 
 def s1_work_centers(c: httpx.Client) -> None:
     print("\nS1 工作中心产能 / 班次")
     routes = paged(c, "/routes")
-    unit_by_wc: dict[int, list[float]] = {}
+    occ_by_wc: dict[int, list[float]] = {}
     for rt in routes:
+        # 只认已发布路线 —— 产能闸的 SQL 也是 `where r.status = 'published'`。
+        # 草稿路线的工时还没定，算进去会让同一工位两处得出不同的数。
+        if rt.get("status") != "published":
+            continue
         steps = items(c.get(f"{API}/routes/{rt['id']}/steps"))
         for s in steps:
             wc = s.get("wc_id")
+            # 占机 = 单件加工 + 准备（准备按批量 1 摊到每件），与产能闸同口径。
             ut = s.get("unit_time_override") or s.get("unit_time") or 0
-            if wc and ut and ut > 0:
-                unit_by_wc.setdefault(wc, []).append(float(ut))
+            st = s.get("setup_time_override")
+            if st is None:
+                st = s.get("setup_time") or 0
+            occ = float(ut or 0) + float(st or 0)
+            if wc and occ > 0:
+                occ_by_wc.setdefault(wc, []).append(occ)
 
     labor_by_type = {"production_line": 4, "work_cell": 2, "workstation": 1}
-    touched = 0
+    touched = written = kept = 0
     for wc in paged(c, "/work-centers"):
-        if wc.get("capacity_per_shift"):
-            skip(f"工作中心 {wc['code']} 产能", "已有值")
+        cap = capacity_per_shift_for(occ_by_wc.get(wc["id"], []))
+        if cap is None:
+            # 没挂任何已发布路线的工位：不动它的原值（可能是人手填的）
+            skip(f"工作中心 {wc['code']} 产能", "无已发布工序，保留原值")
             continue
-        uts = unit_by_wc.get(wc["id"], [])
-        # 产能 = 一个班次 480 分钟 ÷ 该工位单件时间均值（工时本身是估算，见报告 §1）
-        cap = round(480 / statistics.mean(uts), 1) if uts else None
+        cur = wc.get("capacity_per_shift")
+        if cur and abs(float(cur) - cap) <= cap * RECALC_TOLERANCE:
+            kept += 1
+            skip(f"工作中心 {wc['code']} 产能", f"{float(cur):g} 已合口径（应为 {cap}）")
+            continue
         payload = {
-            "shift_config": "白班 08:00-20:00；夜班 20:00-08:00",
+            "shift_config": SHIFT_CONFIG,
             "labor_count": labor_by_type.get(wc.get("wc_type") or "", 1),
+            "capacity_per_shift": cap,
         }
-        if cap:
-            payload["capacity_per_shift"] = cap
         r = c.put(f"{API}/work-centers/{wc['id']}", json=payload)
         if r.status_code in (200, 204):
             touched += 1
+            if cur:
+                written += 1
+                print(f"  [FIX ] 工作中心 {wc['code']} 产能 {float(cur):g} → {cap}"
+                      f"（{len(occ_by_wc[wc['id']])} 道工序，最慢一道 {max(occ_by_wc[wc['id']]):g} 分）")
         else:
             err(f"工作中心 {wc['code']}", f"HTTP {r.status_code} {r.text[:120]}")
     if touched:
-        ok("工作中心产能与班次", f"{touched} 个已配置（班次 2 档，产能按 480÷单件时间）")
+        ok("工作中心产能与班次",
+           f"{touched} 个已配置（班次 2 档；产能 = {SHIFT_MINUTES} 分 ÷ 该工位最慢一道，"
+           f"其中 {written} 个是覆盖旧口径值），{kept} 个原本已合口径")
 
 
 # ────────────────────────── S2 班组 ──────────────────────────
@@ -442,13 +501,22 @@ def main() -> int:
     c.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
     print(f"登录成功 · 租户 {TENANT_CODE}")
 
-    s1_work_centers(c)
-    s2_teams(c)
-    s3_employees(c)
-    s4_calendar(c)
-    s5_escalation(c)
-    s6_inspection(c)
-    s7_print(c)
+    # 默认全跑。只修某一节时：`... seed_thruster_supplement.py s1`（或 `s1,s4`）。
+    # ★ 为什么要有这个开关：改 S1 的产能口径时，不该顺带在 staging 上把 S6 的检验单
+    #   再录一遍、S7 再打两张纸。每节都自成幂等，但"幂等"不等于"无副作用"。
+    only = {x.strip().lower() for x in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")
+            if x.strip()}
+    sections = [("s1", s1_work_centers), ("s2", s2_teams), ("s3", s3_employees),
+                ("s4", s4_calendar), ("s5", s5_escalation),
+                ("s6", s6_inspection), ("s7", s7_print)]
+    unknown = only - {k for k, _ in sections}
+    if unknown:
+        print(f"未知小节 {sorted(unknown)}；可选 {[k for k, _ in sections]}")
+        return 2
+    for key, fn in sections:
+        if only and key not in only:
+            continue
+        fn(c)
 
     print("\nBLOCKED（无 API 入口，补不了）：")
     BLOCKED.extend([
