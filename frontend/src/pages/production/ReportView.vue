@@ -11,7 +11,12 @@ import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.v
  *   - total_output    = 完工口径，只认路线末道工序（= 真下线的件数）
  *   - total_wip_output= 工序流转量，全工序累计（= 车间干了多少道活）
  *   曾经对全部工序 SUM(output_qty)，多工序工单把产量乘上工序数：
- *   当日全厂显示 1760，实际完工 74。页面不报错，肉眼看不出。
+ * 「当日全厂显示 1760，实际完工 74。页面不报错，肉眼看不出。
+ *
+ * ★ 第三个数 `total_unrouted_output`（明细行叫 `unrouted_output`）= 缺路线的单
+ *   按工序报工的量，判不出末道 → **不计入完工**、单列提示。老口径把它算完工，
+ *   于是"建单漏关联路线"会让产量虚高工序数倍，页面上没有任何异常痕迹。
+ *   ⚠️ 别把"报整单（无工序码）的老单"也归进来：那是合法形态，仍算完工。
  *
  * ★ 明细行字段名与汇总层**不完全一致**：``DailyReportRow.wip_output``
  *   对 ``MonthlyReport.total_wip_output``（同一概念两个名字，schema 里各自
@@ -25,6 +30,9 @@ interface ReportRow {
   total_output: number
   /** 明细行叫 wip_output，不是 total_wip_output */
   wip_output: number
+  /** 无路线口径：工单缺路线却按工序报工，判不出末道，不计入完工 */
+  unrouted_output?: number
+  has_route?: boolean
   total_scrap: number
   total_hours: number
   total_machine_hours: number
@@ -34,6 +42,8 @@ interface DailyReport {
   date: string
   total_output: number
   total_wip_output: number
+  total_unrouted_output?: number
+  unrouted_order_count?: number
   total_scrap: number
   total_hours: number
   total_machine_hours: number
@@ -45,6 +55,8 @@ interface MonthlyReport {
   month: number
   total_output: number
   total_wip_output: number
+  total_unrouted_output?: number
+  unrouted_order_count?: number
   total_scrap: number
   total_hours: number
   total_machine_hours: number
@@ -87,8 +99,7 @@ const laborPerUnit = computed(() => {
   return (s.total_hours || 0) / s.total_output
 })
 
-/** 当月工作日数：只有工厂日历能回答「这天到底上不上班」 */
-const workdaysInMonth = computed(() =>
+/** 当月工作日数：只有工厂日历能回答「这天到底上不上班」 */const workdaysInMonth = computed(() =>
   calendarDays.value.filter((d) => d.day_type === 'workday' || d.day_type === 'adjust_work').length,
 )
 
@@ -97,6 +108,14 @@ const perWorkday = computed(() => {
   if (!workdaysInMonth.value) return 0
   return (sum.value?.total_output || 0) / workdaysInMonth.value
 })
+
+/**
+ * 无路线口径（第三个数）：缺工艺路线的单判不出哪道是末道工序，后端**单列**
+ * `total_unrouted_output`、不进完工量。它必须显性展示 —— 否则"漏关联路线"
+ * 只会让产量数字变大，页面上看不出任何异常。
+ */
+const unroutedOutput = computed(() => sum.value?.total_unrouted_output || 0)
+const unroutedOrders = computed(() => sum.value?.unrouted_order_count || 0)
 
 const pageState = computed<StateKind>(() => {
   if (loadFailed.value) return 'failed'
@@ -250,6 +269,19 @@ onMounted(load)
         />
       </van-cell-group>
 
+      <!-- 无路线提示：没有缺路线的单时整块不渲染，不占版面 -->
+      <van-cell-group v-if="unroutedOrders > 0" inset style="margin:8px">
+        <van-cell
+          title="缺路线的报工（未计入完工）"
+          :value="`${unroutedOrders} 张单 / ${fmt(unroutedOutput, '件')}`"
+        />
+        <van-cell
+          title="原因"
+          label="工单没有工艺路线，判不出哪道是末道工序"
+          value="补产品默认路线"
+        />
+      </van-cell-group>
+
       <!-- 明细 -->
       <div class="ziwi-section-title">按工单明细（{{ rows.length }}）</div>
       <div class="ziwi-report__table">
@@ -265,6 +297,7 @@ onMounted(load)
           <span class="c-wo">
             <span class="wo-no">{{ row.wo_no }}</span>
             <span class="wo-product">{{ row.product_name || '-' }}</span>
+            <span v-if="row.has_route === false" class="wo-product">缺工艺路线</span>
           </span>
           <span class="c-num strong">{{ fmt(row.total_output) }}</span>
           <span class="c-num muted">{{ fmt(row.wip_output) }}</span>

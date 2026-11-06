@@ -171,29 +171,43 @@ class ProductionRepository(MultiTenantRepository):
           ``total_output``（完工口径）只认路线**末道工序**；
           ``wip_output``（工序流转量）保留全工序累计，供在制分析用。
           两个数都在、各有名字，比"改小一个数"安全。
+
+          ``unrouted_output``（无路线口径）是 2026-11-06 补的第三个桶。要分清两种
+          "没有末道工序"的情形 —— 它们的业务含义完全相反：
+
+          - **无路线 + 报整单（``op`` 为空）**：老单的合法形态，一条报工就是整单产出
+            → 仍按完工计（下面 ``elif`` 分支，别把它算成 0）
+          - **无路线 + 逐工序报工（``op`` 有值）**：判不出哪道是末道工序 → 老口径
+            把**每道工序**都当完工，产量等于乘上工序数，**而且报表上看不出异常**
+            （数字变大不是报错）→ 进 ``unrouted_output``，不混进 ``total_output``
         """
         last = await self._last_op_by_route()
         agg: dict = {}
         for r in rows:
             wo_id = r["work_order_id"]
             a = agg.get(wo_id)
+            finish = last.get(r.get("route_id"))
             if a is None:
                 a = agg[wo_id] = {
                     "report_date": report_date or r.get("report_date"),
                     "wo_no": r.get("wo_no"),
                     "product_name": r.get("product_name"),
+                    "has_route": finish is not None,
                     "total_output": 0,
                     "wip_output": 0,
+                    "unrouted_output": 0,
                     "total_scrap": 0,
                     "total_hours": 0.0,
                     "total_machine_hours": 0.0,
                 }
             out_qty = int(r.get("op_output") or 0)
             a["wip_output"] += out_qty
-            finish = last.get(r.get("route_id"))
             op = (r.get("operation_code") or "").strip() or None
-            # 无路线 / 报工没填工序码（"报整单"）→ 仍按完工计，别把简单场景算成 0
-            if finish is None or op is None or op == finish:
+            if finish is None and op is not None:
+                # 无路线/空路线却按工序报工 → 判不出末道，单列，不混进完工量
+                a["unrouted_output"] += out_qty
+            elif op is None or op == finish:
+                # op 为空 = 报工没填工序码（"报整单"），合法简单场景，仍按完工计
                 a["total_output"] += out_qty
             a["total_scrap"] += int(r.get("op_scrap") or 0)
             a["total_hours"] += float(r.get("op_labor") or 0)
@@ -247,6 +261,9 @@ class ProductionRepository(MultiTenantRepository):
             "order_count": len(per_wo),
             "total_output": sum(r["total_output"] for r in per_wo),
             "wip_output": sum(r["wip_output"] for r in per_wo),
+            # 无路线却逐工序报工的单既算不出完工、也不能丢 → 单列，别混进 total_output
+            "unrouted_output": sum(r["unrouted_output"] for r in per_wo),
+            "unrouted_order_count": sum(1 for r in per_wo if r["unrouted_output"] > 0),
             "total_scrap": sum(r["total_scrap"] for r in per_wo),
             "total_hours": sum(r["total_hours"] for r in per_wo),
             "total_machine_hours": sum(r["total_machine_hours"] for r in per_wo),

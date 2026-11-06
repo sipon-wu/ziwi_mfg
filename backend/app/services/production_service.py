@@ -1327,8 +1327,15 @@ class ProductionService:
         total_scrap = sum(r.get("total_scrap") or 0 for r in rows)
         total_hours = sum(r.get("total_hours") or 0 for r in rows)
         total_machine_hours = sum(r.get("total_machine_hours") or 0 for r in rows)
+        # 无路线口径单列：无路线却按工序报工的单判不出末道工序，既算不了完工
+        # 也不能悄悄丢掉。口径是"total_output 只装能确认的完工量"，所以它不进
+        # total_output；报整单的老单（op 为空）不受影响，仍计完工。
+        unrouted = sum(r.get("unrouted_output") or 0 for r in rows)
+        unrouted_orders = sum(1 for r in rows if (r.get("unrouted_output") or 0) > 0)
         return {"date": str(report_date), "total_output": total_output,
                 "total_wip_output": total_wip,
+                "total_unrouted_output": unrouted,
+                "unrouted_order_count": unrouted_orders,
                 "total_scrap": total_scrap, "total_hours": total_hours,
                 "total_machine_hours": total_machine_hours, "rows": rows}
 
@@ -1338,6 +1345,8 @@ class ProductionService:
         return {"year": year, "month": month,
                 "total_output": agg.get("total_output") or 0,
                 "total_wip_output": agg.get("wip_output") or 0,
+                "total_unrouted_output": agg.get("unrouted_output") or 0,
+                "unrouted_order_count": agg.get("unrouted_order_count") or 0,
                 "total_scrap": agg.get("total_scrap") or 0,
                 "total_hours": agg.get("total_hours") or 0,
                 "total_machine_hours": agg.get("total_machine_hours") or 0,

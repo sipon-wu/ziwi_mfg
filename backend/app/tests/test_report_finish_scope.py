@@ -85,7 +85,7 @@ async def _mk_engine():
 
 @pytest.fixture
 async def prod_repo():
-    """两张工单：一张 3 道工序（末道 OP30），一张无路线（单工序老单）。"""
+    """三张工单：3 道工序（末道 OP30）、无路线报整单的老单、无路线却逐工序报工的单。"""
     engine = await _mk_engine()
     async with engine.begin() as conn:
         await conn.execute(text(
@@ -96,12 +96,16 @@ async def prod_repo():
             "(1, 't', 7, 1, 1), (2, 't', 7, 2, 2), (3, 't', 7, 3, 3)"))
         await conn.execute(text(
             "INSERT INTO work_orders (id, tenant_id, wo_no, product_name, route_id) VALUES "
-            "(1, 't', 'WO-A', '定子总成', 7), (2, 't', 'WO-B', '老单无路线', NULL)"))
+            "(1, 't', 'WO-A', '定子总成', 7), (2, 't', 'WO-B', '老单无路线', NULL),"
+            " (3, 't', 'WO-C', '漏关联路线的单', NULL)"))
         # 多工序工单：每道各报 30 件（真实车间就是这么报的）
         rows = [(1, 1, 'OP10', '下料', 30, 30, 0), (2, 1, 'OP20', '装配', 30, 30, 0),
                 (3, 1, 'OP30', '终检', 30, 30, 0)]
         # 无路线老单：一条"报整单"，没有工序码
         rows.append((4, 2, None, None, 12, 12, 1))
+        # 无路线却按工序报工：判不出末道 → 两道各 10 件不能都当完工
+        rows.append((5, 3, 'OP10', '下料', 10, 10, 0))
+        rows.append((6, 3, 'OP20', '装配', 10, 10, 0))
         def q(v):
             return "NULL" if v is None else "'" + str(v) + "'"
 
@@ -147,10 +151,49 @@ async def test_monthly_report_uses_same_scope(prod_repo):
     rows = await prod_repo.monthly_report(2026, 11)
     assert len(rows) == 1
     m = rows[0]
-    # 30（WO-A 完工）+ 12（WO-B 无路线）= 42；不是 90 + 12 = 102
+    # 30（WO-A 完工）+ 12（WO-B 报整单）= 42；不是 90 + 12 = 102
     assert m["total_output"] == 42
-    assert m["wip_output"] == 102
-    assert m["order_count"] == 2
+    # 工序流转量含 WO-C 的两道工序
+    assert m["wip_output"] == 122
+    assert m["order_count"] == 3
+
+
+async def test_routerless_per_op_reports_do_not_count_as_finish(prod_repo):
+    """无路线**却按工序报工**的单：判不出哪道是末道，不能每道都当完工。
+
+    老口径（``finish is None`` 一律算完工）会把 WO-C 的两道各 10 件都记成完工
+    → 产量 20，实际一道都还没终检。这类单只会在"建单漏关联路线 + 车间照工序报工"
+    时出现，而报表上唯一的症状是**数字变大**，没有任何报错。
+    """
+    rows = await prod_repo.daily_report(date(2026, 11, 5))
+    c = {r["wo_no"]: r for r in rows}["WO-C"]
+    assert c["total_output"] == 0, "无路线的逐工序报工不能算完工"
+    assert c["unrouted_output"] == 20, "两道各 10 件全部进无路线口径"
+    assert c["wip_output"] == 20
+    assert c["has_route"] is False
+
+
+async def test_routerless_order_level_report_still_counts_as_finish(prod_repo):
+    """对照：同样是"无路线"，报整单的仍然算完工 —— 两种情形含义相反，别一刀切。
+
+    这条与 ``test_daily_report_keeps_routerless_order_working`` 成对存在：
+    没有它，后人会以为"无路线 = 不算产量"，把老单的口径也改坏。
+    """
+    rows = await prod_repo.daily_report(date(2026, 11, 5))
+    by_no = {r["wo_no"]: r for r in rows}
+    assert by_no["WO-B"]["total_output"] == 12
+    assert by_no["WO-B"]["unrouted_output"] == 0
+    assert by_no["WO-C"]["total_output"] == 0
+
+
+async def test_daily_summary_surfaces_unrouted_bucket(prod_repo):
+    """汇总层要把无路线口径带出来，否则前端没有任何依据提示"这些单缺路线"。"""
+    from app.services.production_service import ProductionService
+
+    data = await ProductionService(prod_repo).daily_report(date(2026, 11, 5))
+    assert data["total_output"] == 42, "无路线逐工序报工不得混进完工量"
+    assert data["total_unrouted_output"] == 20
+    assert data["unrouted_order_count"] == 1
 
 
 # ============================================================
