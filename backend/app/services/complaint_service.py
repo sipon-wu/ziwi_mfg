@@ -56,7 +56,10 @@ class ComplaintService:
     async def _next_no(self, prefix: str) -> str:
         day = business_day_str()
         like = f"{prefix}-{day}-"
-        row = await self.repo.query_one(
+        # ★ 必须 query_one_unscoped：单号唯一约束是 (tenant_id, 单号)，
+        #   即"全租户当天第几号"。跟着组织范围过滤会让一车间主任看不到
+        #   二车间当天已开的单，两人同日都算出 0001 → 撞唯一约束 → 500。
+        row = await self.repo.query_one_unscoped(
             "SELECT complaint_no FROM customer_complaints WHERE complaint_no LIKE :p "
             "ORDER BY complaint_no DESC LIMIT 1", {"p": f"{like}%"})
         seq = 1
@@ -239,7 +242,8 @@ class RecallService:
     async def _next_no(self) -> str:
         day = business_day_str()
         like = f"RC-{day}-"
-        row = await self.repo.query_one(
+        # 同上：召回单号也是全租户流水，不吃组织范围（见 ComplaintService._next_no）
+        row = await self.repo.query_one_unscoped(
             "SELECT recall_no FROM recall_orders WHERE recall_no LIKE :p "
             "ORDER BY recall_no DESC LIMIT 1", {"p": f"{like}%"})
         seq = 1

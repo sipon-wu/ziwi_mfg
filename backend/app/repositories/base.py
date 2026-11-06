@@ -310,7 +310,7 @@ class MultiTenantRepository(Repository):
         # 防御性兜底：没有 WHERE 子句时直接追加
         return f"{sql.rstrip()} WHERE tenant_id = :_tenant_id"
     
-    def _inject_tenant_where_select(self, sql: str) -> str:
+    def _inject_tenant_where_select(self, sql: str, apply_org_scope: bool = True) -> str:
         """在 SELECT 查询中注入 tenant_id 过滤 + org 数据范围过滤。
 
         关键修复：用主表别名限定 tenant_id（如 e.tenant_id），避免 JOIN 查询中
@@ -319,6 +319,9 @@ class MultiTenantRepository(Repository):
         数据范围（S1）：仅当 FROM 主表在 ``ORG_SCOPED_TABLES`` 白名单内、
         且 ``_org_scope`` 不为 None 时，追加 ``{alias}.{org_col} IN (...ids)``。
         组织 id 来自数据库自增主键，强制 int 转换后内联，不存在注入风险。
+
+        ``apply_org_scope=False`` 只注租户、不注组织范围 —— 专供"必须跨组织
+        唯一"的查询（如按日流水号生成，见 ``query_one_unscoped``）。
 
         ⚠️ FROM 与 WHERE 都必须取**最外层**位置。取"第一个"会落到子查询里，
         租户条件被加到子查询上、主表反而全量返回 —— `RouteRepository.list_routes`
@@ -354,7 +357,7 @@ class MultiTenantRepository(Repository):
 
         # ── 组织数据范围 ──
         extra_filter = ""
-        if self._org_scope is not None and raw_table:
+        if apply_org_scope and self._org_scope is not None and raw_table:
             org_col = ORG_SCOPED_TABLES.get(raw_table.lower())
             if org_col:
                 ids = [int(i) for i in self._org_scope]
@@ -393,6 +396,23 @@ class MultiTenantRepository(Repository):
         if self._tenant_id:
             params = {**(params or {}), "_tenant_id": self._tenant_id}
             enhanced_sql = self._inject_tenant_where_select(sql)
+            return await super().query_one(enhanced_sql, params)
+        return await super().query_one(sql, params)
+
+    async def query_one_unscoped(self, sql: str, params: Dict = None) -> Optional[Dict]:
+        """只按租户过滤、**不按组织范围**过滤的单行查询。
+
+        唯一用途：单号流水号生成（``CC-YYYYMMDD-NNNN`` 这类）。
+        这类查询的口径是"本租户当天已经用到第几号"，而唯一约束也是
+        ``(tenant_id, 单号)`` —— 全租户唯一，不是本部门唯一。若跟着组织范围
+        过滤，一车间主任看不到二车间当天已开的单 → 两人同日各算出 0001
+        → 撞 ``uq_*_tenant_no`` → 500，且只在跨部门同日开单时复现。
+
+        除流水号外不要使用：它绕过的正是数据可见范围。
+        """
+        if self._tenant_id:
+            params = {**(params or {}), "_tenant_id": self._tenant_id}
+            enhanced_sql = self._inject_tenant_where_select(sql, apply_org_scope=False)
             return await super().query_one(enhanced_sql, params)
         return await super().query_one(sql, params)
 

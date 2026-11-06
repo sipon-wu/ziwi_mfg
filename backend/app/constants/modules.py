@@ -194,6 +194,29 @@ ORG_SCOPED_TABLES: Dict[str, str] = {
     "work_reports":           "org_id",
     "inspection_result":      "org_id",
     "inventory_transactions": "org_id",
+    # ── 客诉 / 召回（2026-11-06 补）─────────────────────────────────────
+    # 两张表的模型注释写的就是"归属组织ID（数据范围过滤用）"，列也早就建了，
+    # 但一直没登记到这里 —— 于是写入侧从不填、读取侧从不过滤，**白建一列**：
+    # 带 DEPT / DEPT_CHILD 范围的角色在客诉台账上看到的是全租户的数据。
+    # 登记后写入归属由 ``ORG_AUTO_OWNED_TABLES`` 自动补（当前用户主组织），
+    # 存量行由 ``migrations/20261106e_complaint_recall_org.py`` 回填。
+    "customer_complaints":    "org_id",
+    "recall_orders":          "org_id",
+}
+
+# 明确**不登记**、且不要"顺手"加进来的表：
+#
+# - ``work_centers``（工作中心）：主数据，全厂共用的产能单元。模型上那列叫
+#   "所属组织ID"，是**业务属性**（这个工作中心归哪个车间管），不是数据范围。
+#   一旦登记进来：① 写入侧不该替调用方拍板（工艺员替一号车间建工作中心，
+#   自动补成工艺员自己的组织 = 静默记错归属，同 issue_orders.department_id 的坑）；
+#   ② 存量 33 行的 org_id 全为 NULL，回填只能填到公司根节点，而 DEPT_CHILD
+#   解析的是"本组织及下级"，不含根节点 —— 车间主任会一条工作中心都看不到，
+#   排产、报工、产能四处跟着空。
+#   要按组织隔离工作中心，前置条件是先有**真实归属数据**（逐条填所属车间），
+#   而不是机械回填。见 docs/BACKLOG 待拍板项。
+EXCLUDED_FROM_ORG_SCOPE: Dict[str, str] = {
+    "work_centers": "主数据，org_id 是归属车间（业务属性）而非数据范围；见上方说明",
 }
 
 # 允许「写入时自动补归属」的表 = 组织列是**系统列** `org_id` 的那些。
