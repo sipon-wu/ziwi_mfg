@@ -311,3 +311,28 @@ class TestSeedReferencesRealWorkCenters:
         op_codes = {row[0] for row in seeding.OPERATIONS}
         routed = {c for _r, _n, codes in seeding.ROUTES for c in codes}
         assert sorted(routed - op_codes) == []
+
+
+class TestNeedsWriteCoversSideFields:
+    """★ skip 分支的经典漏网：只比产能，把同一个 PUT 里顺带的 `shift_config` 漏掉。
+
+    2026-11-07 实况：把班次口径从「白班+夜班」改成单班那次，33 个工位里只有
+    5 个（产能同时不对的）被顺带改到，其余 28 个产能已合口径 → 整行 SKIP →
+    `shift_config` 仍是两班，产能闸继续每轮报「按配置算 88 台/月」。
+    """
+
+    def test_capacity_ok_but_shift_stale_still_writes(self):
+        need, cap_ok = seed.needs_write(48, 48, "白班 08:00-20:00；夜班 20:00-08:00")
+        assert need is True and cap_ok is True
+
+    def test_both_ok_skips(self):
+        need, cap_ok = seed.needs_write(48, 48, seed.SHIFT_CONFIG)
+        assert need is False and cap_ok is True
+
+    def test_capacity_stale_writes(self):
+        need, cap_ok = seed.needs_write(40, 42, seed.SHIFT_CONFIG)
+        assert need is True and cap_ok is False
+
+    def test_null_capacity_writes(self):
+        need, cap_ok = seed.needs_write(None, 42, seed.SHIFT_CONFIG)
+        assert need is True and cap_ok is False

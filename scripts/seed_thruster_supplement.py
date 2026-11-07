@@ -114,6 +114,19 @@ SHIFT_CONFIG = "白班 08:00-20:00"
 RECALC_TOLERANCE = 0.0
 
 
+def needs_write(cur_cap, target_cap, cur_shift, target_shift=SHIFT_CONFIG) -> tuple[bool, bool]:
+    """这个工位要不要写库？返回 `(要不要写, 产能是否已经合口径)`。
+
+    ★ 2026-11-07：原来只比产能 —— 产能已经合口径的工位整行 SKIP，于是同一个
+      PUT 里顺带的 `shift_config` **永远停在旧值**。改班次口径那次跑完，33 个
+      工位只有 5 个被顺带改到，另外 28 个还写着「白班+夜班」，闸继续报
+      "按配置算 88 台/月"。这类"顺带字段"是 skip 分支的经典漏网。
+    """
+    cap_ok = bool(cur_cap) and abs(float(cur_cap) - target_cap) <= target_cap * RECALC_TOLERANCE
+    shift_ok = (cur_shift or "") == target_shift
+    return (not cap_ok) or (not shift_ok), cap_ok
+
+
 def capacity_per_shift_for(occupancies: list[float]) -> int | None:
     """口径 A：单班分钟数 ÷ 该工位**最慢那道**工序的占机，按整件取整。
 
@@ -171,7 +184,13 @@ def s1_work_centers(c: httpx.Client) -> None:
             skip(f"工作中心 {wc['code']} 产能", "无已发布工序，保留原值")
             continue
         cur = wc.get("capacity_per_shift")
-        if cur and abs(float(cur) - cap) <= cap * RECALC_TOLERANCE:
+        # ★ 2026-11-07：判断"要不要写"必须**两个字段一起看**。
+        #   原来只看产能，于是产能已经合口径的工位整行 SKIP，`shift_config`
+        #   永远停在旧值（「白班+夜班」）—— 改口径那次跑完，33 个工位里只有
+        #   5 个被顺带改到，剩下 28 个还在写两班，闸继续报"按配置算 88 台/月"。
+        #   这类"顺带字段"最容易被 skip 分支漏掉。
+        need, cap_ok = needs_write(cur, cap, wc.get("shift_config"))
+        if not need:
             kept += 1
             skip(f"工作中心 {wc['code']} 产能", f"{float(cur):g} 已合口径（应为 {cap}）")
             continue
@@ -183,15 +202,17 @@ def s1_work_centers(c: httpx.Client) -> None:
         r = c.put(f"{API}/work-centers/{wc['id']}", json=payload)
         if r.status_code in (200, 204):
             touched += 1
-            if cur:
+            if not cap_ok:
                 written += 1
-                print(f"  [FIX ] 工作中心 {wc['code']} 产能 {float(cur):g} → {cap}"
+                print(f"  [FIX ] 工作中心 {wc['code']} 产能 {float(cur or 0):g} → {cap}"
                       f"（{len(occ_by_wc[wc['id']])} 道工序，最慢一道 {max(occ_by_wc[wc['id']]):g} 分）")
+            else:
+                print(f"  [FIX ] 工作中心 {wc['code']} 班次 已改为「{SHIFT_CONFIG}」（产能 {cap} 本已合口径）")
         else:
             err(f"工作中心 {wc['code']}", f"HTTP {r.status_code} {r.text[:120]}")
     if touched:
         ok("工作中心产能与班次",
-           f"{touched} 个已配置（班次 2 档；产能 = {SHIFT_MINUTES} 分 ÷ 该工位最慢一道，"
+           f"{touched} 个已配置（班次「{SHIFT_CONFIG}」；产能 = {SHIFT_MINUTES} 分 ÷ 该工位最慢一道，"
            f"其中 {written} 个是覆盖旧口径值），{kept} 个原本已合口径")
 
 
