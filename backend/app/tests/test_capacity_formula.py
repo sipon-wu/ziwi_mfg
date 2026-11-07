@@ -362,3 +362,48 @@ class TestShiftFallback:
         shifts, hours, declared = gate.resolve_shift(
             "白班 08:00-20:00；夜班 20:00-08:00")
         assert (shifts, hours, declared) == (2, 12.0, True)
+
+
+class TestV11ConservativeEstimate:
+    """V1.1 保守定案值 + 工位产能必须由同一组工序参数推导。
+
+    2026-11-07 二次拍板：三项未定量参数按充分时间余量估算，不等客户回签
+    （纲领 45 台/月，产能要求本就不高）。同时修掉一条真源隐患：`NEW_WCS`
+    里原来手填 96 / 144，与 `NEW_OPS` 的 7.5 / 5 分占机脱节 —— 改工序不改工位，
+    产能闸会拿错值去对口径 A。现在 cap 由 `_cap_for(NEW_OPS[i])` 推导，
+    这里用产能闸自己的式子对跑锁死，并留了指向旧硬编码值的负向断言。
+    """
+
+    apply11 = _load("apply_thruster_process_v11")
+
+    def test_conservative_ops_values(self):
+        ops = {o[0]: o for o in self.apply11.NEW_OPS}
+        # (setup, unit, batch)：固化 120 分/炉 + 20 分/批准备 ÷ 同装 4；充磁 20 分/件
+        assert (ops["RT022"][3], ops["RT022"][4], ops["RT022"][5]) == (20, 120, 4)
+        assert (ops["RT024"][3], ops["RT024"][4], ops["RT024"][5]) == (0, 20, 1)
+
+    def test_conservative_is_really_conservative(self):
+        """「充分余量」不能是空话：定案占机必须 ≥ 初版乐观值的 4 倍。"""
+        assert gate.piece_occupancy(120, 20, 4) == 35.0
+        assert gate.piece_occupancy(20, 0, 1) == 20.0
+        assert gate.piece_occupancy(120, 20, 4) >= 4 * gate.piece_occupancy(30, 0, 4)
+        assert gate.piece_occupancy(20, 0, 1) >= 4 * gate.piece_occupancy(5, 0, 1)
+
+    def test_wc_capacity_derived_from_ops(self):
+        """每个 cap 必须等于 station_capacity(piece_occupancy(op), 720)；旧手填值要被挡下。"""
+        shift_minutes = gate.FALLBACK_SHIFT_HOURS * 60
+        for op, wc in zip(self.apply11.NEW_OPS, self.apply11.NEW_WCS):
+            occ = gate.piece_occupancy(op[4], op[3], op[5])
+            expect = gate.station_capacity(occ, shift_minutes)
+            assert wc[3] == expect, (op[0], wc[0], wc[3], expect)
+        assert [wc[3] for wc in self.apply11.NEW_WCS] == [20, 36]
+        # 负向：当初与工序参数脱节的那组硬编码值
+        assert [wc[3] for wc in self.apply11.NEW_WCS] != [96, 144]
+
+    def test_seed_and_apply_agree(self):
+        """两套脚本的定案参数必须逐项一致 —— 环境一致性闸会比对这两列。"""
+        sd = {r[0]: r for r in seeding.OPERATIONS}
+        for op in self.apply11.NEW_OPS:
+            row = sd[op[0]]
+            assert (row[3], row[4]) == (op[3], op[4]), op[0]
+            assert max(1, int(row[6] if len(row) > 6 else 1)) == op[5], op[0]

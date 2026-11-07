@@ -6,6 +6,12 @@
 
     8 RT020 磁钢贴装 → **8a RT022 磁钢固化** → **8b RT024 在线充磁** → 9 RT030
 
+★ 2026-11-07 Kane 二次拍板：三项未定量参数按**充分时间余量**定案，不等客户回签
+  （纲领 45 台/月，产能要求本就不高）。定案值见 `docs/process-card-v1.1-addendum.md`
+  第五节：RT022 = (120 分/炉 + 20 分/批准备) ÷ 4 = 35 分/件；RT024 = 20 分/件。
+  工位产能由 `NEW_OPS` 按口径 A **推导**，绝不手填 —— 否则改了工序忘了改工位，
+  就会复现 96 / 144 那组与工序参数脱节的死数字。
+
 为什么必须是新版本而不是改 v1
 ------------------------------
 `save_steps` 明确 `status != draft` 就抛错，状态机只允许
@@ -55,18 +61,41 @@ def _equip(dev: str, data: str) -> str:
                       ensure_ascii=False)
 
 
+#: 单班分钟数（口径 A 的分子）。与 `seed_thruster_supplement.py::SHIFT_MINUTES`
+#: 和 `check_capacity_consistency.py` 的班次解析同源，三处必须一致；
+#: `backend/app/tests/test_capacity_formula.py` 有静态对跑盯着。
+SHIFT_MINUTES = 720.0
+
+#: V1.1 **保守定案值**（Kane 2026-11-07：按充分时间余量估算，不等客户回签）。
 #: (code, name, op_type, setup_time, unit_time, batch_size, 采集设备, 采集数据)
+#: ★ 这是三处工序参数的**唯一真源**；工位产能由它推导，不许再手写第二份数字。
 NEW_OPS = [
-    ("RT022", "磁钢固化", "heat_treat", 0, 30, 4,
+    # 固化：120 分/炉（≥30 的 4 倍，对齐既有 CW040-5）+ 20 分/批准备 ÷ 同装 4
+    ("RT022", "磁钢固化", "heat_treat", 20, 120, 4,
      "固化炉", "固化温度曲线、炉时、同装量"),
-    ("RT024", "在线充磁", "assembly", 0, 5, 1,
+    # 充磁：现场估值 5 分/件 × 4 倍余量
+    ("RT024", "在线充磁", "assembly", 0, 20, 1,
      "充磁机+高斯计", "磁通/高斯值"),
 ]
 
-#: (code, name, wc_type, capacity_per_shift)
+
+def _cap_for(op: tuple) -> float:
+    """口径 A：floor(单班分钟 ÷ 每件占机)，与产能闸 `station_capacity()` 同式。
+
+    每件占机 = (unit_time + setup_time) / batch_size —— 与 `piece_occupancy()` 同式。
+    用 `//` 而非 `math.floor` 是为了不为一个常量新增 import；对正数两者等价，
+    静态对跑测试会拿 `station_capacity()` 核同一组输入。
+    """
+    _code, _name, _type, st, ut, batch = op[:6]
+    occ = (float(ut) + float(st)) / max(1, int(batch))
+    return float(int(SHIFT_MINUTES // occ))
+
+
+#: (code, name, wc_type, capacity_per_shift) —— 第 4 项一律由 NEW_OPS 推导。
+#: 定案后应为 固化 floor(720/35)=20、充磁 floor(720/20)=36。
 NEW_WCS = [
-    ("WC-AH-RT022", "磁钢固化炉工位", "heat_treat", 96.0),   # floor(720 / 7.5)
-    ("WC-AH-RT024", "在线充磁工位", "assembly", 144.0),      # floor(720 / 5)
+    ("WC-AH-RT022", "磁钢固化炉工位", "heat_treat", _cap_for(NEW_OPS[0])),
+    ("WC-AH-RT024", "在线充磁工位", "assembly", _cap_for(NEW_OPS[1])),
 ]
 
 #: V1.1：磁通/高斯值迁到 RT024，RT020 只留点胶量（未充磁磁钢测不出磁通）
