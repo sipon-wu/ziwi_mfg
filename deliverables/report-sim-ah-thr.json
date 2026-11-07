@@ -8,8 +8,8 @@
     "workdays": 133
   },
   "half_year": {
-    "total_output": 799.0,
-    "total_wip_output": 11079.0,
+    "total_output": 826.0,
+    "total_wip_output": 11106.0,
     "total_scrap": 5.0,
     "total_hours": 4883.71,
     "total_machine_hours": 4377.68
@@ -20,13 +20,13 @@
       "wo_per_unit": 3,
       "cap": 798
     },
-    "achievement_rate_pct": 100.13,
+    "achievement_rate_pct": 103.51,
     "attainment_verdict": "one_sided_min_only",
     "attainment_ok": true,
-    "attainment_headroom_pct": 0.13,
-    "attainment_reason": "达产（超理论上限 +0.1%，cap 是保守估算，余量不构成缺陷）",
-    "scrap_rate_pct": 0.62,
-    "labor_hours_per_unit": 6.11
+    "attainment_headroom_pct": 3.51,
+    "attainment_reason": "达产（超理论上限 +3.5%，cap 是保守估算，余量不构成缺陷）",
+    "scrap_rate_pct": 0.6,
+    "labor_hours_per_unit": 5.91
   },
   "months": [
     {
@@ -49,12 +49,12 @@
     },
     {
       "month": "2026-07",
-      "total_output": 167,
-      "total_wip_output": 2127,
+      "total_output": 187,
+      "total_wip_output": 2147,
       "total_scrap": 1,
       "total_hours": 933.1700000000001,
       "total_machine_hours": 834.6700000000001,
-      "orders": 16
+      "orders": 17
     },
     {
       "month": "2026-08",
@@ -76,12 +76,12 @@
     },
     {
       "month": "2026-10",
-      "total_output": 105,
-      "total_wip_output": 1425,
+      "total_output": 112,
+      "total_wip_output": 1432,
       "total_scrap": 0,
       "total_hours": 625.89,
       "total_machine_hours": 562.18,
-      "orders": 11
+      "orders": 12
     }
   ],
   "ok": 36,

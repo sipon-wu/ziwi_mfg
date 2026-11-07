@@ -521,7 +521,12 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
             # 业务拍板；先让它可见，别先让它变成基线里的一行字。
             seen_wc: dict = {}
             for (code, _ver), info in routes.items():
-                for st in info["stations"].values():
+                # ★ NO_WC 路线（全线未挂工作中心）在主循环第 368 行 continue，
+                #   info 里根本不会有 stations 键。这里只是**信息项、不参与拦截**，
+                #   不该让整道门禁因一条空路线崩掉 —— 2026-11-08 staging 实测：
+                #   两条探针残留 RT-S3-* 路线触发 KeyError，_gate() 棘轮判定
+                #   根本没跑到（本地库没有空路线，所以一直假绿）。
+                for st in info.get("stations", {}).values():
                     if not st.get("cap") or st.get("slowest") is None:
                         continue
                     seen_wc.setdefault(st["wc_code"], st)
