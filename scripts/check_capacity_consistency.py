@@ -133,6 +133,15 @@ BASELINE_NOTE = (
 DESIGN_MONTHLY = 45.0
 #: 月工作日口径（工厂日历为空时用）。
 WORKDAYS = 22
+#: 没配 `shift_config` 时按几班兜底。
+#:
+#: ★ 2026-11-07 从 **2 改成 1**。原来没配置就默认两班，于是：
+#:   ① 月产能翻倍（"按配置 88 台/月"），而设计纲领 45 是单班口径；
+#:   ② 告警文案写成「shift_config 写的是 2 班」—— 库里其实**一个字都没写**，
+#:      这是把兜底值当成事实报出去，比不报更误导（本地 dev 库全是 NULL，
+#:      每轮都刷这三条假告警）。
+#:   现在：没配 → 单班 12h，并在文案里明说"没配，按单班兜底"。
+DEFAULT_SHIFTS = 1
 #: 每班小时数兜底值（shift_config 认不出来时用）。
 FALLBACK_SHIFT_HOURS = 12.0
 #: 字段值与口径 A 相差多少算"填错"。**2%**（只给浮点误差留余量）。
@@ -360,9 +369,7 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
 
                 # ② 班次与班时：取占机最重那站的配置
                 heaviest = max(stations.values(), key=lambda x: x["sum_unit"])
-                shifts, shift_hours = _parse_shift(heaviest["shift"])
-                if shifts is None:
-                    shifts, shift_hours = 2, FALLBACK_SHIFT_HOURS
+                shifts, shift_hours, shift_declared = resolve_shift(heaviest["shift"])
                 shift_minutes = shift_hours * 60
 
                 # ③ 每站实算产能，瓶颈 = 最小
@@ -476,7 +483,10 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                     print(f"            ⚠️ 稳态节拍 {m1:.0f} 台/月 是按瓶颈节拍算的，隐含流水线"
                           f"连续运转、在制品可跨班；按「每班走完全流程并下线」只有 "
                           f"{n_closed} 台/班 —— 两个数都对，但**纲领该对后者**")
-                if shifts > 1:
+                if not shift_declared:
+                    print(f"            ⚠️ 该工位没配 shift_config → 按单班 {shift_hours:g}h 兜底核算"
+                          f"（月产能按 {DESIGN_MONTHLY:.0f} 台/月的单班纲领比）")
+                elif shifts > 1:
                     print(f"            ⚠️ shift_config 写的是 {shifts} 班（{shift_hours:g}h）→ "
                           f"按配置算 {mn:.0f} 台/月，是单班的 {shifts} 倍；"
                           f"若纲领是 {DESIGN_MONTHLY:.0f} 台，两班配置与实际不符")
@@ -667,6 +677,18 @@ def _parse_shift(cfg):
     if hours <= 0:
         hours += 24
     return len(spans), hours
+
+
+def resolve_shift(cfg) -> tuple[int, float, bool]:
+    """班次解析 + 兜底。返回 `(班数, 单班小时, 库里是否真的配了)`。
+
+    第三个返回值是给**文案**用的：没配班次时不能报「shift_config 写的是 2 班」，
+    那等于把兜底值当事实 —— 库里一个字都没有。
+    """
+    shifts, hours = _parse_shift(cfg)
+    if shifts is None:
+        return DEFAULT_SHIFTS, FALLBACK_SHIFT_HOURS, False
+    return shifts, hours, True
 
 
 if __name__ == "__main__":

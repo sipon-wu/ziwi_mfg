@@ -336,3 +336,29 @@ class TestNeedsWriteCoversSideFields:
     def test_null_capacity_writes(self):
         need, cap_ok = seed.needs_write(None, 42, seed.SHIFT_CONFIG)
         assert need is True and cap_ok is False
+
+
+class TestShiftFallback:
+    """没配 `shift_config` 时的兜底 —— 兜底值不能当成"配置"报出去。
+
+    原来没配置就默认 **2 班**，后果两条：
+    ① 月产能翻倍（"按配置 88 台/月"），而设计纲领 45 是单班口径；
+    ② 告警写「shift_config 写的是 2 班」—— 库里其实一个字都没有（本地 dev 库
+       全 NULL，每轮刷三条假告警）。把兜底当事实报，比不报更误导。
+    """
+
+    def test_missing_config_falls_back_to_single_shift(self):
+        shifts, hours, declared = gate.resolve_shift(None)
+        assert (shifts, hours, declared) == (1, 12.0, False)
+
+    def test_empty_string_counts_as_missing(self):
+        assert gate.resolve_shift("")[2] is False
+
+    def test_single_shift_text_is_declared(self):
+        shifts, hours, declared = gate.resolve_shift("白班 08:00-20:00")
+        assert (shifts, hours, declared) == (1, 12.0, True)
+
+    def test_two_shift_text_is_declared(self):
+        shifts, hours, declared = gate.resolve_shift(
+            "白班 08:00-20:00；夜班 20:00-08:00")
+        assert (shifts, hours, declared) == (2, 12.0, True)
