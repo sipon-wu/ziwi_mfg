@@ -452,7 +452,7 @@ OPERATIONS = [
     ("RT060", "轴承端盖手动插入", "assembly", 0, 6, "WC-AH-RT060"),
     ("MA020", "合装定转子与端盖（赋成品码）", "assembly", 15, 25, "WC-AH-MA020"),
     ("MA030", "油封安装", "assembly", 5, 8, "WC-AH-MA030"),
-    ("MA035", "支架组装", "assembly", 5, 10, "WC-AH-MA035"),
+    ("MA035", "支架组装", "assembly", 5, 10, "WC-AH-MA030"),
     ("MA040", "静叶组件组装", "assembly", 5, 12, "WC-AH-MA040"),
     ("MA050", "桨叶组装", "assembly", 5, 15, "WC-AH-MA050"),
     ("MA060", "静叶组装", "assembly", 5, 12, "WC-AH-MA060"),
@@ -467,7 +467,7 @@ OPERATIONS = [
     ("FA080", "堵头安装", "assembly", 0, 5, "WC-AH-FA080"),
     ("MA080", "线外测试-壳体气密", "process_qc", 5, 10, "WC-AH-MA080"),
     ("MA090", "线外测试-冷却回路气密", "process_qc", 5, 10, "WC-AH-MA090"),
-    ("FA090", "定子注油", "assembly", 5, 8, "WC-AH-FA090"),
+    ("FA090", "整机注油", "assembly", 5, 8, "WC-AH-FA090"),
     ("FA1000", "固定架组装", "assembly", 5, 10, "WC-AH-FA1000"),
     ("EL010", "EOL电性能测试", "final_qc", 10, 20, "WC-AH-EL010"),
     ("EL020", "跑合/振动噪声测试", "final_qc", 5, 30, "WC-AH-EL020"),
@@ -486,8 +486,12 @@ OPERATIONS = [
 #    **值域没有单一真源，随手写一个"看起来像"的值**。
 #
 # 这里从 OPERATIONS **推导**而不是手写第二张表：工序清单改一次，映射自动跟上。
-STEP_TYPE = {code: ("inspect" if str(op_type).endswith("_qc") else "production")
-             for code, _n, op_type, _su, _ut, _wc in OPERATIONS}
+# ★ 解包用 `row[2]` 而不是定长解包：工序元组第 7 位是可选的 `batch_size`
+#   （固化烘烤 120 分/**炉**、同装 4 件），只有少数几行带。写成
+#   `for code, _n, op_type, _su, _ut, _wc in OPERATIONS` 会在 7 元组上直接抛
+#   "too many values to unpack" —— 整个播种脚本一跑就崩，且只在有批量工序时才崩。
+STEP_TYPE = {row[0]: ("inspect" if str(row[2]).endswith("_qc") else "production")
+             for row in OPERATIONS}
 
 WORK_CENTERS = [
     ("WC-AH-CW010", "槽绝缘工位", "machining"),

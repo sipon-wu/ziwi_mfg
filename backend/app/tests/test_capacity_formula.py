@@ -39,6 +39,8 @@ def _load(name: str):
 
 seed = _load("seed_thruster_supplement")
 gate = _load("check_capacity_consistency")
+#: 建租户用的种子脚本（工序/工位/路线的**定义**在这里，不在补充脚本里）
+seeding = _load("seed_thruster_staging")
 
 
 #: `(该工位各道工序占机, 期望的 capacity_per_shift)`。第一列取自 staging 真实数据，
@@ -126,9 +128,15 @@ class TestTwoSourcesAgree:
     def test_written_shift_config_parses_back_to_same_shift_minutes(self):
         """★ 关键：种子脚本**写进库**的 shift_config，被产能闸解析回来必须等于
         它算产能用的班时。只改一边（比如班时改 8h 但文案还是 08:00-20:00），
-        月产能会按解析值算而字段按另一值算，两边永远差 1.5 倍。"""
+        月产能会按解析值算而字段按另一值算，两边永远差 1.5 倍。
+
+        ★ 2026-11-07：这里原本断言 `shifts == 2` —— 也就是**把 bug 写成了期望值**。
+        脚本算产能用 `SHIFT_MINUTES = 720`（单班 12h）、设计纲领 45 台/月也是单班，
+        却把「白班 + 夜班」两班写进库，于是产能闸每轮都报
+        「按配置算 88 台/月，两班配置与实际不符」。现在统一为单班。
+        """
         shifts, hours = gate._parse_shift(seed.SHIFT_CONFIG)
-        assert shifts == 2, "班次文案里应能数出 2 档班"
+        assert shifts == 1, "单班口径：文案里只能有 1 档班"
         assert hours * 60 == seed.SHIFT_MINUTES
 
 
@@ -140,21 +148,36 @@ class TestRecalcCoversOldValues:
         assert seed.RECALC_TOLERANCE < gate.TOLERANCE
 
     def test_stale_value_gets_overwritten(self):
-        """staging 原值 19.2 对该工位口径 24：差 20%，落在重算容差外 → 必须覆盖。
-        它同时正好卡在产能闸 ±20% 的边界上，是"留着就忽红忽绿"的典型。"""
+        """staging 原值 19.2 对该工位口径 24：差 20%，落在重算容差外 → 必须覆盖。"""
         stale, want = 19.2, 24
         assert abs(stale - want) > want * seed.RECALC_TOLERANCE
 
-    def test_close_value_is_kept(self):
-        """60 对 55（+9%）：在闸的容差内，也超出 5% 重算线 —— 这种会被重写。
-        反过来 55.5 对 55 只差 0.9%，不该为了 0.5 件去改人的手填值。"""
-        assert abs(55.5 - 55) <= 55 * seed.RECALC_TOLERANCE
+    def test_small_but_real_drift_also_gets_overwritten(self):
+        """★ 回归闸：40 对口径 42（差 4.76%）也必须重写。
+
+        这是 2026-11-07 收紧容差的原因 —— 原来 `RECALC_TOLERANCE = 0.05`，
+        4.76% 落在容差内被整批 SKIP，`FA020 / MA040 / MA060` 三个工位就这么
+        一直填着 40，而产能闸那边容差 20% 又给它们打了 ✅。两层容差一起把错值藏住。
+        """
+        assert abs(40 - 42) > 42 * seed.RECALC_TOLERANCE
+
+    def test_only_exact_match_is_kept(self):
+        """口径 A 是精确算式，只有**完全相等**才跳过硬手填的值。"""
+        assert seed.RECALC_TOLERANCE == 0.0
+        assert abs(42 - 42) <= 42 * seed.RECALC_TOLERANCE
+        assert abs(42.4 - 42) > 42 * seed.RECALC_TOLERANCE
 
 
 #: staging `RTE-AH-UNIT` v1 实测（2026-11-07）：`(工位, 占机, 并行台数)`，
 #: 占机 = unit_time + setup_time。串联合计 618 分。
+#:
+#: ★ MA030 与 MA035 用**同一个工位键**：`支架组装` 原本挂的是 `WC-AH-MA035` ——
+#:   一个工位清单里根本不存在的编码，于是 `route_steps.wc_id` 落成 NULL，
+#:   这道工序自成一条并行通道、不占任何工位排队（整机线凭空少 15 分/件负荷）。
+#:   2026-11-07 已订正为 `WC-AH-MA030 油封/支架工位`（工位名本身就同时覆盖两者）。
+#:   这条用例就是防止有人把它们再拆回两个键。
 UNIT_SEQ = [
-    ("MA020", 40, 1), ("MA030", 13, 1), ("MA035", 15, 1), ("MA040", 17, 1),
+    ("MA020", 40, 1), ("MA030", 13, 1), ("MA030", 15, 1), ("MA040", 17, 1),
     ("MA050", 20, 1), ("MA060", 17, 1), ("MA070", 15, 1), ("FA040", 13, 1),
     ("FA020", 17, 1), ("FA030", 5, 1), ("FA035", 8, 1), ("FA070", 50, 1),
     ("FA080", 5, 1), ("MA080", 15, 1), ("MA090", 15, 1), ("FA090", 13, 1),
@@ -168,6 +191,11 @@ class TestClosedLoop:
 
     def test_lead_time_is_618(self):
         assert sum(o for _k, o, _p in UNIT_SEQ) == 618
+
+    def test_orphan_step_must_share_station(self):
+        """支架组装与油封安装同一工位 → 该站串行 28 分，不是两条 13/15 并行通道。"""
+        station = [(k, o) for k, o, _p in UNIT_SEQ if k == "MA030"]
+        assert station == [("MA030", 13), ("MA030", 15)]
 
     def test_one_aging_rack_only_closes_one_unit(self):
         """★ 核心事实：只有 1 个老化台架时，单班只能下线 **1** 台。
@@ -249,3 +277,37 @@ class TestDesignVerdictIsOneSided:
 
     def test_degenerate_design_does_not_divide_by_zero(self):
         assert gate.design_verdict(100, design=0) == (True, 0.0)
+
+
+class TestSeedReferencesRealWorkCenters:
+    """静态闸：种子脚本里每道工序引用的工位编码，必须真实存在于工位清单。
+
+    ## 为什么这条闸必须有
+
+    `MA035 支架组装` 原本指向 `WC-AH-MA035` —— 工位清单里只有
+    `WC-AH-MA030 油封/支架工位`，**没有 MA035 这个工位**。播种时解析不到就落成
+    `route_steps.wc_id = NULL`，于是这道工序自成一条并行通道、不占任何工位排队：
+    整机线的工位负荷凭空少 15 分/件，口径 A 的「最慢一道」也漏算它。
+
+    这种错**不会报任何错**：路线照样发布、工单照样开工，只有产能核算悄悄偏移。
+    所以只能靠静态对账。
+    """
+
+    def test_every_operation_points_at_an_existing_work_center(self):
+        wc_codes = {row[0] for row in seeding.WORK_CENTERS}
+        # 工序元组第 6 位是工位编码；固化烘烤那种带 batch_size 的元组第 7 位是批量
+        refs = {row[5] for row in seeding.OPERATIONS}
+        ghosts = sorted(refs - wc_codes)
+        assert ghosts == [], f"工序引用了不存在的工位：{ghosts}"
+
+    def test_every_work_center_is_reachable(self):
+        """反向：建了工位却没有任何工序挂它 = 那条产线的产能核算永远是空。"""
+        refs = {row[5] for row in seeding.OPERATIONS}
+        idle = sorted({row[0] for row in seeding.WORK_CENTERS} - refs)
+        assert idle == [], f"工位没有任何工序挂载：{idle}"
+
+    def test_route_operations_all_exist(self):
+        """路线上的工序编码必须在 OPERATIONS 里定义过（否则播种出幽灵步骤）。"""
+        op_codes = {row[0] for row in seeding.OPERATIONS}
+        routed = {c for _r, _n, codes in seeding.ROUTES for c in codes}
+        assert sorted(routed - op_codes) == []
