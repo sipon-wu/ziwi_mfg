@@ -214,3 +214,38 @@ class TestClosedLoop:
         """占机填 0 不能让模拟死循环（防御性：真实数据里出现过 0）。"""
         n, times = gate.closed_loop_output([("S", 0, 1), ("T", 100, 1)], 720)
         assert n == 7 and len(times) == 8
+
+
+class TestDesignVerdictIsOneSided:
+    """纲领判定**只判「达不到」**（2026-11-07 用户拍板）。
+
+    闭环值是满负荷理论能力：假定每道工位连续有活、在制铺满全流程。它不是规划产能——
+    一条线按 45 台/月的订单节拍跑就产 45，不会因为"理论上能跑 330"就真产出 330。
+    拿天花板判 +633% 等于把**余量**当**缺陷**；闸该管的只有「交不出货」。
+    """
+
+    def test_shortfall_still_fails(self):
+        """负向用例：达不到纲领必须红，否则这个改动就是纯放松。"""
+        ok, diff = gate.design_verdict(30)
+        assert ok is False
+        assert round(diff, 1) == -33.3
+
+    def test_just_below_tolerance_fails(self):
+        # 45 × (1 - 15%) = 38.25；38 差一点点
+        assert gate.design_verdict(38)[0] is False
+
+    def test_exactly_at_lower_bound_passes(self):
+        assert gate.design_verdict(38.25)[0] is True
+
+    def test_surplus_never_fails(self):
+        """转子线 330 台/月 = 7.3 倍余量 —— 达标，不是缺陷。"""
+        ok, diff = gate.design_verdict(330)
+        assert ok is True and diff > 600
+
+    def test_both_sides_not_symmetric(self):
+        """同一档偏差，正负两侧结论必须相反（这就是"单向"的意思）。"""
+        assert gate.design_verdict(45 * 2)[0] is True
+        assert gate.design_verdict(45 / 2)[0] is False
+
+    def test_degenerate_design_does_not_divide_by_zero(self):
+        assert gate.design_verdict(100, design=0) == (True, 0.0)

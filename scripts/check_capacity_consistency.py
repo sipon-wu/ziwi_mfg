@@ -80,8 +80,13 @@ A/B/C 三个口径必然不同，**不是"谁对谁错"，是回答三个不同�
 
 2026-11-07 口径拍板后清掉了两条 `field:`（种子脚本从"480÷均值"改成"720÷最慢一道"，
 staging 33 个工位逐个重算，21 个被纠正、12 个本就合口径，现在 0 个不一致）。
-基线只剩 1 条 `design:RTE-AH-ROTOR +780%` —— 那条不是填错，是**零件线配置本身
-是否合理**，要业务拍板，不属于脚本能碰的范围。
+
+2026-11-07 用户再拍板：「转子线 330 台/月达不到，按 45 台/月产能」。这条推翻了
+"拿闭环值判双向偏差"的做法 —— 闭环是**满负荷理论能力**（假定每道工位连续有活、
+在制铺满全流程），不是规划产能。一条线按 45 台/月的订单节拍跑就产 45，不会因为
+"理论上能跑 330"就真产出 330。拿理论天花板判 +633% 等于把**余量**当**缺陷**。
+所以现在**只判「达不到」**（下限 -15% 仍判死），上限只打印余量倍数。
+基线因此清零（`design:RTE-AH-ROTOR` 那条随 `--prune` 移除）。
 """
 import argparse
 import asyncio
@@ -137,6 +142,23 @@ DESIGN_TOLERANCE_PCT = 15.0
 
 #: 工艺占机类工序（预热/固化/老化/真空/烘烤…）—— 产能天花板的主要来源。
 PROCESS_WAIT_RE = ("预热", "固化", "冷却", "烘烤", "老化", "真空", "保温", "跑合", "浸胶", "灌胶")
+
+
+def design_verdict(closed_monthly: float, design: float = DESIGN_MONTHLY,
+                   tol: float = DESIGN_TOLERANCE_PCT) -> tuple[bool, float]:
+    """纲领判定：**只判「达不到」**，富余一律算达标。返回 `(ok, 偏差%)`。
+
+    ★ 为什么是单向（2026-11-07 用户拍板「转子线 330 台/月达不到，按 45 台/月产能」）：
+      闭环值是**满负荷理论能力** —— 假定每道工位连续有活、在制铺满全流程。
+      它不是规划产能：一条线按 45 台/月的订单节拍跑就产 45，不会因为
+      "理论上能跑 330"就真产出 330。拿天花板判 +633% 是把**余量**当**缺陷**。
+
+    闸该管的只有一件事：**交不出货**。所以下限（低于纲领 -tol）仍然判死。
+    """
+    if not design or design <= 0:
+        return True, 0.0
+    diff = (closed_monthly - design) / design * 100
+    return diff >= -tol, diff
 
 
 def station_capacity(max_occupancy: float, shift_minutes: float) -> int | None:
@@ -424,10 +446,18 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 print(f"  月产能    单班闭环 {m_closed} 台/月（{n_closed}×{WORKDAYS}）"
                       f" ｜ 稳态节拍 {m1:6.1f} ｜ {shifts} 班 {mn:6.1f}")
 
-                diff = (m_closed - DESIGN_MONTHLY) / DESIGN_MONTHLY * 100
-                ok = abs(diff) <= DESIGN_TOLERANCE_PCT
-                print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
-                      + ("✅ 对得上" if ok else f"❌ 偏差 {diff:+.0f}%"))
+                # ★★ 判定口径见 design_verdict()：**只判「达不到」**，富余算达标。
+                ok, diff = design_verdict(m_closed)
+                short = not ok
+                if short:
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
+                          f"❌ 达不到 {diff:+.0f}%")
+                elif diff > DESIGN_TOLERANCE_PCT:
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
+                          f"✅ 达纲领（余量 {m_closed / DESIGN_MONTHLY:.1f} 倍 · "
+                          f"闭环值是满负荷理论能力，按纲领 {DESIGN_MONTHLY:.0f} 规划）")
+                else:
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → ✅ 对得上")
                 if abs(m1 - m_closed) > 0.5:
                     print(f"            ⚠️ 稳态节拍 {m1:.0f} 台/月 是按瓶颈节拍算的，隐含流水线"
                           f"连续运转、在制品可跨班；按「每班走完全流程并下线」只有 "
@@ -436,7 +466,10 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                     print(f"            ⚠️ shift_config 写的是 {shifts} 班（{shift_hours:g}h）→ "
                           f"按配置算 {mn:.0f} 台/月，是单班的 {shifts} 倍；"
                           f"若纲领是 {DESIGN_MONTHLY:.0f} 台，两班配置与实际不符")
-                verdicts.append((code, ver, "OK" if ok else f"偏差 {diff:+.0f}%", m_closed, mn))
+                tag = "OK" if ok else f"达不到 {diff:+.0f}%"
+                if ok and diff > DESIGN_TOLERANCE_PCT:
+                    tag = f"OK（余量 {m_closed / DESIGN_MONTHLY:.1f} 倍）"
+                verdicts.append((code, ver, tag, m_closed, mn))
                 if not ok:
                     findings[f"design:{code}"] = (
                         f"{code} 单班闭环下线 {m_closed} 台/月 vs 纲领 {DESIGN_MONTHLY:.0f}"
@@ -485,9 +518,11 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
 
             bad = [v for v in verdicts if not str(v[2]).startswith("OK")]
             print(f"\n结论：{len(verdicts)} 条路线，单班**闭环下线**口径 {len(verdicts) - len(bad)} 条"
-                  f"与 {DESIGN_MONTHLY:.0f} 台/月吻合；{len(problems)} 个工位字段填错")
+                  f"达到 {DESIGN_MONTHLY:.0f} 台/月纲领；{len(problems)} 个工位字段填错")
             print("     （闭环 = 空线起跑、整条流程在本班内走完并下线；"
                   "稳态节拍另列，两者之差就是跨班在制）")
+            print("     ★ 只判「达不到」：闭环是满负荷理论能力，按订单节拍跑多少就是多少，"
+                  "余量不构成交付风险。")
 
             # ── 棘轮档位 ────────────────────────────────────────────────
             if update_baseline:
