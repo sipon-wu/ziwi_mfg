@@ -40,6 +40,9 @@ Thumbs.db
 # ===== Junk =====
 nul
 
+# ===== 本地干跑造数上下文（staging 的那份是已提交基线，别互相覆盖） =====
+deliverables/ah-thruster-context.local.json
+
 # ===== Cloud IdP 本地密钥(生产密钥在 docker 卷 cloud_keys, 绝不入仓) =====
 cloud/backend/keys/
 cloud/backend/test_keys/

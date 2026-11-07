@@ -508,14 +508,28 @@ def main() -> int:
     print("=" * 64)
 
     c = httpx.Client(timeout=40)
+    # ★★ 租户编码**原样**传（不做 .lower()）。`resolve_login_tenant` 的兜底是
+    #   `WHERE tenant_id = :k OR code = :k`，两个库的字符串比较都**区分大小写**，
+    #   把 `AH-THR` 转成 `ah-thr` 就等于查不到 → 归一失败 → 保留原值 → 401。
+    #   实测：`ah_admin` + `t_296fcc25aa8b` / `AH-THR` 都 200，`ah-thr` 必 401。
+    #   二级兜底（拿平台账号查 tenants 换内部 id）也必须两个租户都试一遍 ——
+    #   本地 `mfg_admin` 属 MFG1、staging 属 AH-THR，写死一个必然在另一边 401。
     r = c.post(f"{API}/auth/login", json={
-        "username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": TENANT_CODE.lower()})
+        "username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": TENANT_CODE})
     if r.status_code != 200:
-        # tenant_id 用内部 id 才能登录：先由平台账号查一次
+        # 编码登不进去时退到内部 tenant_id：由平台账号查一次 tenants 再换。
+        # ★ 两套环境的平台账号不在同一个租户里：本地 mfg_admin 属 MFG1，
+        #   staging 的属 AH-THR。写死任何一个都会让另一边在兜底时 401。
         pc = httpx.Client(timeout=40)
-        pr = pc.post(f"{API}/auth/login", json={"username": "mfg_admin", "password": "admin123", "tenant_id": "AH-THR"})
-        if pr.status_code != 200:
-            print("平台账号登录失败，无法解析租户 id：", pr.status_code, pr.text[:200])
+        pr = None
+        for plat_tenant in ("MFG1", "AH-THR"):
+            candidate = pc.post(f"{API}/auth/login", json={
+                "username": "mfg_admin", "password": "admin123", "tenant_id": plat_tenant})
+            if candidate.status_code == 200:
+                pr = candidate
+                break
+        if pr is None:
+            print("平台账号登录失败，无法解析租户 id：MFG1 / AH-THR 均未登录成功")
             return 2
         ptok = pr.json().get("access_token")
         pc.headers["Authorization"] = f"Bearer {ptok}"

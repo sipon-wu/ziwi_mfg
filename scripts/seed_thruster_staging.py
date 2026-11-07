@@ -33,7 +33,17 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
-CTX_FILE = ROOT / "deliverables" / "ah-thruster-context.json"
+
+STAGING_API = "https://mfg1.ziwi.cn/api/v1"
+API = os.environ.get("API_BASE", STAGING_API)
+
+#: ★ 2026-11-07：本地干跑（API_BASE=127.0.0.1）**不能覆写** staging 的上下文 id 表。
+#:   那张表是 400 行 staging 主键映射、已被提交进仓库；本地跑一次 P1 就会把它
+#:   压成 78 行、tenant_id 换成 t_296fcc25aa8b —— 下次打 staging 时所有历史 id
+#:   全部失效且不报错。按 API 基址分文件，从构造上杜绝串环境。
+CTX_FILE = ROOT / "deliverables" / (
+    "ah-thruster-context.json" if API == STAGING_API
+    else "ah-thruster-context.local.json")
 
 TENANT_CODE = "AH-THR"
 TENANT_NAME = "艾华推进器（A厂）"
@@ -46,7 +56,7 @@ PLAT_USER = os.environ.get("PLAT_USER", "mfg_admin")
 PLAT_PWD = os.environ.get("PLAT_PWD", "admin123")
 PLAT_TENANT = os.environ.get("PLAT_TENANT", "AH-THR")
 
-API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
+API = os.environ.get("API_BASE", STAGING_API)
 TS = datetime.now().strftime("%m%d%H%M")
 
 OK, ERR, SKIP = [], [], []
@@ -1873,6 +1883,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="start", default="p0",
                     choices=["p0", "p1", "p2", "p3", "p4"])
+    #: `--only p1` 只跑指定阶段（逗号分隔），`p0` 恒跑（拿租户会话）。
+    #: ★ 为什么需要：本地环境只跑过 P2/P3 的主数据，P1（组织/角色/用户）从没跑过，
+    #:   于是同一个"靶场"在两套环境里差出 12 个组织、10 个账号。补这一层时不能
+    #:   连 P2/P3 一起重跑 —— 那两个阶段里有建单逻辑，重跑不是幂等的。
+    ap.add_argument("--only", dest="only", default="")
     args = ap.parse_args()
 
     print(f"A推进器厂 staging 造数 · API={API} · TS={TS}")
@@ -1883,8 +1898,16 @@ def main():
         return 1
 
     order = ["p1", "p2", "p3", "p4"]
-    if args.start in order:
+    if args.only:
+        picked = [x.strip().lower() for x in args.only.split(",") if x.strip()]
+        unknown = set(picked) - set(order)
+        if unknown:
+            print(f"未知阶段 {sorted(unknown)}，可用：p1/p2/p3/p4")
+            return 2
+        order = [x for x in order if x in picked]
+    elif args.start in order:
         order = order[order.index(args.start):]
+    print(f"本次执行阶段：{order or '（只跑 p0）'}")
 
     for ph in order:
         {"p1": phase_p1, "p2": phase_p2, "p3": phase_p3, "p4": phase_p4}[ph](ctx)
