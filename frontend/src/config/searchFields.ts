@@ -175,8 +175,9 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       // 洁净度：值埋在 env_req（JSON）里，后端读取时物化成平铺字段 clean_level。
       // 高级检索是客户端求值、只认平铺 key，所以这里不能用 env_req.clean_level。
       { key: 'clean_level', label: '洁净度等级', type: 'enum', options: CLEAN_LEVEL },
-      { key: 'setup_time', label: '准备时间(min)', type: 'number' },
-      { key: 'unit_time', label: '单件时间(min)', type: 'number' },
+      { key: 'setup_time', label: '准备时间(min/批)', type: 'number' },
+      { key: 'unit_time', label: '加工时间(min/批)', type: 'number' },
+      { key: 'batch_size', label: '同装量(件/批)', type: 'number' },
       { key: 'is_critical', label: '关键工序', type: 'boolean' },
       { key: 'is_active', label: '是否启用', type: 'boolean' },
       { key: 'created_at', label: '创建时间', type: 'date' },
@@ -189,8 +190,11 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
       // 排产时第一眼要看的就它，不该翻进「环境要求」那一串里找。
       { key: 'clean_level', label: '洁净度等级', type: 'enum', options: CLEAN_LEVEL, group: 'basic' },
       { key: 'is_critical', label: '关键工序', type: 'boolean', group: 'basic' },
-      { key: 'setup_time', label: '准备时间(min)', type: 'number', group: 'basic' },
-      { key: 'unit_time', label: '单件时间(min/件)', type: 'number', group: 'basic' },
+      { key: 'setup_time', label: '准备时间(min/批)', type: 'number', group: 'basic' },
+      { key: 'unit_time', label: '加工时间(min/批)', type: 'number', group: 'basic' },
+      // 同装量：一次加工同时处理几件。>1 时上面的 unit_time 是**一炉**的时长，
+      // 每件占机 =（加工+准备）÷ 同装量 —— 产能核算就按这个式子，所以必须露出来。
+      { key: 'batch_size', label: '同装量(件/批)', type: 'number', group: 'basic' },
       { key: 'is_active', label: '是否启用', type: 'boolean', group: 'basic' },
       { key: 'labor_cert', label: '上岗资质', type: 'string', group: 'basic' },
       // 艾华方案书 §3.3「工序与采集设备对照表」原样落在这里（equip_req 是一个

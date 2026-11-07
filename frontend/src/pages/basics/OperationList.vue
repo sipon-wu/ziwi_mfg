@@ -45,6 +45,9 @@ interface Operation {
   op_type: string
   setup_time: number
   unit_time: number
+  /** 同装量(件/批)：一次加工同时处理几件。默认 1 = 单件流。
+   *  setup_time/unit_time 记的都是**每批**时长，每件占机 = (两者之和)/batch_size。 */
+  batch_size: number
   labor_cert: string | null
   equip_req: string | null
   material_reqs: string | null
@@ -101,6 +104,15 @@ function toEnvForm(e: EnvReq | null): EnvForm {
 }
 
 const envForm = ref<EnvForm>(emptyEnv())
+
+/** 表单里的「每件占机」试算：同装量 >1 时让填表的人当场看到摊算结果，
+ *  否则很容易把一炉的 120 分当成一件的时长填进去 —— 那正是这条线被低估 4 倍的来路。 */
+const perPiece = computed<number | null>(() => {
+  const batch = Math.max(1, Number(editing.value.batch_size) || 1)
+  const total = (Number(editing.value.unit_time) || 0) + (Number(editing.value.setup_time) || 0)
+  if (total <= 0) return null
+  return Math.round((total / batch) * 100) / 100
+})
 
 /** 表单值 → 提交值：空的数值不留 `''`（后端会收到字符串，float 校验直接 422）。 */
 function cleanEnv(v: EnvForm): EnvReq | null {
@@ -186,6 +198,7 @@ function openCreate() {
     op_type: 'machining',
     setup_time: 0,
     unit_time: 0,
+    batch_size: 1,
     labor_cert: null,
     equip_req: null,
     material_reqs: null,
@@ -349,8 +362,8 @@ onMounted(() => {
             <th>工序类型</th>
             <th>洁净度</th>
             <th>关键</th>
-            <th class="num">准备时间(min)</th>
-            <th class="num">单件时间(min/件)</th>
+            <th class="num">准备时间(min/批)</th>
+            <th class="num">加工时间(min/批)</th>
             <th>状态</th>
             <th class="op">操作</th>
           </tr>
@@ -376,7 +389,11 @@ onMounted(() => {
                 <span v-else class="op-dash">—</span>
               </td>
               <td class="num">{{ item.setup_time }}</td>
-              <td class="num">{{ item.unit_time }}</td>
+              <td class="num">
+                {{ item.unit_time }}
+                <!-- 同装量 >1 时把摊算写成 120÷4，否则单看 120 会以为是一件的时长 -->
+                <span v-if="item.batch_size > 1" class="op-batch">÷{{ item.batch_size }}</span>
+              </td>
               <td>
                 <van-tag v-if="item.is_active" type="success" size="small">启用</van-tag>
                 <van-tag v-else type="default" size="small">禁用</van-tag>
@@ -421,8 +438,17 @@ onMounted(() => {
             <SelectField v-model="editing.op_type" :options="OP_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
-        <van-field v-model.number="editing.setup_time" label="准备时间(min)" type="number" placeholder="0" />
-        <van-field v-model.number="editing.unit_time" label="单件时间(min/件)" type="number" placeholder="0" />
+        <van-field v-model.number="editing.setup_time" label="准备时间(min/批)" type="number" placeholder="0" />
+        <van-field v-model.number="editing.unit_time" label="加工时间(min/批)" type="number" placeholder="0" />
+        <!-- 同装量（件/批）。炉/烘箱/罐这类工序的工艺时间是**一炉**的，不是一件的：
+             固化烘烤 120 分/炉、一炉 4 个 → 这里填 4，不要手算成 30 再填上面那格。
+             手算的坏处是"4"这个事实从库里消失，跟工艺卡对不上账。 -->
+        <van-field v-model.number="editing.batch_size" label="同装量(件/批)" type="number" placeholder="1" />
+        <div class="op-env-hint" style="padding: 0 var(--ziwi-space-4) var(--ziwi-space-2)">
+          每件占机 = (加工 + 准备) ÷ 同装量
+          <template v-if="perPiece != null"> ≈ <b>{{ perPiece }}</b> 分/件</template>
+          <template v-else>；单件流填 1</template>
+        </div>
 
         <!-- 环境要求（环）：温度 / 湿度 / 洁净度。设计文档早就定义了这个字段
              （docs/basic-data-code-plan.md:66），但一直只有类型声明、没有输入框，
@@ -547,6 +573,14 @@ onMounted(() => {
   padding: 0 4px;
   font-size: 11px;
   line-height: 16px;
+}
+
+/* 同装量标注「÷4」：让"120 是一炉的量"在列表里就能看出来，
+   而不是让人以为这件活单件要 120 分钟。 */
+.op-batch {
+  margin-left: 2px;
+  color: var(--ziwi-primary);
+  font-size: 11px;
 }
 
 /* 表单里的分组区块：环境要求是独立一"环"，跟上面的工时字段不是一类东西，

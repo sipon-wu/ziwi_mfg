@@ -142,12 +142,15 @@ def s1_work_centers(c: httpx.Client) -> None:
         steps = items(c.get(f"{API}/routes/{rt['id']}/steps"))
         for s in steps:
             wc = s.get("wc_id")
-            # 占机 = 单件加工 + 准备（准备按批量 1 摊到每件），与产能闸同口径。
+            # 占机 = 每件占用设备的分钟数 = (加工 + 准备) ÷ 同装量。
+            # `unit_time`/`setup_time` 记的是**每批**时长，batch_size 是一批几件；
+            # 与产能闸 `piece_occupancy()` 同一式子（batch=1 时退化成两者相加）。
             ut = s.get("unit_time_override") or s.get("unit_time") or 0
             st = s.get("setup_time_override")
             if st is None:
                 st = s.get("setup_time") or 0
-            occ = float(ut or 0) + float(st or 0)
+            batch = max(1, int(s.get("batch_size") or 0))
+            occ = (float(ut or 0) + float(st or 0)) / batch
             if wc and occ > 0:
                 occ_by_wc.setdefault(wc, []).append(occ)
 

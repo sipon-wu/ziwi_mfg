@@ -1,7 +1,7 @@
 # ── 基础数据模块 Pydantic Schema ─────────────────────────────────
 # M04 工序定义 | M05 工作中心 | M03 工艺路线 | M01 产品管理 | M06 工厂日历
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List
 from datetime import date, datetime
 
@@ -66,6 +66,10 @@ class OperationCreate(BaseModel):
     op_type: OpType
     setup_time: float = 0
     unit_time: float = 0
+    # 同装量（件/批）。`unit_time`/`setup_time` 记的是**每批**的时长，
+    # 每件占机 = (unit_time + setup_time) / batch_size。默认 1 = 单件流。
+    # 用 Field(ge=1) 而不是裸 int：0 会让产能核算除零，负数没有物理含义。
+    batch_size: int = Field(1, ge=1, le=10000, description="同装量(件/批)，一次加工同时处理几件")
     labor_cert: Optional[str] = None
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None
@@ -84,6 +88,8 @@ class OperationUpdate(BaseModel):
     op_type: Optional[OpType] = None
     setup_time: Optional[float] = None
     unit_time: Optional[float] = None
+    batch_size: Optional[int] = Field(None, ge=1, le=10000,
+                                      description="同装量(件/批)")
     labor_cert: Optional[str] = None
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None
@@ -102,6 +108,7 @@ class OperationResponse(BaseModel):
     op_type: str
     setup_time: float = 0
     unit_time: float = 0
+    batch_size: int = 1
     labor_cert: Optional[str] = None
     equip_req: Optional[str] = None
     material_reqs: Optional[str] = None

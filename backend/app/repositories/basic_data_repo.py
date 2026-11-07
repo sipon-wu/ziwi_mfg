@@ -61,17 +61,20 @@ class OperationRepository(MultiTenantRepository):
 
         ``is_critical``（2026-11-04 新增）由 PFMEA 发布自动置真；手工建工序时
         调用方不传，这里补 False，避免固定列 INSERT 缺绑定参数。
+        ``batch_size``（2026-11-07 新增）同理补 1 —— 固定列 INSERT 少一个绑定
+        参数就是运行时 500，不是"默认值生效"。
         """
         data = {**data}
         data.setdefault("is_critical", False)
+        data.setdefault("batch_size", 1)
         data["env_req"] = encode_env_req(data.get("env_req"))
         return await self.execute(
             """INSERT INTO operations (tenant_id, code, name, op_type, setup_time, unit_time,
-               labor_cert, equip_req, material_reqs, sop_refs, env_req, remark, is_active,
-               is_critical)
+               batch_size, labor_cert, equip_req, material_reqs, sop_refs, env_req, remark,
+               is_active, is_critical)
                VALUES (:tenant_id, :code, :name, :op_type, :setup_time, :unit_time,
-               :labor_cert, :equip_req, :material_reqs, :sop_refs, :env_req, :remark, :is_active,
-               :is_critical)""",
+               :batch_size, :labor_cert, :equip_req, :material_reqs, :sop_refs, :env_req,
+               :remark, :is_active, :is_critical)""",
             data,
         )
 
@@ -302,7 +305,7 @@ class RouteStepRepository(MultiTenantRepository):
         """
         return await self.query(
             """SELECT rs.*, o.code as op_code, o.name as op_name, o.op_type, o.setup_time, o.unit_time,
-               o.is_critical as op_is_critical,
+               o.batch_size, o.is_critical as op_is_critical,
                wc.name as wc_name
                FROM route_steps rs
                LEFT JOIN operations o ON o.id = rs.operation_id

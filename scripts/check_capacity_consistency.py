@@ -160,6 +160,36 @@ def station_capacity(max_occupancy: float, shift_minutes: float) -> int | None:
 DEFAULT_PARALLEL = 1
 
 
+def piece_occupancy(unit_time, setup_time, batch_size) -> float:
+    """每件占用设备的分钟数 = (unit_time + setup_time) / batch_size。
+
+    `unit_time` / `setup_time` 记的都是**每批**的时长（一炉 120 分、装炉一次 5 分），
+    `batch_size`（`operations.batch_size`，同装量）是这一批同时处理几件。
+    `batch_size = 1` 时退化成 `unit_time + setup_time`，**存量数据语义不变**。
+
+    ★ 为什么 setup 也一起摊：准备动作（装炉/换治具）本来就是每批一次。产能闸
+      原先的注释写着"准备时间本是每批一次，这里按批量为 1 摊到每件"—— 那是在
+      没有这一列时的将就；有了 `batch_size` 就该真摊，否则一炉 4 件要背 4 次准备。
+    ★ 为什么不在这里对结果取整：占机是分钟数，取整留给"每班几件"那一步
+      （`station_capacity` 的 floor）。中间取整会放大误差。
+    """
+    batch = max(1, int(batch_size or 0))
+    return (float(unit_time or 0) + float(setup_time or 0)) / batch
+
+
+def _op_brief(s) -> str:
+    """一道工序的简写。同装量 >1 时把摊算过程写出来，否则只写每件占机。
+
+    行格式：`固化烘烤/120分÷4=31.2分`。★ 写出来是因为"30 是 120÷4"这件事
+    必须能在报告里自证 —— 只看 31.2 是看不出它来自一炉 4 件的。
+    """
+    batch = max(1, int(s[18] or 0))
+    occ = piece_occupancy(s[8], s[9], s[18])
+    if batch > 1:
+        return f"{s[7]}/{float(s[8] or 0):g}分÷{batch}={occ:g}分"
+    return f"{s[7]}/{occ:g}分"
+
+
 def closed_loop_output(seq: list[tuple[object, float, int]],
                        shift_minutes: float) -> tuple[int, list[float]]:
     """口径 C：**空线起跑，一个班次内能走完全流程并下线几件**。
@@ -228,7 +258,8 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                        coalesce(rs.setup_time_override, o.setup_time) as setup_time,
                        rs.wc_id, w.code as wc_code, w.name as wc_name,
                        w.capacity_per_shift, w.efficiency, w.shift_config,
-                       w.equipment_count, w.labor_count
+                       w.equipment_count, w.labor_count,
+                       coalesce(o.batch_size, 1) as batch_size
                 from process_routes r
                 join route_steps rs on rs.route_id = r.id
                 join operations o on o.id = rs.operation_id
@@ -259,9 +290,10 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 print(f"\n── {code} v{ver} · {info['name']} · {len(steps)} 道工序 ──")
 
                 # ① 按工位聚合（关键：不是按工序）
-                #    占机 = 单件加工 + 准备时间。准备时间本是"每批一次"，这里按
-                #    批量为 1 摊到每件（最保守口径，也是推进器这种单件流的实际形态：
-                #    一个治具一次装一件，换一次治具就要重来一次准备）。
+                #    占机 = 每件占用的设备分钟数 = (unit_time + setup_time) / batch_size。
+                #    两个工时列记的都是**每批**的时长（一炉 120 分、装炉 5 分），
+                #    batch_size 是这一批装几件 —— 摊到件才是排产能用的数。
+                #    batch_size=1 时退化成 unit+setup（存量数据语义不变）。
                 stations: dict = {}
                 orphan = []
                 for s in steps:
@@ -274,10 +306,11 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                         "eq": s[16], "lab": s[17],
                         "ops": [], "sum_unit": 0.0, "max_op": 0.0,
                     })
+                    occ = piece_occupancy(s[8], s[9], s[18])
                     st["ops"].append(s)
-                    st["sum_unit"] += float(s[8] or 0) + float(s[9] or 0)
-                    # 口径 A 的分子：该工位**最慢**那道工序的占机（2026-11-07 拍板口径）
-                    st["max_op"] = max(st["max_op"], float(s[8] or 0) + float(s[9] or 0))
+                    st["sum_unit"] += occ
+                    # 口径 A 的分子：该工位**最慢**那道工序的每件占机（2026-11-07 拍板口径）
+                    st["max_op"] = max(st["max_op"], occ)
 
                 if orphan:
                     print(f"  ⚠️ {len(orphan)} 道工序未挂工作中心（不参与产能核算）："
@@ -325,11 +358,11 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 gate = min(scored, key=lambda x: x["implied"])
 
                 waits = [s for s in gate["ops"] if s[7] and any(k in s[7] for k in PROCESS_WAIT_RE)]
-                wait_min = sum(float(s[8] or 0) for s in waits)
+                wait_min = sum(piece_occupancy(s[8], s[9], s[18]) for s in waits)
 
                 print(f"  瓶颈工位  {gate['wc_code']} {gate['wc_name']} · "
-                      f"{len(gate['ops'])} 道工序 · 合计占机 {gate['sum_unit']:g} 分")
-                print(f"  该站工序  " + "、".join(f"{s[7]}/{float(s[8] or 0):g}分" for s in gate["ops"]))
+                      f"{len(gate['ops'])} 道工序 · 合计占机 {gate['sum_unit']:g} 分/件")
+                print(f"  该站工序  " + "、".join(_op_brief(s) for s in gate["ops"]))
                 if waits:
                     print(f"  工艺占机  {len(waits)} 道 / {wait_min:g} 分"
                           f"（占该站 {wait_min / gate['sum_unit'] * 100:.0f}%，"
@@ -339,9 +372,9 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                       + (f"；若再乘效率 {gate['eff']:g} 只剩 {gate['implied_eff']} 件/班"
                          if gate["implied_eff"] != gate["implied"] else ""))
                 slow_op = max(gate["ops"],
-                              key=lambda s: float(s[8] or 0) + float(s[9] or 0))
+                              key=lambda s: piece_occupancy(s[8], s[9], s[18]))
                 print(f"  工位产能  {gate['slowest']} 件/班"
-                      f"（floor({shift_hours:g}h×60 ÷ 最慢一道 {gate['max_op']:g} 分"
+                      f"（floor({shift_hours:g}h×60 ÷ 最慢一道 {gate['max_op']:g} 分/件"
                       f"「{slow_op[6]} {slow_op[7]}」）← capacity_per_shift 该填这个")
 
                 # ④ 与字段值比对（★ 比的是口径 A「最慢一道」，不是上面的口径 B 合计）
@@ -376,7 +409,7 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 #    ★ 判纲领用口径 C。用节拍去比纲领会把"在制跨班"当成免费的前提，
                 #      于是单班明明只能下线 1 台也会报 ✅（2026-11-07 用户指出）。
                 seq = [(s[10] or f"step:{s[5]}",
-                        float(s[8] or 0) + float(s[9] or 0),
+                        piece_occupancy(s[8], s[9], s[18]),
                         max(1, int(s[16] or 0))) for s in steps]
                 n_closed, closed_times = closed_loop_output(seq, shift_minutes)
                 lead = sum(o for _k, o, _p in seq)

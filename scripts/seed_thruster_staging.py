@@ -430,15 +430,14 @@ OPERATIONS = [
     ("CW040-2", "胶水混合抽真空", "heat_treat", 5, 20, "WC-AH-CW040"),
     ("CW040-3", "定子灌胶（人工量杯）", "machining", 5, 15, "WC-AH-CW040"),
     ("CW040-4", "灌胶后抽真空", "heat_treat", 5, 20, "WC-AH-CW040"),
-    # ★ 固化烘烤 120 分是**炉时**（一炉 4 个定子），不是单件工时。
-    #   `operations.unit_time` 的口径是「每件占用设备的分钟数」，所以必须摊到件：
-    #   120 ÷ 4 = **30 分/件**。2026-11-07 Kane 给出「灌胶区固化烘炉同装 4 个」。
-    #   按 120 填会把这道理化道工序的产能低估 4 倍 —— 定子线因此算出单班只能
-    #   闭环下线 1 台（22 台/月，喂不饱 45 台整机）；摊成 30 之后是 2 台/班（44）。
-    #   ⚠️ 这一列**没有**"同装量/批量"字段可放（`route_steps` 也只有
-    #   unit_time_override），所以批量这个事实只能写在注释里 —— 这是数据模型的缺口，
-    #   不是填法问题。改动这里必须同步跑 `check_capacity_consistency.py` 复核。
-    ("CW040-5", "固化烘烤", "heat_treat", 5, 30, "WC-AH-CW040"),
+    # ★ 固化烘烤 120 分是**一炉**的炉时，一炉装 4 个定子 —— 所以第 7 位写 4。
+    #   2026-11-07 Kane 给出「灌胶区固化烘炉同装 4 个」。
+    #   `unit_time` 的口径是「每批时长」，每件占机由产能闸算：
+    #       (unit_time + setup_time) / batch_size = (120 + 5) / 4 = 31.25 分/件
+    #   按以前的做法把 120÷4=30 手填进 `unit_time`（batch=1）也算得出同样量级的产能，
+    #   但**「4」这个事实就不在库里了** —— 别人看到 30 无法还原成一炉 4 件，
+    #   拿工艺卡（120 分/炉）也没法对账。所以才加了 `batch_size` 这一列。
+    ("CW040-5", "固化烘烤", "heat_treat", 5, 120, "WC-AH-CW040", 4),
     ("CW040-6", "冷却拆治具", "machining", 5, 30, "WC-AH-CW040"),
     ("CW050-1", "刮铜线绝缘层", "machining", 0, 8, "WC-AH-CW050"),
     ("CW050-2", "定子电检（二次）", "process_qc", 5, 25, "WC-AH-CW050"),
@@ -675,7 +674,11 @@ def phase_p2(ctx: Ctx):
             ctx.note("wc", code, wcid)
     ok("工作中心", f"{len(ctx.ids.get('wc', {}))} 个")
 
-    for code, name, op_type, st, ut, wc in OPERATIONS:
+    for row in OPERATIONS:
+        # 元组前 6 位固定，第 7 位可选 = 同装量（`operations.batch_size`，件/批）。
+        # 只有"一炉/一罐同时处理多件"的工序才写第 7 位，其余省略即默认 1。
+        code, name, op_type, st, ut, wc = row[:6]
+        batch = int(row[6]) if len(row) > 6 else 1
         # 采集要求必须落库：equip_req 是 JSON 列，按方案书 §3.3 的原话填，
         # 不加工、不改写。capability 放「核心采集数据」，collect_method 放
         # 「采集方式」——多出的这个键是刻意保留的原始维度，别合并进 capability，
@@ -687,7 +690,8 @@ def phase_p2(ctx: Ctx):
             ensure_ascii=False) if spec else None
         remark = MARKING_NODES.get(code)
         payload = {"code": code, "name": name, "op_type": op_type,
-                   "setup_time": st, "unit_time": ut, "is_active": True}
+                   "setup_time": st, "unit_time": ut, "batch_size": batch,
+                   "is_active": True}
         if equip_req:
             payload["equip_req"] = equip_req
         if remark:

@@ -21,8 +21,24 @@ class Operation(Base):
     # process_qc/final_qc）。这里不再重复列一遍 —— 上一版列在注释里的 11 个值
     # 被前端抄成两份常量，结果库里出现的 *_qc 一个都不在，页面直接印英文原文。
     op_type       = Column(String(50), nullable=False, comment="工序类型（值域见 core/enums.py）")
-    setup_time    = Column(Float, default=0, comment="准备时间(分钟)")
-    unit_time     = Column(Float, default=0, comment="单件加工时间(分钟/件)")
+    setup_time    = Column(Float, default=0, comment="准备时间(分钟/**批**)——每批一次，不含单件加工")
+    unit_time     = Column(Float, default=0, comment="加工时间(分钟/**批**)——一次加工同时处理 batch_size 件")
+    # ★ 同装量（2026-11-07 新增）：一次加工同时处理几件。默认 1 = 单件流。
+    #
+    # 为什么需要它：这类"炉/烘箱/罐"工序的工艺时间是**一炉**的时长，不是一件的。
+    # 推进器定子线的「固化烘烤」工艺 120 分/炉、一炉 4 个 —— 没有这一列时只能
+    # 把 120÷4=30 手填进 `unit_time`，于是**「4」这个事实在库里不存在**：
+    # 换个人看到 30 根本看不出它是 120÷4，产能复核时也无法用原始工艺时间对账。
+    # 代价是那条线被低估 4 倍（单班闭环下线 1 台 vs 2 台）。
+    #
+    # 口径（产能核算唯一用法）：
+    #     每件占机 = (unit_time + setup_time) / batch_size
+    # batch_size=1 时退化为原来的 unit_time + setup_time，**存量数据语义不变**。
+    # 消费方：`scripts/check_capacity_consistency.py`（口径 A/B/C 都走这个式子）。
+    # ⚠️ NOT NULL + server_default 是必须的：只给 `default=` 那只是 ORM 层默认，
+    #    老库加列时会失败（PG 方言铁律第 1 条）。
+    batch_size    = Column(Integer, nullable=False, server_default="1", default=1,
+                           comment="同装量(件/批)：一次加工同时处理几件。每件占机=(unit_time+setup_time)/batch_size")
     labor_cert    = Column(Text, comment="人员资质要求(JSON): [{cert_type, cert_level, min_count}]")
     equip_req     = Column(Text, comment="设备能力要求(JSON): [{equip_type, capability, count}]")
     material_reqs = Column(Text, comment="物料要求(JSON): [{material_type, spec}]")
