@@ -454,6 +454,11 @@ OPERATIONS = [
     ("CW060", "定子热套", "heat_treat", 10, 20, "WC-AH-CW060"),
     ("RT010", "转子保持架压装", "assembly", 10, 15, "WC-AH-RT010"),
     ("RT020", "磁钢贴装", "assembly", 5, 20, "WC-AH-RT020"),
+    # ★ V1.1 补充条款（2026-11-07 客户现场确认）：V1.0 漏载的两道工序。
+    #   固化 30 分/**炉**、同装 4 件 → 每件占机 (30+0)/4 = 7.5 分；
+    #   绝不能把 7.5 手填进 unit_time，那会把「4 件/炉」这个事实从库里抹掉。
+    ("RT022", "磁钢固化", "heat_treat", 0, 30, "WC-AH-RT022", 4),
+    ("RT024", "在线充磁", "assembly", 0, 5, "WC-AH-RT024"),
     ("RT030", "平衡端板压装", "assembly", 10, 12, "WC-AH-RT030"),
     ("RT040-1", "动平衡测量", "process_qc", 5, 10, "WC-AH-RT040"),
     ("RT040-2", "动平衡修正", "machining", 5, 12, "WC-AH-RT040"),
@@ -512,6 +517,8 @@ WORK_CENTERS = [
     ("WC-AH-CW060", "热套工位", "machining"),
     ("WC-AH-RT010", "保持架压装工位", "assembly"),
     ("WC-AH-RT020", "磁钢贴装工位", "assembly"),
+    ("WC-AH-RT022", "磁钢固化炉工位", "heat_treat"),   # V1.1：30 分/炉，同装 4
+    ("WC-AH-RT024", "在线充磁工位", "assembly"),       # V1.1：整体充磁 + 磁通检测
     ("WC-AH-RT030", "端板压装工位", "assembly"),
     ("WC-AH-RT040", "动平衡工位", "assembly"),
     ("WC-AH-RT050", "轴承压入工位", "assembly"),
@@ -571,7 +578,10 @@ COLLECT_SPEC = {
     "CW050-2": ("2号电检设备", "绝缘/耐压/匝间/电阻/平衡", "设备自动"),
     "CW060":   ("高周波加热设备", "加热温度、保温时间", "设备自动"),
     "RT010":   ("伺服压机", "力-位移全程曲线", "设备自动"),
-    "RT020":   ("点胶机+高斯计", "点胶量、高斯值", "设备自动"),
+    "RT020":   ("点胶机", "点胶量", "设备自动"),
+    # V1.1：磁通/高斯值从 RT020 迁到 RT024 —— 磁钢来料未充磁，贴装时测不出磁通。
+    "RT022":   ("固化炉", "固化温度曲线、炉时、同装量", "设备自动"),
+    "RT024":   ("充磁机+高斯计", "磁通/高斯值", "设备自动"),
     "RT030":   ("伺服压机", "力-位移全程曲线", "设备自动"),
     "RT040-1": ("动平衡测量机", "不平衡量(g·mm)", "设备自动"),
     "RT040-2": ("台钻", "修正次数、修正量", "人工录入"),
@@ -767,7 +777,10 @@ def phase_p2(ctx: Ctx):
         steps = []
         for i, opcode in enumerate(step_codes, start=1):
             oid = ctx.get("op", opcode)
-            wc = next((w for c, _, _, _, _, w in OPERATIONS if c == opcode), None)
+            # ★ 按位置 `row[:6]` 取，别定长解包：CW040-5 / RT022 这类行带第 7 位
+            #   `batch_size`，`for c, _, _, _, _, w in OPERATIONS` 会在 7 元组上抛
+            #   "too many values to unpack"（与 STEP_TYPE 那次同一个坑）。
+            wc = next((row[5] for row in OPERATIONS if row[0] == opcode), None)
             if not oid:
                 continue
             steps.append({"route_id": rid, "operation_id": oid, "step_seq": i,

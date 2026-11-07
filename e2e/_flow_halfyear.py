@@ -151,7 +151,15 @@ def load_master(c):
     m["mat"] = {x["code"]: x for x in mats}
     m["locs"] = {x.get("location_code"): x for x in paged(c, "/wms/locations")}
     m["whs"] = {x["code"]: x for x in paged(c, "/wms/warehouses")}
-    m["routes"] = {x["code"]: x for x in paged(c, "/routes")}
+    # ★ 同 _flow_run：同 code 多版本时字典推导式会选中归档的 v1（列表末尾），
+    #   半年串跑会用 V1.0 的 8 步工艺跑，把新增的固化/充磁静默漏掉。
+    m["routes"] = {}
+    for x in paged(c, "/routes"):
+        rank = (x.get("status") == "published", int(x.get("version") or 0))
+        prev = m["routes"].get(x["code"])
+        if prev is None or rank > (prev.get("status") == "published",
+                                   int(prev.get("version") or 0)):
+            m["routes"][x["code"]] = x
     m["boms"] = paged(c, "/boms")
     m["suppliers"] = paged(c, "/suppliers")
     m["standards"] = {x["name"]: x for x in paged(c, "/inspection-standards")}

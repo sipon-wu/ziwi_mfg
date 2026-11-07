@@ -194,6 +194,10 @@ SOURCE_OPS = [
     ("6",   "定子热套", "STATOR"),
     ("7",   "RT010 保持架压装", "ROTOR"),
     ("8",   "RT020 磁钢贴装", "ROTOR"),
+    # ★ V1.1 补充条款（docs/process-card-v1.1-addendum.md）：V1.0 漏载的两道。
+    #   账本从这张清单数步数，漏一行就会把「10 步」判成「8/8 ✓」的假绿。
+    ("8a",  "RT022 磁钢固化", "ROTOR"),
+    ("8b",  "RT024 在线充磁", "ROTOR"),
     ("9",   "RT030 平衡端板压装", "ROTOR"),
     ("10a", "动平衡测量", "ROTOR"),
     ("10b", "动平衡修正", "ROTOR"),
@@ -240,7 +244,12 @@ def v2_routes(c):
     routes = pages(c, f"{API}/routes")
     got = {}
     for code, want in ROUTE_EXPECT.items():
-        rt = next((x for x in routes if x.get("code") == code), None)
+        # ★ 版本化后同一个 code 会有 v1(archived) + v2(published)。`next()` 按
+        #   列表顺序取第一个会拿到归档的旧版，用 8 步去对 V1.1 的 10 步 → 报红；
+        #   反过来若新版在前，也会把旧版当成"不存在"漏检。明确选已发布版本。
+        cands = [x for x in routes if x.get("code") == code]
+        rt = next((x for x in cands if x.get("status") == "published"), None) or (
+            cands[0] if cands else None)
         if not rt:
             add("V2", f"路线 {code}", "FAIL", "路线不存在")
             continue

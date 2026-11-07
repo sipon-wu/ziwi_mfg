@@ -144,7 +144,17 @@ def load_master(c: C) -> dict:
     m["whs"] = {x["code"]: x for x in paged(c, "/wms/warehouses")}
     wcs = paged(c, "/work-centers")
     m["wc"] = {x["code"]: x for x in wcs}
-    m["routes"] = {x["code"]: x for x in paged(c, "/routes")}
+    # ★ 版本化后同一 code 有 v1(archived) + v2(published)。字典推导式会让
+    #   **列表最后一个**胜出，而 /routes 按 updated_at DESC 排 → 归档的 v1 在末尾，
+    #   于是串跑器拿 8 步旧工艺去跑，新增的固化/充磁两道被静默跳过。
+    #   按「已发布优先、其次版本号大」选唯一生效版本。
+    m["routes"] = {}
+    for x in paged(c, "/routes"):
+        rank = (x.get("status") == "published", int(x.get("version") or 0))
+        prev = m["routes"].get(x["code"])
+        if prev is None or rank > (prev.get("status") == "published",
+                                   int(prev.get("version") or 0)):
+            m["routes"][x["code"]] = x
     m["boms"] = paged(c, "/boms")
     m["suppliers"] = paged(c, "/suppliers")
     m["standards"] = {x["name"]: x for x in paged(c, "/inspection-standards")}

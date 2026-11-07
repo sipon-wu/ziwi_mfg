@@ -144,7 +144,7 @@ def _routes_with_steps(c: httpx.Client, base: str) -> list[dict]:
                 wm.get(s.get("wc_id")),
                 s.get("unit_time"), s.get("setup_time"), s.get("batch_size"),
                 s.get("unit_time_override"), s.get("setup_time_override"))))
-        out.append({"code": rt["code"], "version": rt.get("version"),
+        out.append({"code": f"{rt['code']} v{rt.get('version')}",
                     "status": rt.get("status"), "steps": " / ".join(steps)})
     return out
 
@@ -215,7 +215,9 @@ SPEC: dict[str, tuple[str, tuple[str, ...]]] = {
     "工位": ("code", ("wc_type", "capacity_per_shift", "shift_config",
                       "labor_count", "equipment_count", "efficiency")),
     "工序": ("code", ("name", "op_type", "unit_time", "setup_time", "batch_size")),
-    "路线+步骤": ("code", ("version", "status", "steps")),
+    # ★ 主键必须带版本：V1.1 之后同一 code 有 v1(archived) + v2(published)，
+    #   只用 code 会让后一个把前一个覆盖，闸把「少一条路线」也判成全绿。
+    "路线+步骤": ("code", ("status", "steps")),
     "班组": ("code", ("name", "department")),
     "员工": ("employee_no", ("username", "position")),
     "供应商": ("code", ("name", "category", "status")),
