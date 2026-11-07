@@ -18,8 +18,8 @@ P1（组织/角色/用户）和 S2–S5（班组/员工/日历/Andon）都没跑
 ★ 为什么"不比"要写死在代码里：staging 每跑一轮全量回归会留 ~490 行探针数据。
   把交易数据拉进来比，闸永远红；永远红的闸等于没有闸。
 
-跑法（仓库根，带 NO_PROXY）：
-    NO_PROXY='*' no_proxy='*' backend/.venv/Scripts/python.exe scripts/check_env_parity.py
+跑法（仓库根；脚本直连两端，不需要设置 NO_PROXY）：
+    backend/.venv/Scripts/python.exe scripts/check_env_parity.py
 只验比较器本身（不联网）：
     ... scripts/check_env_parity.py --self-test
 换基址：LOCAL_API=... REMOTE_API=...
@@ -99,8 +99,11 @@ def diff_rows(left: list[dict], right: list[dict], key: str,
 
 
 def _session(base: str) -> httpx.Client:
-    r = httpx.post(f"{base}/auth/login", timeout=30, json={
-        "username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": TENANT_CODE})
+    # trust_env=False：本机 HTTP_PROXY 指向 127.0.0.1:5951，带上会把内网基址也
+    # 塞进代理（本地 502、远端时通时不通）。两个基址都直连，脚本不依赖 NO_PROXY。
+    with httpx.Client(timeout=30, trust_env=False) as c:
+        r = c.post(f"{base}/auth/login", json={
+            "username": ADMIN_USER, "password": ADMIN_PWD, "tenant_id": TENANT_CODE})
     if r.status_code != 200:
         raise RuntimeError(f"登录失败 {base}: {r.status_code} {r.text[:120]}")
     return httpx.Client(timeout=60, trust_env=False,
