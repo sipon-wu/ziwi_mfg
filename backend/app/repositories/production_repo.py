@@ -189,6 +189,10 @@ class ProductionRepository(MultiTenantRepository):
             finish = last.get(r.get("route_id"))
             if a is None:
                 a = agg[wo_id] = {
+                    # ★ 明细下探的主键：聚合键本来就是 work_order_id，只是原来没带出来。
+                    #   没有它，前端只能拿 wo_no 去反查工单 —— 同号不同租户/历史单
+                    #   会串单，而且报表行点不开「这张单到底报了哪些工」。
+                    "work_order_id": wo_id,
                     "report_date": report_date or r.get("report_date"),
                     "wo_no": r.get("wo_no"),
                     "product_name": r.get("product_name"),

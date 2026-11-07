@@ -15,8 +15,12 @@ import { getStateEntry } from '@/config/statusDict'
 import { enumLabel } from '@/config/enums'
 import type { SearchCondition } from '@/types/search'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
+import { useDrilldown } from '@/composables/useDrilldown'
+import DrilldownBanner from '@/components/ziwi/DrilldownBanner.vue'
 
 const router = useRouter()
+const drill = useDrilldown()
+const drillActive = drill.active
 
 // 安灯状态 / 呼叫类型统一走中央字典：
 //   - 状态用 `getStateEntry('andon_call', …)`（带语义色与图标，双编码）
@@ -56,6 +60,7 @@ function onResetSubmit() {
   keyword.value = ''
   showSearch.value = false
   resetPage()
+  if (drill.active.value) { drill.clear(); return }
   loadData()
 }
 function condText(c: SearchCondition) {
@@ -118,6 +123,12 @@ async function loadKpi() {
 }
 
 async function loadData() {
+  if (drill.active.value) {
+    const r = await drill.loadMerged<AndonCall>('/andon/calls')
+    rawCalls.value = r.items
+    total.value = r.total
+    return
+  }
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
   if (statusFilter.value) params.status = statusFilter.value
   
@@ -128,6 +139,7 @@ async function loadData() {
 }
 
 function onStatusChange() {
+  if (drill.active.value) { drill.clear(); return }
   resetPage()
   loadData()
 }
@@ -140,10 +152,13 @@ onMounted(() => {
   loadData()
   loadKpi()
 })
+// 清除下探 / 换一张 KPI 卡下探进来时组件不重挂载，必须显式重新取数
+drill.onChange(() => { resetPage(); void loadData() })
 </script>
 
 <template>
   <div>
+    <DrilldownBanner :total="total" />
     <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px;">
       <KpiCard title="待响应" :value="kpi.pending" color="#D85A30" />
       <KpiCard title="响应中" :value="kpi.responding" color="#BA7517" />
@@ -180,7 +195,7 @@ onMounted(() => {
       >{{ opt.label }}</van-tag>
     </div>
 
-    <van-list v-model:loading="loading" :finished="!total || calls.length >= total" finished-text="没有更多了" @load="loadData">
+    <van-list v-model:loading="loading" :finished="drillActive || !total || calls.length >= total" finished-text="没有更多了" @load="loadData">
       <van-cell
         v-for="item in calls" :key="item.id"
         :title="item.call_title || '呼叫#'+item.id"

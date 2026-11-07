@@ -20,8 +20,17 @@ R4 半年合计 == 六个月之和 == 133 个工作日之和
 R5 休息日零产出（工厂日历判 rest/holiday 的日子不得有报工）
 R6 完工口径 ≤ 工序流转口径（完工只认末道工序，超过必然是口径串了）
 R7 派生指标（达产率 / 报废率 / 单台工时）落在物理合理区间
+    R7a 达产率**只判下限**：cap 是按订单节拍估出来的理论能力，不是硬天花板
 R8 工单数：月报工单数 == 该月日报出现过的不同工单数
 R9 人工工时 ≠ 设备机时（有产出的月份两者精确相等 = 播种时两列写了同一个数）
+
+判据自证
+--------
+D0 在真正抓数前先用一组负向用例把 R7a 判据钉死：零产出、负产出、
+cap≤0、NaN/Inf、非数值、下限调高后达不到，全部必须 FAIL；
+100.1%（staging 实测）与 150% 必须 PASS。
+**没有「预期 FAIL」的用例就没有闸** —— 若有人把判据改成恒真，
+这些预期 FAIL 会集体翻绿，D0 立刻报红。可用 ``--self-test`` 离线单跑。
 
 跑法（staging，数据在那里；本地库已被清空）::
 
@@ -91,6 +100,74 @@ def near(a, b, tol: float = 0.01) -> bool:
         return False
 
 
+def attainment_ok(rate, cap=None, min_pct: float = 0.0) -> tuple[bool, str]:
+    """达产率**单向**判据：只判「达不到」，超出理论上限一律算达标。
+
+    与 ``scripts/check_capacity_consistency.py::design_verdict()`` 同一条原则：
+    ``cap = 工作日 × 2 台 × 3 张单`` 是**按订单节拍估出来的理论能力**，不是
+    物理硬天花板。staging 实测 799/798 = 100.1%，说明这个估算偏保守，不是
+    业务缺陷 —— 拿 ``rate <= 100`` 当硬上限判死，等于把**余量**当**缺陷**
+    （2026-11-07 用户拍板「按 45 台/月产能」时已把纲领判定单向化）。
+
+    闸只管一件事：**交不出货**。所以下限（``rate <= min_pct``）仍判死，
+    上限只打印余量、不拦截。``min_pct`` 默认 0 保持原判据下限语义；
+    参数化是为了让 D0 能证明「下限真的拦得住」，不是给判据开后门。
+
+    NaN/Inf/非数值/cap≤0 显式拦掉：改成单向后若不显式校验，一个坏读数
+    可能既不算「达不到」也不算「达产」，失败原因还读不出来。
+
+    返回 ``(ok, 说明)``；说明仅供打印，不参与判定。
+    """
+    if cap is not None:
+        if not isinstance(cap, (int, float)) or isinstance(cap, bool):
+            return False, "理论产能 cap 非数值"
+        if cap != cap or abs(cap) == float("inf") or cap <= 0:
+            return False, "理论产能 cap ≤ 0 或 NaN/Inf → 达产率无从谈起"
+    if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+        return False, "达产率非数值（None / 字符串 / 布尔）"
+    if rate != rate or abs(rate) == float("inf"):
+        return False, "达产率含 NaN/Inf（读数没拿到）"
+    if rate <= min_pct:
+        return False, f"达产率 {rate:.1f}% ≤ 下限 {min_pct:.1f}%（交不出货）"
+    if rate > 100:
+        return True, (f"达产（超理论上限 +{rate - 100:.1f}%，"
+                      "cap 是保守估算，余量不构成缺陷）")
+    return True, "达产"
+
+
+def selftest() -> None:
+    """D0 判据自证：没有负向用例 = 没有闸。
+
+    12 条「预期 FAIL」是本节的价值所在：谁把 ``attainment_ok`` 改成恒真，
+    它们会集体翻绿，下面立刻报红 —— 判据自身也被闸住了。
+    """
+    print("\nD0 达产率判据自证（负向用例）")
+    cases = [
+        # name,                         rate,            cap,            min_pct, 期望
+        ("正常达产 95%",                 95.0,           798,            0.0,   True),
+        ("刚好 100% 不判死",             100.0,          798,            0.0,   True),
+        ("★ staging 实测 100.1% 必须 PASS", 100.1,       798,            0.0,   True),
+        ("大幅超上限 150% 也不判死",     150.0,          798,            0.0,   True),
+        ("贴近零的正值仍算有产出",       0.001,          798,            0.0,   True),
+        ("零产出",                       0.0,            798,            0.0,   False),
+        ("负产出",                       -1.0,           798,            0.0,   False),
+        ("cap=0 分母无效",               0.0,            0,              0.0,   False),
+        ("cap 为负",                     95.0,           -798,           0.0,   False),
+        ("cap 是字符串",                 95.0,           "798",          0.0,   False),
+        ("cap 是 NaN",                   95.0,           float("nan"),   0.0,   False),
+        ("rate 是 None",                 None,           798,            0.0,   False),
+        ("rate 是字符串",                "95",           798,            0.0,   False),
+        ("rate 是布尔",                  True,           798,            0.0,   False),
+        ("rate 是 NaN",                  float("nan"),   798,            0.0,   False),
+        ("rate 是 Inf",                  float("inf"),   798,            0.0,   False),
+        ("下限调到 85% 后 80% 判死",     80.0,           798,            85.0,  False),
+        ("下限调到 85% 后 90% 通过",     90.0,           798,            85.0,  True),
+    ]
+    for name, rate, cap, min_pct, expect in cases:
+        got, why = attainment_ok(rate, cap=cap, min_pct=min_pct)
+        (ok if got == expect else bad)(f"D0 {name}", f"期望 {expect} 实得 {got}（{why}）")
+
+
 def login() -> dict:
     with httpx.Client(timeout=30) as c:
         r = c.post(f"{API}/auth/login",
@@ -109,6 +186,7 @@ def get(h: dict, path: str, **params):
 
 
 def main() -> int:
+    selftest()  # ★ 先自证判据，再联网抓数；判据坏了后面全是假绿
     print(f"\n租户 {TENANT} · 区间 {START} → {END} · API {API}\n")
     h = login()
     ok("登录", USER)
@@ -207,8 +285,10 @@ def main() -> int:
     rate = out / cap * 100 if cap else 0
     scrap_rate = scrap / (out + scrap) * 100 if (out + scrap) else 0
     per_unit = labor / out if out else 0
-    (ok if 0 < rate <= 100 else bad)(
-        "R7a 达产率 (0,100]", f"{rate:.1f}%（{round(out)}/{cap}，{len(workdays)} 工作日）")
+    att_ok, att_why = attainment_ok(rate, cap=cap)
+    (ok if att_ok else bad)(
+        "R7a 达产率只判下限",
+        f"{rate:.1f}%（{round(out)}/{cap}，{len(workdays)} 工作日）· {att_why}")
     (ok if 0 <= scrap_rate < 10 else bad)(
         "R7b 报废率 < 10%", f"{scrap_rate:.2f}%（{round(scrap)} 件）")
     (ok if 0 < per_unit < 100 else bad)(
@@ -250,6 +330,11 @@ def main() -> int:
         "derived": {
             "capacity_basis": {"per_shift": 2, "wo_per_unit": 3, "cap": cap},
             "achievement_rate_pct": round(rate, 2),
+            # ★ 单向判据：cap 是保守估算，>100% 是余量不是缺陷，留痕便于复核
+            "attainment_verdict": "one_sided_min_only",
+            "attainment_ok": att_ok,
+            "attainment_headroom_pct": round(max(0.0, rate - 100), 2),
+            "attainment_reason": att_why,
             "scrap_rate_pct": round(scrap_rate, 2),
             "labor_hours_per_unit": round(per_unit, 2),
         },
@@ -269,4 +354,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        selftest()  # 离线自证，不联网、不落盘
+        raise SystemExit(0 if not FAILS else 1)
     raise SystemExit(main())

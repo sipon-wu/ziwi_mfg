@@ -23,6 +23,7 @@
     --skip-capacity  不跑产能自洽闸（`capacity_per_shift` / 纲领 45 台每月）
     --skip-pg-literals 不跑 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）
     --skip-ui-labels 不跑界面枚举中文化闸（模板裸渲染 status/type 原码）
+    --skip-drilldown 不跑驾驶舱下探契约闸（KPI 取数集合 ↔ 下探 URL ↔ 目标页读 query）
 
 跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
 探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
@@ -143,6 +144,12 @@ DEFAULT_PROBES = [
     # total_output 与 total_wip_output 恒等，双口径静默退化成单口径。
     # 本探针走到建单回填那一格，不只验四个端点能通。
     "product_route_e2e",
+    # 生产报表明细下探：日报/月报 rows 每行带 work_order_id，且能一路
+    # 穿透到工单详情与报工流水。判据自带负向自证（空数组不许空真）。
+    "report_drilldown_e2e",
+    # 工单-库存-流水-看板四方对账：物料守恒 + 三账一致，判据带负向自证。
+    # 接替 browser_test/mfg1_e2e.js TC-08 那个只写了三个 id 的矩阵骨架。
+    "quad_reconcile_e2e",
 ]
 
 # 汇总行的匹配：通 X / 断 Y ；PASS x / FAIL y ；11 PASS / 0 FAIL
@@ -532,6 +539,8 @@ def main():
                     help="跳过 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）")
     ap.add_argument("--skip-ui-labels", action="store_true",
                     help="跳过界面枚举中文化闸（模板裸渲染 status/type 原码）")
+    ap.add_argument("--skip-drilldown", action="store_true",
+                    help="跳过驾驶舱下探契约闸（KPI 取数集合 ↔ 下探 URL ↔ 目标页读 query）")
     ap.add_argument("--skip-judge-selftest", action="store_true",
                     help="跳过判据自证（run_all 自己的 PASS/FAIL/SKIP 判定逻辑的正反用例）")
     ap.add_argument("--selftest-judge", action="store_true",
@@ -744,8 +753,25 @@ def main():
         print(((ui.stdout or "") + (ui.stderr or "")).rstrip())
         ui_fail = ui.returncode != 0
 
+    # ── 驾驶舱下探契约闸 ────────────────────────────────────────────
+    # 界面闸管「文字对不对」，管不了「数字点下去有没有解释」。KPI 卡加一个
+    # `router.push('/work-orders')` 页面能跳、E2E 能过，但落到全量列表，
+    # 「在制 6」和列表对不上 —— 假下探。多状态 KPI 更隐蔽：算 3 个状态
+    # 却只下探 1 个，少掉两类单且没有任何异常痕迹。
+    # 本闸把 KPI_STATUSES 唯一真源、DRILLDOWN 的 query、目标页是否真的读
+    # query / 合并取数 / 显示清除入口，整条链机械钉死；纯静态，不连库。
+    drill_fail = False
+    if not a.skip_drilldown:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        dr = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_drilldown_contract.py")],
+            capture_output=True, text=True, cwd=root)
+        print(((dr.stdout or "") + (dr.stderr or "")).rstrip())
+        drill_fail = dr.returncode != 0
+
     return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
-                 or cap_fail or pg_fail or ui_fail or judge_fail) else 0
+                 or cap_fail or pg_fail or ui_fail or drill_fail or judge_fail) else 0
 
 
 if __name__ == "__main__":

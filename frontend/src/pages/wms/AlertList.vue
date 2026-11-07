@@ -6,8 +6,13 @@ import type { PaginatedResponse } from '@/types'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import { useStatusTag } from '@/composables/useStatusTag'
 import { enumLabel } from '@/config/enums'
+import { useDrilldown } from '@/composables/useDrilldown'
+import DrilldownBanner from '@/components/ziwi/DrilldownBanner.vue'
 
 interface Alert { id: number; alert_type: string; material_id: number; material_code: string; material_name: string; warehouse_name: string; current_qty: number; threshold_qty: number; status: string; alert_message: string; created_at: string }
+
+const drill = useDrilldown()
+const drillActive = drill.active
 
 /** 状态标签：文案/图标/语义统一取自 config/statusDict.ts（UE §1.2 双编码） */
 const statusTagCache = new Map<string, ReturnType<typeof useStatusTag>>()
@@ -42,6 +47,12 @@ async function loadData() {
   loading.value = true
   loadFailed.value = false
   try {
+    if (drill.active.value) {
+      const r = await drill.loadMerged<Alert>('/wms/inventory-alerts')
+      list.value = r.items
+      total.value = r.total
+      return
+    }
     const res = await get<PaginatedResponse<Alert>>('/wms/inventory-alerts', { page: page.value, page_size: pageSize, status: status.value || undefined })
     list.value = res.items as Alert[]
     total.value = res.total
@@ -53,7 +64,11 @@ async function loadData() {
     loadErrorKind.value = (e as { response?: unknown })?.response ? 'business' : 'network'
   } finally { loading.value = false }
 }
-function onSearch() { page.value = 1; loadData() }
+function onSearch() {
+  // 下探视图里点状态 tab = 用户要常规浏览，先清下探条件再由 onChange 重取
+  if (drill.active.value) { drill.clear(); return }
+  page.value = 1; loadData()
+}
 
 async function handleAck(item: Alert) {
   await post(`/wms/inventory-alerts/${item.id}/acknowledge`)
@@ -70,10 +85,12 @@ async function handleCheck() {
 }
 
 onMounted(loadData)
+drill.onChange(() => { page.value = 1; void loadData() })
 </script>
 
 <template>
   <div>
+    <DrilldownBanner :total="total" />
     <van-nav-bar title="库存预警">
       <template #right><van-button size="small" plain type="primary" @click="handleCheck">检查库存</van-button></template>
     </van-nav-bar>
@@ -86,7 +103,7 @@ onMounted(loadData)
       </van-tabs>
     </van-cell-group>
 
-    <van-list v-model:loading="loading" :finished="list.length >= total" @load="loadData" finished-text="没有更多了">
+    <van-list v-model:loading="loading" :finished="drillActive || list.length >= total" @load="loadData" finished-text="没有更多了">
       <van-cell v-for="item in list" :key="item.id">
         <template #title>
           <span class="ziwi-state" :class="`ziwi-state--${statusTagOf(item.status).semantic.value}`" style="margin-right:6px">

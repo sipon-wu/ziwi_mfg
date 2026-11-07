@@ -1,6 +1,6 @@
 {
-  "work_order_id": 232,
-  "material_id": 1,
-  "warehouse_id": 1,
-  "note": "工单-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成，矩阵框架已建，待服务端部署修复后重跑。"
+  "work_order_id": 1050,
+  "material_id": 493,
+  "warehouse_id": 60,
+  "note": "浏览器侧只登记矩阵编号；工单-库存-流水-看板四方对账断言由 e2e/quad_reconcile_e2e.py 实现并纳入 run_all.py。"
 }

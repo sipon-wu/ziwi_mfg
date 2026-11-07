@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { get } from '@/api/client'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
@@ -25,6 +26,8 @@ import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.v
 
 interface ReportRow {
   report_date?: string
+  /** 明细下探主键：由后端 _rollup_by_wo 带出，点行可进工单详情 */
+  work_order_id?: number
   wo_no: string
   product_name: string
   total_output: number
@@ -66,9 +69,31 @@ interface MonthlyReport {
 
 interface CalendarDay { cal_date: string; day_type: string; name?: string | null }
 
+const route = useRoute()
+const router = useRouter()
+
+/** 驾驶舱「生产报表」入口带 date=<业务日>；不带就是常规浏览 */
+const drillDate = computed(() => {
+  const v = route.query.date
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ''
+})
+
 const mode = ref<'daily' | 'monthly'>('daily')
-const day = ref(dayjs().format('YYYY-MM-DD'))
+const day = ref(drillDate.value || dayjs().format('YYYY-MM-DD'))
 const month = ref(dayjs().format('YYYY-MM'))
+if (drillDate.value) mode.value = 'daily'
+
+function clearDrillDate() {
+  const q = { ...route.query }
+  delete q.date
+  void router.replace({ path: route.path, query: q })
+}
+
+/** 明细行 → 工单详情。没有 id 就不做可点，避免「点了只是换个页面」的假下探 */
+function goWorkOrder(row: ReportRow) {
+  if (!row.work_order_id) return
+  void router.push(`/work-orders/${row.work_order_id}`)
+}
 const loading = ref(false)
 const loadFailed = ref(false)
 const daily = ref<DailyReport | null>(null)
@@ -184,6 +209,10 @@ const fmt = (v: number | undefined | null, unit = '') => {
 const fmtRate = (v: number) => `${v.toFixed(2)}%`
 
 onMounted(load)
+// 从别的入口再次带 date 跳进来时组件不重挂载，需显式重取
+watch(drillDate, (v) => {
+  if (v) { day.value = v; mode.value = 'daily'; void load() }
+})
 </script>
 
 <template>
@@ -193,6 +222,15 @@ onMounted(load)
         <van-button size="small" plain type="primary" :loading="loading" @click="load">刷新</van-button>
       </template>
     </van-nav-bar>
+
+    <!-- 驾驶舱「生产报表」带日期下探：把来源日期显式写出来，别靠默认值巧合对齐 -->
+    <van-cell-group v-if="drillDate" inset style="margin:8px">
+      <van-cell title="驾驶舱下探 · 生产日报" :label="drillDate">
+        <template #value>
+          <van-button size="mini" plain type="primary" @click="clearDrillDate">清除</van-button>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
     <van-cell-group inset style="margin:8px">
       <van-radio-group v-model="mode" direction="horizontal" @change="switchMode">
@@ -283,7 +321,10 @@ onMounted(load)
       </van-cell-group>
 
       <!-- 明细 -->
-      <div class="ziwi-section-title">按工单明细（{{ rows.length }}）</div>
+      <div class="ziwi-section-title">
+        按工单明细（{{ rows.length }}）
+        <span class="ziwi-section-title__hint">点击行查看工单与报工明细</span>
+      </div>
       <div class="ziwi-report__table">
         <div class="ziwi-report__head">
           <span class="c-wo">工单</span>
@@ -293,7 +334,16 @@ onMounted(load)
           <span class="c-num">人工</span>
           <span class="c-num">机时</span>
         </div>
-        <div v-for="row in rows" :key="row.wo_no" class="ziwi-report__row">
+        <div
+          v-for="row in rows"
+          :key="row.wo_no"
+          class="ziwi-report__row"
+          :class="{ 'ziwi-report__row--link': !!row.work_order_id }"
+          :role="row.work_order_id ? 'button' : undefined"
+          :tabindex="row.work_order_id ? 0 : undefined"
+          @click="goWorkOrder(row)"
+          @keydown.enter="goWorkOrder(row)"
+        >
           <span class="c-wo">
             <span class="wo-no">{{ row.wo_no }}</span>
             <span class="wo-product">{{ row.product_name || '-' }}</span>
@@ -388,6 +438,19 @@ onMounted(load)
   min-height: var(--ziwi-touch-min, 48px);
   border-bottom: 1px solid var(--ziwi-border, #ebedf0);
   font-size: 13px;
+}
+/* ★ 有 work_order_id 才做成可点，没有就不给指针 —— 不许假下探 */
+.ziwi-report__row--link { cursor: pointer; }
+.ziwi-report__row--link:hover { background: var(--ziwi-primary-bg); }
+.ziwi-report__row--link:focus-visible {
+  outline: 2px solid var(--ziwi-primary);
+  outline-offset: -2px;
+}
+.ziwi-section-title__hint {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ziwi-text-muted);
 }
 .c-wo { display: flex; flex-direction: column; min-width: 0; }
 .wo-no { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

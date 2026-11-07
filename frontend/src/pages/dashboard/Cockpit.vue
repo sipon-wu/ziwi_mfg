@@ -64,6 +64,36 @@ const todayLabel = `${dayjs().format('YYYY-MM-DD')} ${WEEK[dayjs().day()]}`
 const blank = (label: string, unit = '', hint?: string): KpiItem =>
   ({ label, value: null, state: 'loading', unit, hint })
 
+/**
+ * ★ KPI 取数与下探过滤的**唯一真源**（2026-11-08）。
+ *
+ * 原来「在制」取 released+in_progress+paused 三个状态的 total 之和，但卡片
+ * 不可点；如果随手加一个 `router.push('/work-orders?status=in_progress')`，
+ * 落地列表只有三类里的一类 —— 数字对不上，却看不出哪里错。所以取数
+ * `totalByStatus()` 和下探 URL **共用这一份数组**，结构上不可能各写各的。
+ * 静态闸 `scripts/check_drilldown_contract.py` 会核目标页确实读了这个 query。
+ */
+const KPI_STATUSES: Record<string, string[]> = {
+  'M01:1': ['released', 'in_progress', 'paused'],   // 在制
+  'M06:1': ['pending'],                             // 待保养
+  'M03:1': ['open', 'reviewing'],                   // 未结 NCR
+  'M05:1': ['pending', 'open', 'acknowledged', 'responding', 'in_progress'],
+  'M05:2': ['escalated'],                           // 已升级
+  'M04:0': ['open', 'acknowledged'],                // 未闭环库存预警
+}
+
+interface DrillTarget { path: string; perm: string }
+/** 带过滤条件的下探目标；status 一律由 KPI_STATUSES 生成，不许手写第二份。 */
+const DRILLDOWN: Record<string, DrillTarget> = {
+  'M01:1': { path: `/work-orders?status=${KPI_STATUSES['M01:1'].join(',')}`, perm: 'M01:work_order:read' },
+  'M06:1': { path: `/equipment/maintenance-tasks?status=${KPI_STATUSES['M06:1'].join(',')}`, perm: 'M06:equipment:read' },
+  'M06:2': { path: '/equipment/maintenance-tasks?overdue=1', perm: 'M06:equipment:read' },
+  'M03:1': { path: `/quality/ncr?status=${KPI_STATUSES['M03:1'].join(',')}`, perm: 'M30:ncr:read' },
+  'M05:1': { path: `/andon?status=${KPI_STATUSES['M05:1'].join(',')}`, perm: 'M05:andon_call:read' },
+  'M05:2': { path: `/andon?status=${KPI_STATUSES['M05:2'].join(',')}`, perm: 'M05:andon_call:read' },
+  'M04:0': { path: `/wms/alerts?status=${KPI_STATUSES['M04:0'].join(',')}`, perm: 'M04:wms_inventory:read' },
+}
+
 const modules = ref<ModuleInfo[]>([
   {
     name: '生产管理', code: 'M01', to: '/work-orders', perm: 'M01:work_order:read',
@@ -237,7 +267,8 @@ async function load() {
   await feed('M01', 0, () => total('/work-orders'))
   await feed('M01', 1, () =>
     // 在制 = 已下达 + 生产中 + 已暂停（草稿还没投产，不算在制）
-    totalByStatus('/work-orders', ['released', 'in_progress', 'paused']))
+    // ★ 状态集合取自 KPI_STATUSES，下探 URL 用同一份，不许在这里手写
+    totalByStatus('/work-orders', KPI_STATUSES['M01:1']))
   await feed('M01', 2, () => total('/work-reports'))
   withRatio('M01', 1, num('M01', 1), num('M01', 0))
 
@@ -246,7 +277,7 @@ async function load() {
   //   找不到时**什么都不做**（不抛错）→ 那 3 张卡永远停在 state='loading'，
   //   `<van-loading>` 一直转，页面看起来只是在"慢慢加载"，实际是死等。
   await feed('M06', 0, () => total('/equipment'))
-  await feed('M06', 1, () => totalByStatus('/maintenance-tasks', ['pending']))
+  await feed('M06', 1, () => totalByStatus('/maintenance-tasks', KPI_STATUSES['M06:1']))
   await feed('M06', 2, async () => {
     const list = await get<any[]>('/maintenance-tasks/overdue')
     return Array.isArray(list) ? list.length : 0
@@ -256,7 +287,7 @@ async function load() {
 
   // ── M03 品质 ──
   await feed('M03', 0, () => total('/inspection-orders'))
-  await feed('M03', 1, () => totalByStatus('/ncr', ['open', 'reviewing']))
+  await feed('M03', 1, () => totalByStatus('/ncr', KPI_STATUSES['M03:1']))
   await feed('M03', 2, fromDaily('total_scrap'), { unit: '件' })
   withSeverity('M03', 1, num('M03', 1), 'warn')
 
@@ -270,7 +301,7 @@ async function load() {
   // ── M04 仓储（端点全在 /wms 前缀下）──
   await feed('M04', 0, () =>
     // 未闭环预警 = open（未确认）+ acknowledged（已确认未解决）
-    totalByStatus('/wms/inventory-alerts', ['open', 'acknowledged']))
+    totalByStatus('/wms/inventory-alerts', KPI_STATUSES['M04:0']))
   await feed('M04', 1, () => total('/wms/receipt-orders'))
   await feed('M04', 2, () => total('/wms/issue-orders'))
   withSeverity('M04', 0, num('M04', 0), 'warn')
@@ -280,9 +311,8 @@ async function load() {
   await feed('M05', 1, () =>
     // 未处理 = 待响应/待处理/已确认/响应中/处理中
     // ★ 这里**不含 escalated**：已升级单独一项，两项互斥才不会把同一张单数两遍
-    totalByStatus('/andon/calls',
-      ['pending', 'open', 'acknowledged', 'responding', 'in_progress']))
-  await feed('M05', 2, () => totalByStatus('/andon/calls', ['escalated']))
+    totalByStatus('/andon/calls', KPI_STATUSES['M05:1']))
+  await feed('M05', 2, () => totalByStatus('/andon/calls', KPI_STATUSES['M05:2']))
   withRatio('M05', 1, num('M05', 1), num('M05', 0))
   withSeverity('M05', 1, num('M05', 1), 'warn')
   withSeverity('M05', 2, num('M05', 2), 'danger')
@@ -335,6 +365,20 @@ function enter(m: ModuleInfo) {
   if (canEnter(m) && m.to) router.push(m.to)
 }
 
+/**
+ * KPI 卡的下探目标：优先带过滤条件的 DRILLDOWN，否则落模块首页（累计总数类
+ * KPI 本来就没有过滤语义，进全量列表是正确的）。权限判断与 `canEnter` 同一套，
+ * 没权限不给入口 —— 点进去撞 403 比不给更糟。
+ */
+function drillTo(m: ModuleInfo, idx: number): string | undefined {
+  const d = DRILLDOWN[`${m.code}:${idx}`]
+  const path = d?.path ?? m.to
+  const perm = d?.perm ?? m.perm
+  if (!path) return undefined
+  if (perm && auth.hasPermissionsLoaded && !auth.hasPerm(perm)) return undefined
+  return path
+}
+
 onMounted(load)
 </script>
 
@@ -363,7 +407,7 @@ onMounted(load)
       <header class="today__head">
         <span class="today__title">今日生产</span>
         <span class="today__hint">完工口径 · 只认末道工序</span>
-        <button type="button" class="today__more" @click="router.push('/reports')">
+        <button type="button" class="today__more" @click="router.push({ path: '/reports', query: { date: today() } })">
           生产报表<van-icon name="arrow" />
         </button>
       </header>
@@ -435,7 +479,7 @@ onMounted(load)
           class="mod__kpis"
           :style="{ gridTemplateColumns: `repeat(${colsOf(mod)}, minmax(0, 1fr))` }"
         >
-          <CockpitKpi v-for="(kpi, i) in mod.kpis" :key="i" v-bind="kpi" />
+          <CockpitKpi v-for="(kpi, i) in mod.kpis" :key="i" v-bind="kpi" :to="drillTo(mod, i)" />
         </div>
       </section>
     </div>

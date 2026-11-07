@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { KpiState } from '@/types/search'
 
 /**
@@ -11,6 +12,10 @@ import type { KpiState } from '@/types/search'
  * - 支持**异常语义着色**：逾期保养、未结 NCR、库存预警这类"归零才是正常"的
  *   指标，> 0 才染橙/红；全部正常时页面应该安静
  * - 卡头左侧色条与数值同色，扫一眼就能定位异常项
+ *
+ * ★ 下探（2026-11-08）：传 `to` 时整张卡可点，跳到**带过滤条件**的明细页。
+ *   不传就是纯展示块 —— 没有下探出口的卡不做成可点，避免"点了只是换个页面"
+ *   的假下探。条件由 `Cockpit.vue::drillTo()` 生成，与取数同源。
  */
 const props = defineProps<{
   label: string
@@ -25,7 +30,14 @@ const props = defineProps<{
   severity?: 'normal' | 'warn' | 'danger'
   /** 口径说明，悬停可见 —— 避免每张卡都堆一行小字把版面撑乱 */
   hint?: string
+  /** 下探目标（含 query）。不传 = 纯展示卡，不可点 */
+  to?: string
 }>()
+
+const router = useRouter()
+function go() {
+  if (props.to) void router.push(props.to)
+}
 
 const isLoading = computed(() => props.state === 'loading')
 const unavailable = computed(() => props.state === 'unavailable')
@@ -48,8 +60,14 @@ const pct = computed(() => {
 <template>
   <div
     class="ck"
-    :class="[`ck--${tone}`, { 'ck--muted': unavailable }]"
+    :class="[`ck--${tone}`, { 'ck--muted': unavailable, 'ck--link': !!to }]"
     :title="hint || ''"
+    :role="to ? 'button' : undefined"
+    :tabindex="to ? 0 : undefined"
+    :aria-label="to ? `${label}，查看明细` : undefined"
+    @click="go"
+    @keydown.enter="go"
+    @keydown.space.prevent="go"
   >
     <div class="ck__body">
       <div class="ck__label">{{ label }}</div>
@@ -119,6 +137,11 @@ const pct = computed(() => {
   --ck-soft: var(--ziwi-bg-light);
   --ck-track: var(--ziwi-border-light);
 }
+
+/* ★ 有下探出口才给指针与聚焦样式；纯展示卡保持安静、不可聚焦。 */
+.ck--link { cursor: pointer; transition: filter .15s ease; }
+.ck--link:hover { filter: brightness(0.965); }
+.ck--link:focus-visible { outline: 2px solid var(--ziwi-primary); outline-offset: 2px; }
 
 .ck__body {
   flex: 1 1 auto;

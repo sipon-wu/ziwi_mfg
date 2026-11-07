@@ -29,6 +29,8 @@ import { useSubmitLock } from '@/composables/useSubmitLock'
 import { getStateEntry } from '@/config/statusDict'
 import { txt } from '@/config/uiText'
 import { TERM } from '@/config/term'
+import { useDrilldown } from '@/composables/useDrilldown'
+import DrilldownBanner from '@/components/ziwi/DrilldownBanner.vue'
 
 /* ------------------------------------------------------------------ *
  * 类型与枚举
@@ -73,6 +75,8 @@ function labelOf(options: ZiwiOption[], value: string | number | null | undefine
 }
 
 const router = useRouter()
+const drill = useDrilldown()
+const drillActive = drill.active
 
 /* ------------------------------------------------------------------ *
  * 列表
@@ -109,6 +113,19 @@ function resolveErrorMessage(error: unknown): string {
 async function loadData(): Promise<void> {
   loadFailed.value = false
   try {
+    if (drill.overdue.value) {
+      // 逾期保养走专用端点（返回数组），不是 status 过滤
+      const r = await drill.loadOverdue<MaintenanceTask>('/maintenance-tasks/overdue')
+      tasks.value = r.items
+      total.value = r.total
+      return
+    }
+    if (drill.active.value) {
+      const r = await drill.loadMerged<MaintenanceTask>('/maintenance-tasks')
+      tasks.value = r.items
+      total.value = r.total
+      return
+    }
     const items = await fetchPage(async (p) => {
       return get<PaginatedResponse<MaintenanceTask>>('/maintenance-tasks', { ...p })
     })
@@ -120,6 +137,9 @@ async function loadData(): Promise<void> {
     tasks.value = []
   }
 }
+
+// 清除下探 / 换一张 KPI 卡下探进来时组件不重挂载，必须显式重新取数
+drill.onChange(() => { resetPage(); void loadData() })
 
 const equipments = ref<EquipmentLite[]>([])
 
@@ -358,6 +378,8 @@ onMounted(() => {
       </van-button>
     </header>
 
+    <DrilldownBanner :total="total" />
+
     <ZiwiStateView
       :state="listState"
       skeleton="rows"
@@ -409,7 +431,7 @@ onMounted(() => {
         </li>
       </ul>
 
-      <div v-if="total > pageSize" class="task-page__pager">
+      <div v-if="!drillActive && total > pageSize" class="task-page__pager">
         <van-pagination
           v-model="page"
           :total-items="total"

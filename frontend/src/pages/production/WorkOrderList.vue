@@ -10,8 +10,13 @@ import ListRowDetail from '@/components/ListRowDetail.vue'
 import { getSearchConfig, describeCondition } from '@/config/searchFields'
 import type { SearchCondition } from '@/types/search'
 import { statusTagOf } from '@/composables/useStatusTag'
+import { useDrilldown } from '@/composables/useDrilldown'
+import DrilldownBanner from '@/components/ziwi/DrilldownBanner.vue'
 
 const router = useRouter()
+const drill = useDrilldown()
+/** 顶层 computed，模板里自动解包；下探视图不分页 */
+const drillActive = drill.active
 const rawOrders = ref<WorkOrder[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -38,6 +43,8 @@ function onResetSubmit() {
   conditions.value = []
   keyword.value = ''
   showSearch.value = false
+  // 下探视图里点重置 = 想回全量浏览；清 query 后由 onChange 重新取数
+  if (drill.active.value) { drill.clear(); return }
   void fetch()
 }
 function condText(c: SearchCondition) {
@@ -50,6 +57,13 @@ function condText(c: SearchCondition) {
 async function fetch() {
   loading.value = true
   try {
+    if (drill.active.value) {
+      // 下探：按 KPI 的多个状态并发取数再合并，数字才与卡片对得上；不分页
+      const r = await drill.loadMerged<WorkOrder>('/work-orders')
+      rawOrders.value = r.items
+      total.value = r.total
+      return
+    }
     const res = await get<PaginatedResponse<WorkOrder>>('/work-orders', { page: page.value, page_size: 20, keyword: keyword.value || undefined })
     rawOrders.value = res.items || []
     total.value = res.total || 0
@@ -57,6 +71,8 @@ async function fetch() {
 }
 
 onMounted(fetch)
+// 清除下探 / 换一张 KPI 卡下探进来时组件不重挂载，必须显式重新取数
+drill.onChange(() => { page.value = 1; void fetch() })
 
 function viewDetail(id: number) { router.push(`/work-orders/${id}`) }
 function goCreate() { router.push('/work-orders/create') }
@@ -65,6 +81,7 @@ function goCreate() { router.push('/work-orders/create') }
 <template>
   <div>
     <van-nav-bar title="工单管理" />
+    <DrilldownBanner :total="total" />
     <!-- 搜索栏：条件 → 输入 → 提交 → 清空 → 查询延伸 | 创建靠右 -->
     <ZiwiListToolbar
       v-model:keyword="keyword"
@@ -89,7 +106,7 @@ function goCreate() { router.push('/work-orders/create') }
       >{{ condText(c) }}</van-tag>
       <van-button size="mini" plain type="primary" @click="onResetSubmit">清空</van-button>
     </div>
-    <van-list v-model:loading="loading" :finished="orders.length >= total" @load="fetch">
+    <van-list v-model:loading="loading" :finished="drillActive || orders.length >= total" @load="fetch">
       <van-cell v-for="item in orders" :key="item.id" @click="viewDetail(item.id)" is-link>
         <template #title>{{ item.wo_no }}</template>
         <template #label>

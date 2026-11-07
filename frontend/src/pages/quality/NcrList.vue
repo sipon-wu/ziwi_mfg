@@ -8,9 +8,13 @@ import ZiwiListToolbar from '@/components/ziwi/ZiwiListToolbar.vue'
 import ZiwiStateView, { type StateKind } from '@/components/ziwi/ZiwiStateView.vue'
 import { statusTagOf } from '@/composables/useStatusTag'
 import { enumLabel, enumOptions } from '@/config/enums'
+import { useDrilldown } from '@/composables/useDrilldown'
+import DrilldownBanner from '@/components/ziwi/DrilldownBanner.vue'
 
 // M30 不合格品评审（NCR）
 // 每次状态推进都会写入后端通用状态流水，轨迹可在「流转记录」中查看
+const drill = useDrilldown()
+const drillActive = drill.active
 const items = ref<any[]>([])
 const { page, pageSize, total, loading, fetchPage, resetPage, loadFailed } = usePagination()
 const keyword = ref('')
@@ -51,6 +55,13 @@ const pageState = computed<StateKind>(() => {
 })
 
 async function loadData() {
+  if (drill.active.value) {
+    // 下探视图：替换式取数，不追加、不分页
+    const r = await drill.loadMerged<any>('/ncr')
+    items.value = r.items
+    total.value = r.total
+    return
+  }
   const params: Record<string, any> = { page: page.value, page_size: pageSize.value }
   if (statusFilter.value) params.status = statusFilter.value
   const data = await fetchPage(async (p) => {
@@ -60,6 +71,8 @@ async function loadData() {
 }
 
 function onStatusChange() {
+  // 下探视图里点状态标签 = 想按标签浏览，先清下探条件再由 onChange 重取
+  if (drill.active.value) { drill.clear(); return }
   items.value = []
   resetPage()
   loadData()
@@ -76,6 +89,8 @@ onMounted(() => {
   items.value = []
   loadData()
 })
+// 清除下探 / 换一张 KPI 卡下探进来时组件不重挂载，必须显式重新取数
+drill.onChange(() => { items.value = []; resetPage(); void loadData() })
 
 // ── 新建 ──
 const showCreate = ref(false)
@@ -174,6 +189,7 @@ function fmtTime(t: string) {
 
 <template>
   <div>
+    <DrilldownBanner :total="total" />
     <van-cell-group title="不合格品评审（NCR）">
       <van-cell title="单据总数" :value="total" />
     </van-cell-group>
@@ -198,7 +214,7 @@ function fmtTime(t: string) {
       >{{ opt.label }}</van-tag>
     </div>
 
-    <van-list v-model:loading="loading" :finished="!total || items.length >= total" finished-text="没有更多了" @load="loadData">
+    <van-list v-model:loading="loading" :finished="drillActive || !total || items.length >= total" finished-text="没有更多了" @load="loadData">
       <van-cell v-for="item in items" :key="item.id">
         <template #title>
           {{ item.ncr_no }}

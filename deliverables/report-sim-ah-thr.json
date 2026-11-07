@@ -8,10 +8,10 @@
     "workdays": 133
   },
   "half_year": {
-    "total_output": 772.0,
-    "total_wip_output": 11052.0,
+    "total_output": 799.0,
+    "total_wip_output": 11079.0,
     "total_scrap": 5.0,
-    "total_hours": 4377.68,
+    "total_hours": 4883.71,
     "total_machine_hours": 4377.68
   },
   "derived": {
@@ -20,9 +20,13 @@
       "wo_per_unit": 3,
       "cap": 798
     },
-    "achievement_rate_pct": 96.74,
-    "scrap_rate_pct": 0.64,
-    "labor_hours_per_unit": 5.67
+    "achievement_rate_pct": 100.13,
+    "attainment_verdict": "one_sided_min_only",
+    "attainment_ok": true,
+    "attainment_headroom_pct": 0.13,
+    "attainment_reason": "达产（超理论上限 +0.1%，cap 是保守估算，余量不构成缺陷）",
+    "scrap_rate_pct": 0.62,
+    "labor_hours_per_unit": 6.11
   },
   "months": [
     {
@@ -30,7 +34,7 @@
       "total_output": 118,
       "total_wip_output": 1598,
       "total_scrap": 1,
-      "total_hours": 629.8,
+      "total_hours": 701.76,
       "total_machine_hours": 629.8,
       "orders": 11
     },
@@ -39,25 +43,25 @@
       "total_output": 132,
       "total_wip_output": 1892,
       "total_scrap": 0,
-      "total_hours": 749.5,
+      "total_hours": 836.1800000000001,
       "total_machine_hours": 749.5,
       "orders": 15
     },
     {
       "month": "2026-07",
-      "total_output": 147,
-      "total_wip_output": 2107,
+      "total_output": 167,
+      "total_wip_output": 2127,
       "total_scrap": 1,
-      "total_hours": 834.6700000000001,
+      "total_hours": 933.1700000000001,
       "total_machine_hours": 834.6700000000001,
-      "orders": 15
+      "orders": 16
     },
     {
       "month": "2026-08",
       "total_output": 144,
       "total_wip_output": 2064,
       "total_scrap": 1,
-      "total_hours": 817.63,
+      "total_hours": 912.1899999999999,
       "total_machine_hours": 817.63,
       "orders": 18
     },
@@ -66,21 +70,23 @@
       "total_output": 133,
       "total_wip_output": 1973,
       "total_scrap": 2,
-      "total_hours": 783.9,
+      "total_hours": 874.52,
       "total_machine_hours": 783.9,
       "orders": 15
     },
     {
       "month": "2026-10",
-      "total_output": 98,
-      "total_wip_output": 1418,
+      "total_output": 105,
+      "total_wip_output": 1425,
       "total_scrap": 0,
-      "total_hours": 562.18,
+      "total_hours": 625.89,
       "total_machine_hours": 562.18,
-      "orders": 10
+      "orders": 11
     }
   ],
-  "ok": 18,
-  "fail": 0,
-  "fails": []
+  "ok": 36,
+  "fail": 1,
+  "fails": [
+    "R5 休息日无产出 · 1 天有产出: ['2026-07-12']"
+  ]
 }

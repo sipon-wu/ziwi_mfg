@@ -204,12 +204,12 @@ const rid = (b) => (b && b.request_id) || '';
   try {
     const matrix = {
       work_order_id: ids.woId, material_id: ids.matId, warehouse_id: ids.whId,
-      note: '工单-库存-流水-看板 四方对账因 BUG-1/2/3/4/5 阻断无法完成，矩阵框架已建，待服务端部署修复后重跑。'
+      note: '浏览器侧只登记矩阵编号；四方对账断言由 e2e/quad_reconcile_e2e.py 实现（守恒式 + 三账一致 + 负向自证），已纳入 run_all.py。'
     };
     record('TC-08', '跨模块一致性总核对', 'BLOCKED',
-      // ★原来写的是「因 BUG-1/2/3/4/5 阻断」—— 那批 BUG 早已修复，文案没跟着改。
-      //   这里如实说明：**四方对账的逻辑尚未实现**，不是被阻断。
-      `工单(${ids.woId})-库存-流水-看板 四方对账**逻辑尚未实现**（仅建了矩阵骨架，见 consistency-matrix.json），不要把它当成已验证。`,
+      // ★四方对账已由独立 Python 探针实现，本用例仍只登记 id、不做断言，
+      //   所以状态保持 BLOCKED；但文案不能再说「逻辑尚未实现」。
+      `工单(${ids.woId})-库存-流水-看板：浏览器侧仅登记矩阵编号，断言见 e2e/quad_reconcile_e2e.py（已纳入 run_all.py）。本用例不做断言，勿当成已验证。`,
       matrix);
     fs.writeFileSync(path.join(__dirname, 'consistency-matrix.json'), JSON.stringify(matrix, null, 2));
   } catch (e) { record('TC-08', '跨模块一致性总核对', 'BLOCKED', '异常: ' + e.message, null); }
