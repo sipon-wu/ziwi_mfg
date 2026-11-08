@@ -213,7 +213,19 @@ class TestCopilotAsk:
         assert answer["payload"]["answered"] is False
 
     async def test_no_data_fixed_phrasing(self, env):
-        """上周产量（无种子）→ 固定无数据话术，不编造。"""
+        """无数据 → 固定无数据话术，不编造。
+
+        ★ 判据不能用「上周有没有数据」：fixture 把报工记在**昨天**，而「昨天」
+          是否落进「上周」取决于今天是周几 —— 每到**周一**，昨天（周日）就正好
+          落在上周，这条断言在周一必然翻红。2026-11-09（周一）实测：
+          `data.value = 100` / `answered = True`，而整晚没有任何代码变更。
+          这与 `e2e/copilot_smoke.py` ③ 是同一个根因（那处已改成随机空租户）。
+          这里同样切到**随机空租户**，与日历彻底解耦 —— 要验的是
+          「没数据时不许编」，不是「上周恰好没数据」。
+
+        租户由 `env` fixture 在每条用例开头重置回 `default`。
+        """
+        _Env.tenant = f"copilot-empty-{uuid.uuid4().hex[:8]}"
         events = await _ask(env, "上周的产量是多少")
         answer = _find(events, "answer")
         payload = answer["payload"]
@@ -294,7 +306,11 @@ class TestCopilotGuardrailRegression:
             assert answer is not None and answer["payload"]["answered"] is False
 
     async def test_no_data_never_zero_masquerade(self, env):
-        """D2：无数据态不得用 0 冒充（value=None 且 formatted 非数值）。"""
+        """D2：无数据态不得用 0 冒充（value=None 且 formatted 非数值）。
+
+        同 `test_no_data_fixed_phrasing`：**切随机空租户**，不靠「上周恰好没数据」。
+        """
+        _Env.tenant = f"copilot-empty-{uuid.uuid4().hex[:8]}"
         events = await _ask(env, "上周的产量是多少")
         payload = _find(events, "answer")["payload"]
         assert payload["answered"] is False
