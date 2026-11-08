@@ -706,7 +706,7 @@ def phase_p7(c: C, m: dict, st: dict):
         bad("生产月报", f"{r.status_code} {msg(r)}")
 
     for path, label in (("/wms/reports/stock-summary", "库存汇总"),
-                        ("/wms/reports/summary", "仓储收发汇总"),
+                        ("/wms/reports/summary", "库存快照汇总"),
                         ("/wms/reports/turnover", "库存周转")):
         r = c.get(path)
         if r.status_code == 200:

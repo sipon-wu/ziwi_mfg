@@ -1207,11 +1207,24 @@ async def list_storage_moves(
 @router.get("/reports/summary")
 async def report_summary(
     warehouse_id: Optional[int] = Query(None),
-    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     repo: InventoryRepository = Depends(get_tenant_repo(InventoryRepository, require_auth=True)),
 ):
-    """收发存汇总：期初+收入+发出+期末"""
+    """按物料的**当前库存快照**（不是区间收支表）。
+
+    ★ 2026-11-09 订正（B-17）：这个端点曾声明 `start_date` / `end_date` 两个参数，
+      但实现从头到尾没读过它们 —— 调用方以为传了区间就在查历史，实际拿到的
+      永远是「此刻」。**参数收下不报错**是最容易让对账对不上的形态（口径错但
+      不报错），比直接 501 更危险：至少 501 会让人立刻发现。
+
+      现在把两个参数删掉，接口不再宣称支持区间。真要查「本月收发存」，需要另开
+      独立端点：期初取区间开始前的余额、收入/发出按 `inventory_transactions` 的
+      类型汇总、期末 = 期初 + 收入 − 发出；其中「哪些单据类型算收入/发出」必须先
+      与业务确认，不能在这里猜（收货待检 vs 入库、移库 vs 出库的方向都不同）。
+
+      现有 4 个调用方都是裸调、要的就是快照，删参数不影响：
+      `e2e/quad_reconcile_e2e.py::board_of`、`e2e/wms_warehouse_e2e.py` W8-4、
+      `e2e/browser_test/mfg1_e2e.js`、`e2e/_flow_run.py`。
+    """
     sql = """SELECT m.id as material_id, m.code as material_code, m.name as material_name, m.spec, m.unit,
              COALESCE(SUM(i.quantity), 0) as current_qty,
              COALESCE(SUM(i.locked_qty), 0) as locked_qty,

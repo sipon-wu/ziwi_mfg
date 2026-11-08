@@ -12,6 +12,14 @@ const SHOT = path.join(__dirname, 'screenshots');
 if (!fs.existsSync(SHOT)) fs.mkdirSync(SHOT, { recursive: true });
 const PFX = 'E2E_BROWSER_';
 const TS = Date.now();
+// ★ 2026-11-09（B-19）：原来这里硬编码 `test_admin` / `test123456` —— 影子账号，
+//   staging 上根本不存在。一次登录失败就连锁 401，九个用例全变成假红/假 BLOCKED，
+//   而报告里的措辞（「后端无 /suppliers 路由」「BUG-5 阻断」）又把读者引向完全
+//   无关的方向。改走环境变量，默认用 AH-THR 的真实账号（与
+//   `_probe_kpi_state_e2e.js` 保持一致）。
+const USER = process.env.E2E_USER || 'ah_admin';
+const PWD = process.env.E2E_PWD || 'Ah@2026seed';
+const TENANT = process.env.E2E_TENANT || 'AH-THR';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(...a);
 
@@ -34,10 +42,23 @@ const rid = (b) => (b && b.request_id) || '';
   async function uiLogin() {
     await page.goto(`${BASE}/#/login`, { waitUntil: 'networkidle', timeout: 30000 });
     await sleep(1000);
-    await page.fill('#van-field-1-input', 'test_admin');
-    await page.fill('#van-field-2-input', 'test123456');
+    // ★ 不用 `#van-field-1-input` 这种 Vant 自动生成 id：登录表单加/删一个字段，
+    //   编号就整体错位，而失败现场只会告诉你「登录不了」—— 极难联想到是选择器错。
+    await page.fill('input[name="username"], input[type="text"]', USER);
+    await page.fill('input[type="password"]', PWD);
+    // 当前登录页**没有**租户输入框：`Login.vue::handleLogin` 只把用户名/密码交给
+    // `auth.login()`，租户由后端按用户名解析。保留「有就填」的兼容分支，但别以为
+    // 它能指定租户 —— 曾经因为它存在而误判「登录请求带了租户」。
+    const tenantInput = await page.$('input[name="tenant_id"], input[name="tenant"]');
+    if (tenantInput) await tenantInput.fill(TENANT);
     await page.click('button[type="submit"]');
-    await sleep(3000);
+    // ★ 等跳转**真的完成**再返回：`router.push('/cockpit')` 是异步导航，原来定长
+    //   sleep(3000) 后在慢网络下仍读到 #/login，于是「已登录成功、七页全通」
+    //   被判成 PARTIAL（2026-11-09 实测踩到）。
+    await page
+      .waitForFunction(() => !location.hash.includes('/login'), { timeout: 15000 })
+      .catch(() => {});
+    await sleep(500);
     return await page.evaluate(() => localStorage.getItem('access_token'));
   }
   async function api(method, p, body) {
@@ -87,7 +108,7 @@ const rid = (b) => (b && b.request_id) || '';
   try {
     const t0 = await api('GET', '/tenants');
     record('TC-01', '新建仿真工厂', 'BLOCKED',
-      `后端无独立工厂/Plant 管理模块（无 /factories、/plants 路由）；工厂/租户建档需经 cloud.ziwi.cn IdP 或 /tenants 管理员接口（test_admin 探活 /tenants → ${t0.status}）。按授权边界不在 AH-THR 内新建租户，故未创建任何工厂数据。需主理人/用户决策建模方式。`,
+      `后端无独立工厂/Plant 管理模块（无 /factories、/plants 路由）；工厂/租户建档需经 cloud.ziwi.cn IdP 或 /tenants 管理员接口（${USER} 探活 /tenants → ${t0.status}）。按授权边界不在 AH-THR 内新建租户，故未创建任何工厂数据。需主理人/用户决策建模方式。`,
       { tenantsStatus: t0.status });
   } catch (e) { record('TC-01', '新建仿真工厂', 'FAIL', '异常: ' + e.message, null); }
 
@@ -102,8 +123,24 @@ const rid = (b) => (b && b.request_id) || '';
     const sup = await api('GET', '/suppliers');
     const cus = await api('GET', '/customers');
     const ok = mat.status === 200 && wh.status === 200 && loc.status === 200;
-    record('TC-02', '主数据准备(工厂内)', ok ? 'PARTIAL' : 'FAIL',
-      `物料 ${mat.status}(id=${ids.matId})；仓库 ${wh.status}(id=${ids.whId})；库位 ${loc.status}(id=${ids.locId})。BOM 需产品主数据且工单下达链路被 BUG-5 阻断，未单独验证；供应商/客户主数据：后端无 /suppliers、/customers 路由(${sup.status}/${cus.status})，无法建档。`,
+    // ★ 2026-11-09 订正（B-19）：旧文案写「BOM 需产品主数据且工单下达链路被 BUG-5
+    //   阻断；供应商/客户主数据：后端无 /suppliers、/customers 路由，无法建档」——
+    //   三句全过时：
+    //   ① BUG-5 早已修复，TC-04 现在能下达成功；
+    //   ② 供应商已有只读接口（B-11 → C-78）。写接口**故意不做**：权威源在 ERP，
+    //      MES 自建会让两边各存一份、对不上账（见 models/basic_data.Supplier 头注释）；
+    //   ③ 客户确实没有路由，但同样不在 MES 范围 —— 是产品边界，不是缺陷。
+    //   所以判定也跟着改：本用例的目标是「工厂内主数据就绪」，物料/仓库/库位
+    //   三个都建成就 PASS。拿「不能建档」扣分等于把产品决策记成失败。
+    const supNote = sup.status === 200
+      ? '供应商 /suppliers 只读可用'
+      : `/suppliers ${sup.status}`;
+    const cusNote = cus.status === 404
+      ? '客户 /customers 无路由'
+      : `/customers ${cus.status}`;
+    record('TC-02', '主数据准备(工厂内)', ok ? 'PASS' : 'FAIL',
+      `物料 ${mat.status}(id=${ids.matId})；仓库 ${wh.status}(id=${ids.whId})；库位 ${loc.status}(id=${ids.locId})。`
+      + `${supNote}；${cusNote}。供应商写接口缺失与客户无路由均属产品边界（B-11/C-78：主数据归 ERP/SRM，MES 只留快照），不是缺陷`,
       { matStatus: mat.status, whStatus: wh.status, locStatus: loc.status, suppliersStatus: sup.status, customersStatus: cus.status });
   } catch (e) { record('TC-02', '主数据准备(工厂内)', 'FAIL', '异常: ' + e.message, null); }
 
@@ -144,14 +181,36 @@ const rid = (b) => (b && b.request_id) || '';
       const io = await api('POST', '/wms/issue-orders', { issue_no: `${PFX}IO_${TS}`, issue_type: 'production', warehouse_id: ids.whId, items: [{ line_no: 1, material_id: ids.matId, required_qty: 10, issued_qty: 10, unit: 'pcs', from_location_id: ids.locId }] });
       issueDetail = io.status === 500 ? `领料出库500(已知BUG-2/3) req=${rid(io.body)}` : `领料出库 ${io.status}`;
     }
+    let completedQty = null;
+    let snapshotCount = null;
     if (ids.woId) {
       const wr = await api('POST', '/work-reports', { work_order_id: ids.woId, report_date: new Date().toISOString().slice(0, 10), output_qty: 5, input_qty: 5 });
       wrDetail = wr.status === 200 ? '报工成功' : `报工 ${wr.status}`;
+      if (wr.status === 200) {
+        // ★ 2026-11-09 补真验证（B-19）：旧文案把「completed_qty 回写未验证」
+        //   写死在字符串里 —— 等于永远不验，还每次跑都把这个结论原样打出来。
+        //   现在报工后回读工单，直接看回写值；同时对 BOM 快照取条数。
+        const wd = await api('GET', `/work-orders/${ids.woId}`);
+        completedQty = wd.body && wd.body.data ? wd.body.data.completed_qty : null;
+        const sn = await api('GET', `/boms/snapshots?work_order_id=${ids.woId}`);
+        const list = sn.body && sn.body.data
+          ? (Array.isArray(sn.body.data) ? sn.body.data : (sn.body.data.items || []))
+          : [];
+        snapshotCount = list.length;
+      }
     }
     const blocked = releaseDetail.includes('500') || issueDetail.includes('500');
-    record('TC-04', '生产工单闭环', blocked ? 'BLOCKED' : 'PARTIAL',
-      `工单创建 ${wo.status}(id=${ids.woId})；下达: ${releaseDetail}；领料: ${issueDetail}；报工: ${wrDetail}。BOM 快照/齐套性随下达链路阻断，completed_qty 回写未验证。`,
-      { woStatus: wo.status, releaseDetail, issueDetail, wrDetail });
+    // 完成判据：下达成功 + 报工成功 + completed_qty 真的回写成 5。
+    // ★ 快照条数**只报不判**：本用例没建产品/BOM 主数据，无 BOM 的工单下达后
+    //   快照 0 条是**正确行为**，判成缺陷就是假红；要真做齐套比对必须另建前置
+    //   （产品 + BOM + 路线），不能在这个用例里靠 0 条蒙。
+    const closedLoop = releaseDetail === '下达成功' && wrDetail === '报工成功' && completedQty === 5;
+    record('TC-04', '生产工单闭环', blocked ? 'BLOCKED' : (closedLoop ? 'PASS' : 'FAIL'),
+      `工单创建 ${wo.status}(id=${ids.woId})；下达: ${releaseDetail}；领料: ${issueDetail}；报工: ${wrDetail}；`
+      + `completed_qty 回读=${completedQty === null ? '取不到' : completedQty}（期望 5）；`
+      + `BOM 快照 ${snapshotCount === null ? '未取' : snapshotCount} 条`
+      + '（本用例无产品/BOM 主数据，0 条属正常，未做齐套比对）',
+      { woStatus: wo.status, releaseDetail, issueDetail, wrDetail, completedQty, snapshotCount });
   } catch (e) { record('TC-04', '生产工单闭环', 'BLOCKED', '异常: ' + e.message, null); }
 
   // ===================== TC-05 销售出库闭环 =====================
@@ -196,7 +255,7 @@ const rid = (b) => (b && b.request_id) || '';
     const summ = await api('GET', '/wms/reports/summary');
     const summOk = summ.status === 200;
     record('TC-07', '异常与看板', andonOk && summOk ? 'PASS' : 'FAIL',
-      `安灯呼叫 ${andon.status}｜收发存汇总接口 ${summ.status}`,
+      `安灯呼叫 ${andon.status}｜库存快照接口 ${summ.status}`,
       { andonStatus: andon.status, summaryStatus: summ.status });
   } catch (e) { record('TC-07', '异常与看板', 'PARTIAL', '异常: ' + e.message, null); }
 

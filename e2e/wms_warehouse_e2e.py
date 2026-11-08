@@ -517,7 +517,7 @@ def main() -> int:
     r = c.get(f"{API}/wms/reports/summary")
     rows = data(r) if isinstance(data(r), list) else []
     row = next((x for x in rows if x.get("material_code") == mat_code), {})
-    report("W8-4 收发存汇总：现存 100 / 可用 100（期初 0 收 200 发 100）",
+    report("W8-4 库存快照：现存 100 / 可用 100（快照口径，不含期初/收/发）",
            r.status_code == 200 and float(row.get("current_qty") or -1) == 100.0
            and float(row.get("available_qty") or -1) == 100.0,
            f"HTTP {r.status_code} current={row.get('current_qty')} avail={row.get('available_qty')}")
