@@ -18,6 +18,9 @@ R2 月报：``rows`` 各项合计 == 顶层汇总（五项 + 工单数）
 R3 月报 == 该月日报之和（跨层，最容易在区间边界上错）
 R4 半年合计 == 六个月之和 == 133 个工作日之和
 R5 休息日零产出（工厂日历判 rest/holiday 的日子不得有报工）
+    ★ 无例外白名单。2026-07-12 曾报红 40 件，取证后确认是 E2E 探针用历史
+      日期补录的 2 张 ``WO_20261108…_1`` 工单，清理探针残留后判据一行未改
+      自然转绿；加「存量例外挂账」反而会把探针垃圾固化成业务事实（假绿）。
 R6 完工口径 ≤ 工序流转口径（完工只认末道工序，超过必然是口径串了）
 R7 派生指标（达产率 / 报废率 / 单台工时）落在物理合理区间
     R7a 达产率**只判下限**：cap 是按订单节拍估出来的理论能力，不是硬天花板
@@ -29,8 +32,12 @@ R9 人工工时 ≠ 设备机时（有产出的月份两者精确相等 = 播种
 D0 在真正抓数前先用一组负向用例把 R7a 判据钉死：零产出、负产出、
 cap≤0、NaN/Inf、非数值、下限调高后达不到，全部必须 FAIL；
 100.1%（staging 实测）与 150% 必须 PASS。
+D1 用 9 条用例把 R5 钉死：休息日有产出、字符串数字、读数 None/NaN/非 dict
+全部必须报违规；工作日有产出、休息日零产出必须不报。
+D2 用 4 个日历哨兵 + 两种退化注入（is_work 恒真 / 恒假）证明日历真源被拆时
+哨兵必红 —— 否则 R5 会跟着恒绿。
 **没有「预期 FAIL」的用例就没有闸** —— 若有人把判据改成恒真，
-这些预期 FAIL 会集体翻绿，D0 立刻报红。可用 ``--self-test`` 离线单跑。
+这些预期 FAIL 会集体翻绿，自证立刻报红。可用 ``--self-test`` 离线单跑。
 
 跑法（staging，数据在那里；本地库已被清空）::
 
@@ -135,6 +142,86 @@ def attainment_ok(rate, cap=None, min_pct: float = 0.0) -> tuple[bool, str]:
     return True, "达产"
 
 
+def rest_day_violations(daily: dict, is_rest) -> list[str]:
+    """R5 判据：返回「工厂日历判 rest/holiday 却仍有完工产出」的日期列表。
+
+    ★ 这里**不许**出现白名单 / 存量例外 / 容差。休息日只由 ``is_rest``
+      （``_factory_calendar.is_work`` 取反）这一个真源决定，产出只认日报
+      ``total_output``。任何"这一天特殊"的口子一开，闸就不再是闸。
+
+    2026-07-12 曾报红 40 件。取证：两条报工 ``operation_code=None``、各 20 件，
+    全部挂在 ``WO_20261108…_1`` 这类 E2E 探针工单上（探针拿历史日期补录），
+    **不是加班日、不是存量业务数据**。清掉 staging 探针残留后本判据一行未改
+    就自然转绿（未改代码实测 ``EXIT=0``、37/0）。若当时加一条「存量例外挂账」，
+    等于把探针垃圾写成业务事实 —— 那是最典型的一种假绿。
+
+    「读数没拿到」也计为违规（None / 布尔 / 非数值 / NaN/Inf）：原判据用
+    ``r.get("total_output")`` 的 truthy，接口坏到返回 None 时会静默当零产出，
+    整条闸在故障期间恒绿。宁可报错也不许空真。
+    """
+    hits: list[str] = []
+    for iso, rep in daily.items():
+        try:
+            rest = bool(is_rest(date.fromisoformat(iso)))
+        except (ValueError, TypeError, AttributeError):
+            hits.append(iso)          # 日期/日历真源坏了，不许静默跳过
+            continue
+        if not rest:
+            continue
+        raw = rep.get("total_output") if isinstance(rep, dict) else None
+        if isinstance(raw, bool) or raw is None:
+            hits.append(iso)
+            continue
+        try:
+            q = float(raw)
+        except (TypeError, ValueError):
+            hits.append(iso)
+            continue
+        if q != q or abs(q) == float("inf"):
+            hits.append(iso)
+            continue
+        if q > 0:
+            hits.append(iso)
+    return sorted(hits)
+
+
+# 日历哨兵是**测试夹具**，不是业务结论：日历规则一旦变更，必须有人复核 R5
+# 口径再更新这张表，不许为了让闸变绿而改它。
+CALENDAR_SENTINELS = (
+    ("2026-07-12", False, "周日 rest"),
+    ("2026-07-13", True,  "周一 workday"),
+    ("2026-10-01", False, "国庆 holiday"),
+    ("2026-05-01", False, "劳动节 holiday"),
+)
+
+
+def calendar_check(is_work_fn) -> tuple[int, list[str]]:
+    """纯函数：用哨兵日期检验日历真源，返回 (失败数, 明细)。"""
+    fails: list[str] = []
+    for iso, want, why in CALENDAR_SENTINELS:
+        got = bool(is_work_fn(fc.expected_type(date.fromisoformat(iso))))
+        if got != want:
+            fails.append(f"{iso} {why}: 期望 {want} 实得 {got}")
+    return len(fails), fails
+
+
+def calendar_selftest() -> None:
+    """D2 日历真源自证：防止有人把 is_work 改成恒真，让 R5 永远绿。"""
+    print("\nD2 工厂日历真源自证（哨兵 + 退化注入）")
+    n, detail = calendar_check(fc.is_work)
+    (ok if n == 0 else bad)(
+        "D2 真源哨兵", "4 个哨兵全对" if n == 0 else "; ".join(detail))
+    # ★ 负向自证：日历真源被拆时，哨兵必须报红 —— 否则 R5 会跟着恒绿。
+    n_true, _ = calendar_check(lambda t: True)
+    (ok if n_true == 3 else bad)(
+        "D2 退化注入：is_work 恒真必须被哨兵拦下",
+        f"恒真日历应报 3 红，实得 {n_true}")
+    n_false, _ = calendar_check(lambda t: False)
+    (ok if n_false == 1 else bad)(
+        "D2 退化注入：is_work 恒假必须被哨兵拦下",
+        f"恒假日历应报 1 红，实得 {n_false}")
+
+
 def selftest() -> None:
     """D0 判据自证：没有负向用例 = 没有闸。
 
@@ -166,6 +253,38 @@ def selftest() -> None:
     for name, rate, cap, min_pct, expect in cases:
         got, why = attainment_ok(rate, cap=cap, min_pct=min_pct)
         (ok if got == expect else bad)(f"D0 {name}", f"期望 {expect} 实得 {got}（{why}）")
+
+    # ── D1 R5 判据自证 ──────────────────────────────────────────
+    # 「★ 必须报违规」的 5 条是本节的价值：把 rest_day_violations 改成恒返回
+    # 空列表、或加一条例外白名单，它们会集体翻绿，D1 立刻报红。
+    print("\nD1 休息日零产出判据自证（负向用例）")
+    real_rest = lambda d: not fc.is_work(fc.expected_type(d))
+    d1 = [
+        # name,                                  daily,                                  is_rest,    期望违规数
+        ("工作日有产出不算违规",
+         {"2026-07-13": {"total_output": 10}},  real_rest, 0),
+        ("休息日零产出算正常",
+         {"2026-07-12": {"total_output": 0}},   real_rest, 0),
+        ("★ 休息日有 20 件产出必须报违规",
+         {"2026-07-12": {"total_output": 20}},  real_rest, 1),
+        ("两天休息日各有产出必须报 2 条",
+         {"2026-07-11": {"total_output": 5},
+          "2026-07-12": {"total_output": 20}},  real_rest, 2),
+        ("★ 字符串数字也要拦",
+         {"2026-07-12": {"total_output": "20"}}, real_rest, 1),
+        ("★ 读数 None 不许空真",
+         {"2026-07-12": {"total_output": None}}, real_rest, 1),
+        ("★ 读数 NaN 不许空真",
+         {"2026-07-12": {"total_output": float("nan")}}, real_rest, 1),
+        ("★ 读数坏成非 dict 不许空真",
+         {"2026-07-12": None}, real_rest, 1),
+        ("退化注入：日历恒假会让违规消失（由 D2 哨兵兜住）",
+         {"2026-07-12": {"total_output": 20}},  lambda d: False, 0),
+    ]
+    for name, daily, is_rest, expect in d1:
+        got = len(rest_day_violations(daily, is_rest))
+        (ok if got == expect else bad)(f"D1 {name}", f"期望违规 {expect} 实得 {got}")
+    calendar_selftest()
 
 
 def login() -> dict:
@@ -256,9 +375,9 @@ def main() -> int:
                               f" · 报废 {round(half_day['total_scrap'])}")
 
     # ── R5 休息日零产出 ──
+    # ★ 判据抽到 rest_day_violations() 里并被 D1/D2 自证；此处不放任何例外。
     print("\nR5 休息日零产出")
-    viol = [i for i, r in daily.items()
-            if r.get("total_output") and not fc.is_work(fc.expected_type(date.fromisoformat(i)))]
+    viol = rest_day_violations(daily, lambda d: not fc.is_work(fc.expected_type(d)))
     zero_days = [i for i, r in daily.items() if not r.get("total_output")]
     (ok if not viol else bad)(
         "R5 休息日无产出",
@@ -325,7 +444,9 @@ def main() -> int:
     # ── 落盘 ──
     out_doc = {
         "tenant": TENANT, "api": API, "start": str(START), "end": str(END),
-        "calendar": {"days": len(days), "workdays": len(workdays)},
+        "calendar": {"days": len(days), "workdays": len(workdays),
+                     "rest_day_policy": "no_exceptions",
+                     "rest_day_violations": viol},
         "half_year": {k: round(v, 2) for k, v in half_day.items()},
         "derived": {
             "capacity_basis": {"per_shift": 2, "wo_per_unit": 3, "cap": cap},
