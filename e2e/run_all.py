@@ -24,6 +24,7 @@
     --skip-pg-literals 不跑 PG 方言闸（boolean 列写 0/1、Integer 列写 true/false）
     --skip-ui-labels 不跑界面枚举中文化闸（模板裸渲染 status/type 原码）
     --skip-drilldown 不跑驾驶舱下探契约闸（KPI 取数集合 ↔ 下探 URL ↔ 目标页读 query）
+    --skip-ui-contract 不跑 UI 契约闸（内联 style / 死 Tailwind / 自造断点 / 裸动效时长）
 
 跑完探针后会再跑一次**覆盖棘轮**（`scripts/coverage_matrix.py --check`）：
 探针全绿只说明"跑到的都是好的"，说明不了"该跑的都跑到了" —— 本轮 17 个缺陷
@@ -46,6 +47,16 @@ Integer 列写 true/false 这类写法 **SQLite 全接、PG 全拒**，本地 py
 印出来不报错、不掉接口、外面套了 van-tag 颜色还是对的，只是车间看到英文。
 `MAP[x] || x.status` 这种"看起来做了中文化"的兜底更阴：字典漏一个值就回显
 原文，脏数据于是伪装成正常值。
+
+最后一档是 **UI 契约闸**（`scripts/check_ui_contract.py`）：前六道闸管的是
+"数据对不对"，没有一道管"设计值有没有漏进模板"。而内联 style、失效 Tailwind 类、
+自造断点、裸动效时长这四件事**全都不会报错** —— 页面照常渲染，只是令牌层被绕过。
+
+★ 这道闸本来就有，但**从没进过本流水线**。2026-11-09 实测：基线停在
+  `inline_style = 306` / 其余四项 0，实际已漂到 311 / 3 / 2 / 3，红了很久没人知道。
+  「看起来在守、实际不生效」比没有闸更糟 —— 它会消耗掉「我们有闸」这份信任。
+  当日修好并接入，同时补齐 `media_breakpoint` / `raw_transition` / `legacy_term`
+  三项的正负向自证（此前它们只有计数、没有判据用例）。
 """
 
 import argparse
@@ -541,6 +552,9 @@ def main():
                     help="跳过界面枚举中文化闸（模板裸渲染 status/type 原码）")
     ap.add_argument("--skip-drilldown", action="store_true",
                     help="跳过驾驶舱下探契约闸（KPI 取数集合 ↔ 下探 URL ↔ 目标页读 query）")
+    ap.add_argument("--skip-ui-contract", action="store_true",
+                    help="跳过 UI 契约闸（内联 style / 死 Tailwind / 自造断点 / 裸动效时长 / "
+                         "KpiCard 三态 / picker 模型值）")
     ap.add_argument("--skip-judge-selftest", action="store_true",
                     help="跳过判据自证（run_all 自己的 PASS/FAIL/SKIP 判定逻辑的正反用例）")
     ap.add_argument("--selftest-judge", action="store_true",
@@ -770,8 +784,41 @@ def main():
         print(((dr.stdout or "") + (dr.stderr or "")).rstrip())
         drill_fail = dr.returncode != 0
 
+    # ── UI 契约闸 ───────────────────────────────────────────────────
+    # 前六道闸全在管「数据对不对」：跑到没跑到、名字对不对、日期口径、产能、
+    # 方言、界面文字。**没有一道管「设计值有没有漏进模板」**。
+    # 而内联 style / 失效 Tailwind 类 / 自造断点 / 裸动效时长这四件事全都
+    # 不报错 —— 页面照常渲染，只是令牌层被绕过，改一次主题就要全站 grep。
+    #
+    # ★ 这道闸早就写好了，但**从没进过本流水线**。2026-11-09 实测：基线停在
+    #   `inline_style = 306`、其余四项 0，实际已漂到 311 / 3 / 2 / 3。
+    #   它红了很久没人知道，`ui_contract_baseline.json` 停在 306 让人以为在守。
+    #   「看起来在守、实际不生效」比没有闸更糟 —— 它会消耗掉「我们有闸」的信任。
+    #
+    # 纯静态（读 frontend/src，不连库不起服务，约 2 秒），基线只拦新增。
+    # 闸内部会先跑 28 条判据正负向自证，自证不过就直接判失败、结论不予采信。
+    uic_fail = False
+    if not a.skip_ui_contract:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        uic = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_ui_contract.py")],
+            capture_output=True, text=True, cwd=root)
+        uout = ((uic.stdout or "") + (uic.stderr or "")).rstrip()
+        # 自证那 28 行对门禁是噪音（每次跑都一模一样），只留结论与计数；
+        # 真失败时判据用例才是关键 —— 那时全量打印。
+        if uic.returncode != 0:
+            print(uout)
+        else:
+            kept = [ln for ln in uout.splitlines()
+                    if not ln.lstrip().startswith(("[ok]", "✓ 自证"))]
+            print("\n".join(kept))
+            print("  · 判据自证 28/28 通过（明细见 scripts/check_ui_contract.py --self-test）")
+        uic_fail = uic.returncode != 0
+
     return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
-                 or cap_fail or pg_fail or ui_fail or drill_fail or judge_fail) else 0
+                 or cap_fail or pg_fail or ui_fail or drill_fail or uic_fail
+                 or judge_fail) else 0
 
 
 if __name__ == "__main__":

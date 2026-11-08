@@ -605,7 +605,11 @@ onMounted(() => {
   grid-template-columns: 1fr 1fr;
 }
 
-@media (max-width: 480px) {
+/* ★ 断点取 UE §4.2 分档真源（600 / 768 / 1024），不写自造值。
+   原来这里写 `max-width: 480px` —— 480 不在允许集里，会让全站断点碎片化：
+   同一套栅格在 481~600 之间按两列排，而那时正是窄屏最容易挤爆的区间。
+   抬到 600 后与「手机 / 平板」分界一致，且方向上只提前收成一列（不会溢出）。 */
+@media (max-width: 600px) {
   .op-env-pair {
     grid-template-columns: 1fr;
   }

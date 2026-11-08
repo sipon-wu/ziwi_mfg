@@ -21,11 +21,18 @@ B. `dead_tailwind`       失效 Tailwind 类名数（**目标 0**）
 C. `min_width_480`       `min-width: 480px` 残留（**目标 0**，UE-04）
 D. `touch_target`        触屏热区达标（静态断言令牌存在 + 运行时达标率可选）
 E. `raw_transition`      `.vue` 内裸 `transition: …\d+m?s` / `cubic-bezier(`（**目标 0**）
-F. `media_breakpoint`    `@media (min|max)-width` 字面量必须 ∈ {600, 768, 1024}
+F. `media_breakpoint`    `@media (min|max)-width` 字面量必须 ∈ {600, 768, 1024}（**目标 0**）
 G. `inline_statuslabel`  页面内声明 `statusLabel` / `statusColor` / `RESULT_MAP`
-H. `legacy_term`         「维护」字样（`config/term.ts` 白名单豁免）
+H. `legacy_term`         「维护」字样（`config/term.ts` 白名单豁免；**注释行豁免**，见 §H）
 I. `kpi_state_missing`   `<KpiCard>` 未声明 `state`（**目标 0**，见 §I 注释）
 J. `picker_unbound`      `<van-picker>` 未绑 `v-model`/`:model-value`（**目标 0**，见 §J 注释）
+
+★ 2026-11-09（B-27）：这道闸此前**从没进过 `run_all.py`** —— 基线停在
+  `inline_style = 306`、其余四项 0，而实测已经漂到 311 / 3 / 2 / 3。
+  它红了很久没人知道，等于「看起来在守、实际不生效」，比没有闸更糟：
+  它会消耗「我们有闸」这份信任。当日已修好并接入流水线，成为第 8 道闸。
+  另：`media_breakpoint` / `raw_transition` / `legacy_term` 三项本轮补了纯函数
+  与正负向自证 —— 之前它们只有计数没有判据用例，改坏了没人能发现。
 
 ratchet 策略（架构 §8.5）
 ------------------------
@@ -265,29 +272,63 @@ def check_touch_target(report: Report) -> None:
 
 
 # ── E. 裸动效时长 ────────────────────────────────────────────
+def raw_transition_hits(text: str) -> list[tuple[int, str]]:
+    """找出裸时长 / 裸 `cubic-bezier` 的动效声明。
+
+    ★ 这是**设计值**而不是数据值：`transition: width 0.3s ease` 里的 300ms 是
+      设计决策，必须来自 `styles/ziwi-motion.css` 的令牌。写成字面量以后，
+      改一次动效节奏要全站 grep —— 而 `cubic-bezier(...)` 干脆没法统一。
+
+    2026-11-09 实测：基线（`8abe86c`）之后 `CockpitKpi.vue` 新增 2 处裸时长，
+    而闸没进 `run_all`，所以从 0 涨到 2 无人知晓。
+
+    纯函数，供 `--self-test` 复用。
+    """
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if is_comment(line):
+            continue
+        if RAW_TRANSITION.search(line) or RAW_BEZIER.search(line):
+            hits.append((lineno, line.strip()[:110]))
+    return hits
+
+
 def check_raw_transition(report: Report) -> None:
     for path in iter_frontend_files((".vue",)):
-        for lineno, line in enumerate(read_lines(path), 1):
-            if is_comment(line):
-                continue
-            if RAW_TRANSITION.search(line):
-                report.add("raw_transition", path, lineno, line.strip()[:110])
-            elif RAW_BEZIER.search(line):
-                report.add("raw_transition", path, lineno, line.strip()[:110])
+        for lineno, snippet in raw_transition_hits("\n".join(read_lines(path))):
+            report.add("raw_transition", path, lineno, snippet)
 
 
 # ── F. 断点字面量 ────────────────────────────────────────────
+def breakpoint_hits(text: str) -> list[tuple[int, str]]:
+    """找出不在允许集里的 `@media` 宽度字面量。
+
+    ★ 只认 `@media … (min|max-width: Npx)` 的**完整生效形态**。注释里提到
+      「原来写 max-width: 480px」不带 `@media` 前缀，不会被命中 —— 这是有意的：
+      断点碎片化的危害在生效的规则，不在说明文字。
+
+    ★ 为什么必须收敛到 {600, 768, 1024}：自造断点（480 / 720 / 900）会让同一套
+      栅格在不同页面按不同分界折叠。用户把窗口从 920 拖到 900，驾驶舱的今日矩阵
+      突然从 5 列变 2 列，而旁边另一页毫无反应 —— 这叫「没有断点体系」。
+      2026-11-09 实测 3 处自造值：`OperationList.vue:608` 480、
+      `Cockpit.vue:564` 900、`Cockpit.vue:669` 720，均已收敛到允许集。
+
+    纯函数，供 `--self-test` 复用。
+    """
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if is_comment(line):
+            continue
+        for m in MEDIA_WIDTH.finditer(line):
+            if int(m.group(1)) not in ALLOWED_BREAKPOINTS:
+                hits.append((lineno, f"{m.group(0)}（允许 {sorted(ALLOWED_BREAKPOINTS)}）"))
+    return hits
+
+
 def check_media_breakpoint(report: Report) -> None:
     for path in iter_frontend_files((".vue", ".css")):
-        for lineno, line in enumerate(read_lines(path), 1):
-            for m in MEDIA_WIDTH.finditer(line):
-                if int(m.group(1)) not in ALLOWED_BREAKPOINTS:
-                    report.add(
-                        "media_breakpoint",
-                        path,
-                        lineno,
-                        f"{m.group(0)}（允许 {sorted(ALLOWED_BREAKPOINTS)}）",
-                    )
+        for lineno, snippet in breakpoint_hits("\n".join(read_lines(path))):
+            report.add("media_breakpoint", path, lineno, snippet)
 
 
 # ── G. 页面内联状态字典 ──────────────────────────────────────
@@ -305,14 +346,37 @@ def check_inline_statuslabel(report: Report) -> None:
 
 
 # ── H. 旧术语 ────────────────────────────────────────────────
+def legacy_term_hits(text: str) -> list[tuple[int, str]]:
+    """找出**用户可见文案**里的旧术语「维护」。
+
+    ★ 为什么必须跳过注释行：术语表的对象是界面上印出来的字，不是源码里的汉语。
+      `config/term.ts` 纠的是两类真实业务标签 —— `wo_type=maintenance` 的
+      「维护」→「维修」、`equipment.status=maintenance` 的「维护中」→「保养中」。
+      而注释里写「这个入口是上面那条断链的维护点」「工位页的用途是维护产能参数」，
+      这里的「维护」是普通动词。一并拦下只会逼人把注释写得更绕，闸的收益变负。
+
+    2026-11-09 实测依据：3 条命中里 2 条正是注释
+    （`ProductList.vue:66`、`WorkCenterList.vue:67`），只有
+    `ReportView.vue:302` 的「日历未维护」是真·界面文案（已改「日历未配置」）。
+    判据此前没有这条豁免，属于**漏项**而不是「存量偏差」。
+
+    纯函数，供 `--self-test` 复用。
+    """
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if is_comment(line):
+            continue
+        if LEGACY_TERM.search(line):
+            hits.append((lineno, line.strip()[:110]))
+    return hits
+
+
 def check_legacy_term(report: Report) -> None:
     for path in iter_frontend_files((".vue", ".ts")):
-        relpath = rel(path)
-        if any(relpath.endswith(w) for w in TERM_WHITELIST):
+        if any(rel(path).endswith(w) for w in TERM_WHITELIST):
             continue
-        for lineno, line in enumerate(read_lines(path), 1):
-            if LEGACY_TERM.search(line):
-                report.add("legacy_term", path, lineno, line.strip()[:110])
+        for lineno, snippet in legacy_term_hits("\n".join(read_lines(path))):
+            report.add("legacy_term", path, lineno, snippet)
 
 
 # ── I. KpiCard 必须显式声明 state ────────────────────────────────
@@ -460,6 +524,38 @@ def self_test() -> int:
          '<van-picker :columns="c" data-model-x="1" />', 1),
         ("J 一个文件两个 picker 只绑一处必须报第二个", picker_unbound,
          '<van-picker v-model="v" :columns="c" />\n<van-picker :columns="c" />', 1),
+        # ── E. 裸动效时长（2026-11-09 补：原来 0→2 漂了却没人知道）──
+        ("E 裸时长必须报", raw_transition_hits,
+         ".a { transition: width 0.3s ease; }", 1),
+        ("E 裸 bezier 必须报", raw_transition_hits,
+         ".a { transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); }", 1),
+        ("E 用运动令牌不许报", raw_transition_hits,
+         ".a { transition: width var(--ziwi-motion-layer-duration)"
+         " var(--ziwi-motion-layer-easing); }", 0),
+        ("E 注释里提到的时长不许报", raw_transition_hits,
+         "/* 原来是 width 0.3s ease */", 0),
+        # ── F. 断点字面量（2026-11-09 补：480 / 900 / 720 三处自造值）──
+        ("F 自造断点必须报", breakpoint_hits,
+         "@media (max-width: 480px) { .a { color: red; } }", 1),
+        ("F 允许集内断点不许报", breakpoint_hits,
+         "@media (max-width: 768px) { .a { color: red; } }", 0),
+        ("F min-width 自造值同样受管", breakpoint_hits,
+         "@media (min-width: 1280px) { .a { color: red; } }", 1),
+        # 退化注入：若判据退化成「出现 px 宽度就报」，普通宽度声明会误伤；
+        # 若判据退化成「扫全文出现 @media 就报」，注释也会误伤。
+        ("F 不带 @media 的宽度不许误报", breakpoint_hits,
+         ".a { max-width: 480px; }", 0),
+        ("F 注释里的断点不许报", breakpoint_hits,
+         "/* 原来写 @media (max-width: 480px) */", 0),
+        # ── H. 旧术语（2026-11-09 补：3 条命中里 2 条是注释，属判据漏项）──
+        ("H 界面文案里的旧术语必须报", legacy_term_hits,
+         ":value=\"x ? '天' : '日历未维护'\"", 1),
+        ("H 行注释里的旧术语不许报", legacy_term_hits,
+         "// 这里是维护入口", 0),
+        ("H 块注释续行里的旧术语不许报", legacy_term_hits,
+         "/* 说明\n * 维护点在此\n */", 0),
+        ("H 无旧术语不许误报", legacy_term_hits,
+         '<div class="x">hello</div>', 0),
     ]
 
     bad = 0

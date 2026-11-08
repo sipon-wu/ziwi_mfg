@@ -224,7 +224,7 @@ watch(drillDate, (v) => {
     </van-nav-bar>
 
     <!-- 驾驶舱「生产报表」带日期下探：把来源日期显式写出来，别靠默认值巧合对齐 -->
-    <van-cell-group v-if="drillDate" inset style="margin:8px">
+    <van-cell-group v-if="drillDate" inset class="rv-block">
       <van-cell title="驾驶舱下探 · 生产日报" :label="drillDate">
         <template #value>
           <van-button size="mini" plain type="primary" @click="clearDrillDate">清除</van-button>
@@ -232,9 +232,9 @@ watch(drillDate, (v) => {
       </van-cell>
     </van-cell-group>
 
-    <van-cell-group inset style="margin:8px">
+    <van-cell-group inset class="rv-block">
       <van-radio-group v-model="mode" direction="horizontal" @change="switchMode">
-        <van-radio name="daily" style="margin-right:16px">日报</van-radio>
+        <van-radio name="daily" class="rv-radio-gap">日报</van-radio>
         <van-radio name="monthly">月报</van-radio>
       </van-radio-group>
       <van-field
@@ -296,10 +296,10 @@ watch(drillDate, (v) => {
       </div>
 
       <!-- 工作日/日均：单独一行，因为它是「日历 × 产出」的交叉口径 -->
-      <van-cell-group inset style="margin:8px">
+      <van-cell-group inset class="rv-block">
         <van-cell
           title="当月工作日"
-          :value="workdaysInMonth ? `${workdaysInMonth} 天` : '日历未维护'"
+          :value="workdaysInMonth ? `${workdaysInMonth} 天` : '日历未配置'"
         />
         <van-cell
           title="日均完工"
@@ -308,7 +308,7 @@ watch(drillDate, (v) => {
       </van-cell-group>
 
       <!-- 无路线提示：没有缺路线的单时整块不渲染，不占版面 -->
-      <van-cell-group v-if="unroutedOrders > 0" inset style="margin:8px">
+      <van-cell-group v-if="unroutedOrders > 0" inset class="rv-block">
         <van-cell
           title="缺路线的报工（未计入完工）"
           :value="`${unroutedOrders} 张单 / ${fmt(unroutedOutput, '件')}`"
@@ -363,7 +363,7 @@ watch(drillDate, (v) => {
         </div>
       </div>
 
-      <van-cell-group v-if="mode === 'monthly'" inset style="margin:8px">
+      <van-cell-group v-if="mode === 'monthly'" inset class="rv-block">
         <van-cell
           title="统计口径"
           :label="`${monthly?.year} 年 ${monthly?.month} 月 · 完工只认末道工序，流转为全工序累计`"
@@ -383,6 +383,13 @@ watch(drillDate, (v) => {
 </template>
 
 <style scoped>
+/* 报表分区之间的呼吸。原来这 6 处写成内联 `style="margin:8px"` —— 设计值直接
+   进了模板，UI 契约闸（`scripts/check_ui_contract.py` 项 A）只放行「纯 CSS 变量
+   注入」一种内联写法，设计值一律拦。改成语义类后调间距只需动这里一处。
+   `margin` 而非 `margin-block`：故意覆盖 `van-cell-group inset` 自带的左右 padding。 */
+.rv-block { margin: 8px; }
+.rv-radio-gap { margin-right: 16px; }
+
 .ziwi-report { padding-bottom: 24px; }
 
 .ziwi-kpi-grid {

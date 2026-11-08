@@ -561,7 +561,11 @@ onMounted(load)
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--ziwi-gap-sm);
 }
-@media (max-width: 900px) {
+/* ★ 断点收敛到 UE §4.2 分档真源（600 / 768 / 1024）。
+   原来写 900 —— 自造值，且 900 与 1024 之间只有 124px，五块等分时每块已不足
+   190px，"工序流转""人工工时"这类四字标签会换两次行。取 768（平板竖屏）后
+   五列只在真·大屏上出现，方向上是**提前**转两列，不会挤压。 */
+@media (max-width: 768px) {
   .today__blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .today__more {
@@ -666,7 +670,9 @@ onMounted(load)
 .cockpit__foot p { margin: 0 0 var(--ziwi-gap-2xs); }
 .cockpit__foot b { color: var(--ziwi-text-secondary); font-weight: 500; }
 
-@media (max-width: 720px) {
+/* 同上：720 → 768，与上面那条同档。两条规则各管各的网格，故意不合并 ——
+   合并要跨 100 行搬代码，收益只是省一次判定。 */
+@media (max-width: 768px) {
   .cockpit__grid { grid-template-columns: 1fr; }
   .today__items { gap: var(--ziwi-gap-lg); }
 }

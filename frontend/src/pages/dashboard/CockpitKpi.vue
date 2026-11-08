@@ -139,7 +139,10 @@ const pct = computed(() => {
 }
 
 /* ★ 有下探出口才给指针与聚焦样式；纯展示卡保持安静、不可聚焦。 */
-.ck--link { cursor: pointer; transition: filter .15s ease; }
+/* ★ 动效只走令牌（`styles/ziwi-motion.css`），不写裸时长 / 裸 cubic-bezier。
+ * 原为裸 150ms ease → 改 result 档（180ms），与原时长同量级。
+ */
+.ck--link { cursor: pointer; transition: filter var(--ziwi-motion-result-duration) var(--ziwi-motion-result-easing); }
 .ck--link:hover { filter: brightness(0.965); }
 .ck--link:focus-visible { outline: 2px solid var(--ziwi-primary); outline-offset: 2px; }
 
@@ -210,11 +213,12 @@ const pct = computed(() => {
   background: var(--ck-track);
   overflow: hidden;
 }
+/* ★ 进度条填充同样只走令牌。裸 300ms ease → layer 档（240ms），同量级。 */
 .ck__fill {
   height: 100%;
   background: var(--ck-tone);
   border-radius: 3px;
-  transition: width 0.3s ease;
+  transition: width var(--ziwi-motion-layer-duration) var(--ziwi-motion-layer-easing);
 }
 .ck--normal .ck__fill { background: var(--ziwi-primary); }
 .ck__ratio-text {

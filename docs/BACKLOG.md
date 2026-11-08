@@ -31,7 +31,7 @@
 | B-24 | ~~**驾驶舱与车间大屏两套 KPI 视觉**~~ **已闭 → C-86**（真问题是三态语义不是视觉） | `CockpitKpi.vue`（`ck` 样式）与 `WorkshopScreen.vue` 复用的 `components/KpiCard.vue` 都吃 `KpiState`，布局/配色/三态表现各一套 | 同一指标两个屏长得不一样；#73 的下探契约闸只覆盖驾驶舱那套 | 两个组件在不同迭代各自建成，没有收敛 | 见 §五：抽一份 KPI 视觉真源、两边只传 props；改造必须同步跑 `check_drilldown_contract.py` 与下探 E2E |
 | B-25 | ~~**`van-field` 绑定写法混用**~~ **已闭 → C-87**（`:value` 是真缺陷不是风格） | 旧项写的 `:value` 已不存在；实测 `AdvancedSearchPanel.vue` 同一文件里 `:model-value`（197/205 行）与 `v-model`（216/219/225/228 行）并存，`ZiwiQtyField.vue` 用 `:model-value` | 值回显与输入事件两套语义混在一个表单里，改一处容易漏另一处；Vant4 下 `:value` 会静默不生效 | 历次改造只改了出问题的那几行，没做全量收敛 | 见 §五：统一 `:model-value` + `@update:model-value`，补静态闸禁 `:value` 与同文件混用；纯前端低风险 |
 | B-26 | ~~**`data_collection_service.py` 死代码**~~ **已闭 → C-88**（确认是过期副本，按删除处理） | 3087 字节，`DataCollectionService` 全仓零引用；`scripts/check_contracts.py::DEAD_CODE` 每轮打印 11 处命中，`deliverables/mfg1-coverage-validation-report-20261103.md` 第 183 行记着方法名与仓储实际方法全对不上 | 有人接线时会连环 AttributeError；一直留着也让契约报告长期带一条噪音 | 早期骨架服务，`api/data_collection.py` 后来直接用 repo 打 SQL | 见 §五：二选一——删文件并从 `DEAD_CODE` 移除，或接线并修方法名；先确认 M12 数据采集还需不需要 service 层 |
-| B-27 | **UI 契约闸（`check_ui_contract.py`）已经红了很久，而且没进 `run_all`** | 2026-11-08 实跑：`media_breakpoint = 3`（`OperationList.vue:608` 480px、`Cockpit.vue:564` 900px、`Cockpit.vue:669` 720px，允许值只有 600/768/1024），`inline_style = 311` 超基线 306。而 `run_all.py` 的七道闸里**没有这一道**，所以它红了也没人知道 | 这是一道**看起来存在、实际不生效**的闸 —— 比没有闸更糟：`ui_contract_baseline.json` 停在 306 让人以为在守，实际已漂 5 条 | 基线之后又有人写内联 style / 自造断点，闸没进流水线所以没人拦 | 二选一：①把 3 处断点改成允许值、把 `inline_style` 清回 306，再把它接进 `run_all`；②确认废弃就直接删闸删基线，别留着假守。**不许直接重写基线把它们洗掉** |
+| B-27 | ~~**UI 契约闸（`check_ui_contract.py`）已经红了很久，而且没进 `run_all`**~~ **已闭 → C-89**（走路线①：修好 + 接入） | 2026-11-08 实跑：`media_breakpoint = 3`（`OperationList.vue:608` 480px、`Cockpit.vue:564` 900px、`Cockpit.vue:669` 720px，允许值只有 600/768/1024），`inline_style = 311` 超基线 306。而 `run_all.py` 的七道闸里**没有这一道**，所以它红了也没人知道 | 这是一道**看起来存在、实际不生效**的闸 —— 比没有闸更糟：`ui_contract_baseline.json` 停在 306 让人以为在守，实际已漂 5 条 | 基线之后又有人写内联 style / 自造断点，闸没进流水线所以没人拦 | 二选一：①把 3 处断点改成允许值、把 `inline_style` 清回 306，再把它接进 `run_all`；②确认废弃就直接删闸删基线，别留着假守。**不许直接重写基线把它们洗掉**。→ **2026-11-09 已按①完成，见 C-89；基线一个数都没重写** |
 
 ## 二、已排期
 
@@ -131,6 +131,7 @@
 | C-86 | **`KpiCard.state` 可选导致 6 个调用点渲染空卡冒充真实值**（B-24 收口） | 本批 | 原以为 B-24 是「两套视觉要合并」，取证后**推翻**：`CockpitKpi.vue` 头注释与本文件 `Dashboard.vue` 头注释各自写明分工（Cockpit 有占比进度条/异常语义着色/下探，KpiCard 是 4px 色条白卡），**刻意不复用**，视觉不同是有意的。真正的缺陷在三态语义：`KpiCard.state` 是**可选**，漏传时模板落到 `{{ value }}` 分支，`value` 为 `null` 就渲染成一张**空卡** —— 既不是 0 也不是「未接入」，看着像正常但什么都没说，且 TS 拦不住（漏传可选 prop 合法）。实测 6 个调用点漏传：`AndonList.vue` 3 张（失败时 value 被置成 `'—'`，卡上出现一个孤零零的破折号）、`EnergyDeviceList.vue` 3 张（`total` 失败时也是 0 → 显示「0 台」与「一台没接」长得一样；另两张塞 `"计算中"` / `"-"` 冒充读数）。**修法**：①`state` 收紧为**必填**（`KpiState`），让 vue-tsc 逐条报出漏传点；②读数为 `null`/`undefined`/`NaN` 时**一律按「未接入」显示**（`state:'real'` 配 null 属自相矛盾输入，不许空白也不许兜底成 0）；③补齐 6 处调用点，能耗页两张未接入指标改 `state="unavailable"`。**★新增静态闸 I `kpi_state_missing`（目标 0）**：vue-tsc 不在 `run_all` 里，只靠 TS 等于 CI 静默通过；闸带 8 条自证（含"相似属性名 `stateless` 不许冒充 state""同文件两张卡只传一处必须报第二张"两条退化注入），`--self-test` 8/8 通过、实跑 `kpi_state_missing = 0`。验收：vue-tsc 66 条与基线一致、改动文件 0 错；后端 1709 passed / 0 |
 | C-87 | **WMS 三页 6 个选完不显示的 picker 字段（`:value` 在 Vant4 下静默失效）**（B-25 收口） | 本批 | 旧结论写「`:value` 已不存在」，**实测订正为 6 处仍在**：`StockMove.vue` 4 个（目标仓库/物料/源库位/目标库位）、`StockQuery.vue` 1 个、`StockReport.vue` 1 个，全是 `is-link @click` 的只读展示字段。根因不是风格问题：本地 `node_modules/vant` 是 **4.9.24**，`Field.mjs` 的 props 只有 `modelValue`（第 23 行），`value` 不是 prop → 走属性 fallthrough 落到根节点成 DOM 属性，**输入框永远空**；而 `Field` 渲染 `Cell` 时 `value` 走的是 slot（`Field.mjs:541`），slot 优先于 Cell 的 `value` prop，所以连"歪打正着"都没有 —— 选了仓库/物料，字段仍是空白。同仓 168 处 `v-model` 才是 Vant4 正解。**修法**：6 处改 `:model-value` + 补 `readonly`（与 `lab/RequestList.vue`、`lab/StandardsList.vue` 的 picker 写法对齐），防止手输脏值。**★刻意不动**的 4 处：`ControlLimitList.vue:215/216` 等 `:model-value` 配 `@update:model-value` 是**有意的双向受控**（`Number()` 转换、`null` 回填），改成 `v-model` 会把转换逻辑丢掉。**★ 浏览器实测后追加根因（同日第二步，`6720599`）**：修好回显再一验，字段仍是空 —— 底下还压着两个更硬的缺陷。**①9 个 `van-picker` 一个都没绑 `v-model`/`:model-value`**：`Picker.mjs:34` 是 `ref(props.modelValue.slice(0))`、`makeArrayProp()` 默认 `[]`，`selectedOptions` 由 `selectedValues` 反查 → 恒 `undefined`。于是「不滚动直接点确认」（= 选第一项，最常见的一次操作）拿到空值，**而界面上那一项是高亮的**；只要滚一下轮子就碰巧正常，人工点测几乎不可能发现。`StockMove` 4 个 / `StockQuery` / `StockReport` / `InspectionDetail` / `ReceiptOrderCreate` 各 1 个；其中 `ReceiptOrderCreate.onWhConfirm` 写的是 `selectedOptions[0].value`（无可选链），点第一项直接 TypeError。`ReportView` 本来就绑了 `:model-value`，未被波及。**②6 处 `@confirm="onWhConfirm; showWhPicker = false"` 是多语句内联处理器**：Vue 按**表达式**求值，`onWhConfirm` 只被读到、**不会被调用**，只有后半句赋值生效 → 弹层关了、选中值从没写进去，无报错无告警（浏览器实测：弹层关闭 / 字段为空 / 0 个 JS 错误）。修法：关弹层收进处理函数，模板只留单个方法引用；`StockQuery`/`StockReport` 首项「全部」种子 `[null]`。**★新增静态闸 J `picker_unbound`（目标 0）**，15 条自证含两条退化注入（多行写法必须能判、相似属性 `data-model-x` 不许冒充），`--self-test` 15/15、实跑 0 命中。**另修 `copilot_smoke` ③ 的日历依赖**：fixture 报工记在「昨天」却断言「上周无数据」，每到周一昨天（周日）就落进上周 → 必然翻红（2026-11-09 00:0x 实测：周日晚 6/6，跨零点 5/6，整晚无代码变更）；改成切随机空租户 `copilot-empty-<hex>`，与周几彻底解耦。验收：`e2e/browser_test/_probe_kpi_state_e2e.js` 打 staging → **PASS**（安灯 3 张数字、能耗 2 张「未接入」、库存移动回显「E2E 拟真仓」、0 JS 错误）；vue-tsc 66 条与基线一致；构建入口 `index-C9Qmsnpo.js` → `index-Do6DX5Ft.js` 已部署核实 |
 | C-88 | **`data_collection_service.py` 是过期副本不是「待接线」**（B-26 收口） | 本批 | 全仓零引用（`grep -rn DataCollectionService` 只命中自身），但**删它的理由不是没人用**：它的方法名与 `data_collection_repo` 已经脱节 —— service 调 `repo.list_tasks` / `repo.list_records` / `repo.list_iot_devices` / `repo.list_monitors`，而 repo 实际是 `list_collect_tasks` / `list_collect_records` / `list_devices` / `list_link_monitors`（`api/data_collection.py` 390 行全程直调 repo，用的正是后者）。也就是说「接线」这条路**不成立**：接上就 AttributeError。按过期副本处理直接删除，`check_contracts.py::DEAD_CODE` 清空并保留机制（`DEAD_CODE: dict[str, str] = {}`，下次真出现死代码仍在此登记），文件头注明删除理由。验收：契约闸 `✅ 无新增契约断裂（基线内 16 处存量）`、扫描文件 206→205、「已知死代码」噪音块整段消失；`run_all` 覆盖棘轮 462/462 不变 |
+| C-89 | **UI 契约闸「看起来在守、实际不生效」—— 修好并接进流水线**（B-27 收口） | 本批 | 2026-11-08 实跑时它已经红了很久：基线（`8abe86c`，11-03）停在 `inline_style = 306`、其余四项 0，实测已漂到 **311 / 3 / 2 / 3**，而 `run_all.py` 的七道闸里**没有这一道** —— 红了也没人知道。**假守比没闸更糟**：`ui_contract_baseline.json` 停在 306 让人以为在守，它会消耗掉「我们有闸」这份信任。**①漂移逐条定位**（不重写基线洗掉）：`inline_style` 逐文件比对两个版本，净 +5 **全部**在 `ReportView.vue`（1→6），其余 4 个文件各 +1 被 `Cockpit.vue(−3)` / `NcrList(−1)` 抵消 —— **总数不变不代表没新增**，这是 ratchet 的固有盲区；`media_breakpoint` 3 处自造断点（`OperationList.vue:608` 480 / `Cockpit.vue:564` 900 / `Cockpit.vue:669` 720）；`raw_transition` 2 处全在 `CockpitKpi.vue`（`.15s` / `0.3s`）；`legacy_term` 3 处。**②修法各有讲究**：断点收敛到 UE §4.2 真源 {600,768,1024}，方向上一律**提前**折叠（480→600、900→768、720→768）不会挤压 —— 900 这个值本身站不住，它与 1024 只差 124px，五块等分时每块不足 190px；`ReportView.vue` 6 处内联设计值（5×`margin:8px` + 1×`margin-right:16px`）改成语义类 `.rv-block` / `.rv-radio-gap`；`CockpitKpi.vue` 两处裸时长换 `--ziwi-motion-result-duration`（180ms，原 150ms）/ `--ziwi-motion-layer-duration`（240ms，原 300ms）；`legacy_term` 那 3 条里 **2 条是注释**（`ProductList.vue:66`「维护点」、`WorkCenterList.vue:67`「维护产能参数」）—— 术语表管的是用户可见文案，注释里的「维护」是普通动词，判据缺 `is_comment` 豁免属**漏项不是存量偏差**，补豁免后只剩 `ReportView.vue:302` 一条真文案，改「日历未配置」。**③三项补自证**：`media_breakpoint` / `raw_transition` / `legacy_term` 此前**只有计数没有判据用例**，改坏了没人能发现；本轮各自抽成纯函数并补正负向用例（含退化注入：不带 `@media` 的普通宽度不许误报、注释里的断点/时长不许报、注释续行里的旧术语不许报），`--self-test` 15 → **28 条**。**④接入流水线**：`run_all.py` 新增第 8 道闸 + `--skip-ui-contract`，绿时只打结论（28 行自证对门禁是噪音），红时全量打印。**验收**：闸 `EXIT=0`、`inline_style 305 < 306`、其余全 0；**负向验证不能省** —— 注入一处 `@media (max-width: 480px)` 后单跑闸 `EXIT=1`，且整条 `run_all` 在探针 40/0 全绿的前提下仍 `EXIT=1`，撤回后恢复全绿。浏览器探针 `e2e/browser_test/_probe_uicontract_visual.js` 9/9：`.rv-block` 吃到 `margin:8px`（四边精确相等）、radio `margin-right:16px`、无「日历未维护」、1440 下驾驶舱仍 5 列（断点收敛对大屏零副作用）、三页 0 JS 错误；探针自身也做了退化注入（8px 改 9px 必须报红，实测报红）。vue-tsc 66 条与基线一致 |
 
 ### "读错表/读错范围"专项（C-44 暴露的缺陷形态）
 比"报错"更贵的一类是**静默读错**：接口 200、字段齐全、界面正常渲染，只是数据是别的范围/另一张表的。症状统一为"某个功能一直给出恒定值"，而查代码往往看不出问题（SQL 是合法的、只是条件少了）。
@@ -218,12 +219,15 @@ SQLite 驱动什么都不挑（日期给字符串、布尔给整数都收），a
 
 ---
 
-## 五、长期项方案（2026-11-08 第二轮：三项已落地，四项已定性）
+## 五、长期项方案（2026-11-09 第三轮：B-27 收口，台账只剩五项）
 
-> 第一轮（同日上午）只出方案不实施。第二轮按「有想法就做」直接推进，
-> 结果是：**B-24 / B-25 / B-26 已落地并各自配闸**（§三 C-86 ~ C-88）；
-> **B-21 / B-22 / B-23 取证后定性为非代码缺陷**（§5.4）；
-> **B-20 仍开**，但已给出可执行规格（§5.5），下一轮不必再调研。
+> 第一轮（11-08 上午）只出方案不实施；第二轮（11-08 下半天）按「有想法就做」直接推进，
+> 落地 **B-24 / B-25 / B-26**（§三 C-86 ~ C-88），并把 **B-21 / B-22 / B-23** 取证定性为
+> 非代码缺陷（§5.4）、**B-20** 给出可执行规格（§5.5）。
+> **第三轮（11-09）收口 B-27**（§三 C-89）：UI 契约闸此前红了很久且没进 `run_all`，
+> 已修好并接成**第 8 道闸**，`ui_contract_baseline.json` **一个数都没重写**。
+> 至此第一节只剩：**B-17 / B-18 / B-19 需动代码或数据**、
+> **B-20 / B-21 / B-22 待业务实值**、**B-23 待口径拍板**。
 > 取证口径：staging `AH-THR`（`t_1692982c9cb7`）只读回读 + 本地全量门禁。
 
 ### 5.1 四项统一原则（全部七项共用，未变）
@@ -242,7 +246,8 @@ SQLite 驱动什么都不挑（日期给字符串、布尔给整数都收），a
 
 | 状态 | 项 | 说明 |
 |---|---|---|
-| **已闭** | B-24 / B-25 / B-26 | C-86 三态语义收紧 + 闸 I；C-87 六处 picker 回显；C-88 删过期副本 |
+| **已闭** | B-24 / B-25 / B-26 / **B-27** | C-86 三态语义收紧 + 闸 I；C-87 六处 picker 回显 + 闸 J；C-88 删过期副本；C-89 闸修好并接入（**第 8 道**） |
+| **需动代码 / 数据** | B-17 / B-18 / B-19 | B-17 参数静默失效（倾向删参改名）；B-18 需拍板 staging `-DUP` 单删不删；B-19 E2E 陈旧结论文案 |
 | **已定性 · 待业务输入** | B-21 / B-22 | 代码链路完好，缺的是业务实值（§5.4） |
 | **已定性 · 口径张力** | B-23 | 已有门禁守卫，只差定一处展示语义（§5.4） |
 | **待设计** | B-20 | 需 schema 增量 + 扫码交互决策（§5.5） |
