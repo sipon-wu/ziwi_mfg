@@ -15,6 +15,17 @@ import {
   CLEAN_LEVEL_OPTIONS as CLEAN_LEVEL,
 } from '@/config/enums'
 
+// 工作中心类别（`WC_TYPE`）同样统一放在 @/config/enums：原来这里那份只有粒度三值，
+// 而库里实际存的是工艺性质（assembly/quality/machining）→ 列表印英文原文。
+//
+// ★ 字段标签为什么叫「档案类别」而不叫「类型」（B-23，2026-11-09 定名）：
+//   `work_centers.wc_type` 是工位档案里手填的**兜底值**，真正的工艺性质由该工位
+//   承担的工序现算（后端 `core/work_center_nature.py`）。列表「工艺性质」列显示的是
+//   派生值，而这两处筛选筛的是档案值 —— 都叫「类型」时，用户看着列里的「装配」
+//   去筛「类型=装配」，却漏掉档案填了别的值的工位，且不报错、不掉接口。
+//   于是两轴分开叫名字：派生轴 = 工艺性质，档案轴 = 档案类别（兜底）。
+//   `test_wc_type_domain.py` 钉住这组文案，改名会当场红。
+
 // ============================================================
 // 各枚举候选项（收敛自各列表页散落的 *_OPTIONS 常量）
 // ============================================================
@@ -26,8 +37,6 @@ const PRODUCT_TYPE = [
   { value: 'semi', label: '半成品' },
   { value: 'raw', label: '原材料' },
 ]
-// 工作中心类别同样统一放在 @/config/enums。原来这里那份只有粒度三值，
-// 而库里实际存的是工艺性质（assembly/quality/machining）→ 列表印英文原文。
 const ROUTE_STATUS = [
   { value: 'draft', label: '草稿' },
   { value: 'published', label: '已发布' },
@@ -246,7 +255,7 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
     searchFields: [
       { key: 'code', label: '工作中心编码', type: 'string' },
       { key: 'name', label: '工作中心名称', type: 'string' },
-      { key: 'wc_type', label: '类型', type: 'enum', options: WC_TYPE },
+      { key: 'wc_type', label: '档案类别（兜底）', type: 'enum', options: WC_TYPE },
       { key: 'org_name', label: '所属车间', type: 'string' },
       { key: 'efficiency', label: '效率因子', type: 'number' },
       { key: 'equipment_count', label: '设备数', type: 'number' },
@@ -257,7 +266,7 @@ export const searchConfigs: Record<string, ResourceSearchConfig> = {
     rowDetailFields: [
       { key: 'code', label: '工作中心编码', type: 'string', group: 'basic' },
       { key: 'name', label: '工作中心名称', type: 'string', group: 'basic' },
-      { key: 'wc_type', label: '类型', type: 'enum', options: WC_TYPE, group: 'basic' },
+      { key: 'wc_type', label: '档案类别（兜底）', type: 'enum', options: WC_TYPE, group: 'basic' },
       { key: 'org_name', label: '所属车间', type: 'string', group: 'relation' },
       { key: 'efficiency', label: '效率因子', type: 'number', group: 'basic' },
       { key: 'equipment_count', label: '设备数', type: 'number', group: 'basic' },

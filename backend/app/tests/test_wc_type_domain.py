@@ -24,13 +24,16 @@
 拆成两个字段属产品决策（要先给 33 行数据归因），所以本次只做三件事：
 值域收到一处、两侧加闸、未知值不再冒充正常值。
 
-## 本文件守五条
+## 本文件守六条
 
 1. 后端 `WcType`（Literal）与 `WC_TYPE_LABELS` 自洽；
 2. `WC_TYPE_LABELS` 比 `OP_TYPE_LABELS` 多出的值**恰好**是白名单那 4 个 —— 多一个就红；
 3. 库里真实出现的值（艾华 3 个工艺性质 + 探针的 `workstation`）都在域内；
 4. 前端 `enums.ts::WC_TYPE_OPTIONS` 与后端**逐项且同序**一致（跨语言闸）；
 5. 不许再出现本地副本 / `|| v` 回退 —— 本文件自带负向用例自证。
+6. **两轴分开叫名字**（B-23，2026-11-09）：列表列显示派生工艺性质 → 表头叫
+   「工艺性质」；`searchFields.ts` 两处筛的是档案值 → 标签叫「档案类别（兜底）」。
+   都叫「类型」时，用户拿列里的值去对应筛选器，结果集不一致且不报错。
 """
 import re
 from pathlib import Path
@@ -223,3 +226,84 @@ def test_update_rejects_invalid_but_allows_omitted():
     assert WorkCenterUpdate(name="改名").wc_type is None
     with pytest.raises(ValidationError):
         WorkCenterUpdate(wc_type="bogus_type")
+
+
+# ── 5. 展示语义：派生轴叫「工艺性质」，档案轴叫「档案类别」（B-23）──────────
+#
+# 背景：值域统一（C-59）之后还剩一层**文案级**混淆 —— 列表那一列显示的是
+# `natureText(item)`（按该工位承担的工序现算），而快速筛选和高级检索筛的是
+# `work_centers.wc_type`（档案里手填的兜底值），三处当年都叫「类型」。
+# 用户看着列里的「装配」去筛「类型=装配」，会漏掉档案填了别的值的工位 ——
+# 不报错、不掉接口、只是数少几条，属于最难被发现的那一类缺陷。
+#
+# 所以：一个展示名（工艺性质）+ 一个派生真源（core/work_center_nature.py），
+# 另一个改叫「档案类别」并标注兜底。本节把这两句话钉成闸。
+
+_WC_TYPE_FIELD_RE = re.compile(
+    r"\{\s*key:\s*'wc_type'\s*,\s*label:\s*'([^']+)'"
+)
+_ARCHIVE_LABEL_PREFIX = "档案类别"
+
+_TH_TYPE_RE = re.compile(r"<th[^>]*>\s*类型\s*</th>")
+_TH_NATURE_RE = re.compile(r"<th[^>]*>\s*工艺性质\s*</th>")
+
+
+def _wc_type_labels(text: str) -> list[str]:
+    """抽出 `searchFields.ts` 里所有 `key: 'wc_type'` 条目的 label。"""
+    return _WC_TYPE_FIELD_RE.findall(text)
+
+
+def test_wc_type_filter_labels_say_archive():
+    """两处 `wc_type` 筛选器都必须叫「档案类别（兜底）」，不许再叫裸「类型」。"""
+    # ★ 正向对照：提取器对已知样本必须命中。写坏正则一路返回 []，
+    #   下面 `all(...)` 就成了永真的空跑（本仓库已经栽过这种假绿）。
+    sample = "[\n  { key: 'wc_type', label: '类型', type: 'enum' },\n]"
+    assert _wc_type_labels(sample) == ["类型"], (
+        "标签提取器没命中样本 —— 这条闸是空跑的")
+
+    labels = _wc_type_labels(SEARCH_FIELDS.read_text(encoding="utf-8"))
+    assert len(labels) == 2, (
+        f"期望 searchFields 里有 2 处 wc_type（高级检索 + 行展开），"
+        f"实际 {len(labels)} 处：{labels}")
+    for lb in labels:
+        assert lb.startswith(_ARCHIVE_LABEL_PREFIX), (
+            f"wc_type 筛选器标签又变回「{lb}」了 —— 它筛的是档案值，"
+            f"不是列表里的派生工艺性质，必须叫「{_ARCHIVE_LABEL_PREFIX}（兜底）」")
+
+
+def test_derived_column_header_is_not_called_type():
+    """列表「工艺性质」列的表头不许再叫「类型」。"""
+    assert _TH_TYPE_RE.search("<th>类型</th>"), (
+        "表头检测器没抓到 `<th>类型</th>` —— 等于没有闸")
+
+    src = WC_LIST_VUE.read_text(encoding="utf-8")
+    assert _TH_NATURE_RE.search(src), (
+        f"{WC_LIST_VUE.name} 里找不到「工艺性质」表头 —— 派生列的表头被改掉了？")
+    assert not _TH_TYPE_RE.search(src), (
+        f"{WC_LIST_VUE.name} 表头又叫回「类型」了 —— 那一列是派生值，必须叫「工艺性质」")
+
+
+def test_quick_filter_placeholder_says_archive():
+    """工具条那个下拉筛的是档案值，placeholder 不许再叫旧叫法。"""
+    src = WC_LIST_VUE.read_text(encoding="utf-8")
+    assert 'placeholder="档案类别"' in src, (
+        f"{WC_LIST_VUE.name} 的快速筛选 placeholder 不是「档案类别」")
+    assert "工作中心类型" not in src, (
+        f"{WC_LIST_VUE.name} 里还有旧叫法 —— 这个下拉筛的是档案值，不是工艺性质")
+
+
+def test_archive_label_detector_rejects_bare_type(tmp_path):
+    """文件级负向用例：真造一个叫回「类型」的配置，提取 + 前缀判定必须报。
+
+    这条防的是"前缀判定写成恒真"（例如误写成 `lb.startswith('')`）。
+    """
+    fake = tmp_path / "searchFields.ts"
+    fake.write_text(
+        "searchFields: [\n  { key: 'wc_type', label: '类型', type: 'enum' },\n],\n"
+        "rowDetailFields: [\n  { key: 'wc_type', label: '类型', type: 'enum', group: 'basic' },\n],",
+        encoding="utf-8",
+    )
+    labels = _wc_type_labels(fake.read_text(encoding="utf-8"))
+    assert len(labels) == 2, f"两处 wc_type 只解析到 {len(labels)} 处"
+    assert not all(lb.startswith(_ARCHIVE_LABEL_PREFIX) for lb in labels), (
+        "样本里两处都叫「类型」，前缀判定却全通过 —— 判定是恒真的")

@@ -270,7 +270,9 @@ onMounted(() => {
     >
       <template #filters>
         <div class="ziwi-w-40">
-          <SelectField v-model="wcTypeFilter" :options="WC_TYPE_OPTIONS" placeholder="工作中心类型" clearable />
+          <!-- 筛的是档案值 `wc_type`，不是上面列里的派生工艺性质 → 叫「档案类别」。
+               顺带解决 UE 计划 D4：原 placeholder 8 个字在 160px 宽的选择框里会被截断。 -->
+          <SelectField v-model="wcTypeFilter" :options="WC_TYPE_OPTIONS" placeholder="档案类别" clearable />
         </div>
       </template>
       <template #actions>
@@ -308,7 +310,10 @@ onMounted(() => {
           <tr>
             <th>工作中心编码</th>
             <th>工作中心名称</th>
-            <th>类型</th>
+            <!-- ★ B-23：这一列显示的是「按承担的工序现算」的派生值，不是档案里的
+                 `wc_type`。表头必须叫「工艺性质」，否则用户会拿它去对应
+                 「类型」筛选器（筛的是档案值），两边结果集不一致还不报错。 -->
+            <th title="按该工位在工艺路线上承担的工序现算；档案字段只作无工序时的兜底">工艺性质</th>
             <th>所属车间</th>
             <th class="num">效率</th>
             <th class="num">设备数</th>
@@ -386,11 +391,17 @@ onMounted(() => {
       <div class="ziwi-stack-3">
         <van-field v-model="editing.code" label="工作中心编码" required placeholder="请输入编码" :disabled="isEdit" />
         <van-field v-model="editing.name" label="工作中心名称" required placeholder="请输入名称" />
-        <van-field label="工作中心类型" required>
+        <!-- ★ B-23：这个字段是兜底值，不是「工艺性质」的录入口 —— 配了路线之后
+             列表按工序现算，这里填什么都不影响展示，所以必须写明，否则用户会以为
+             改这里就能改列里的值。 -->
+        <van-field label="档案类别" required>
           <template #input>
             <SelectField v-model="editing.wc_type" :options="WC_TYPE_OPTIONS" class="ziwi-w-full" />
           </template>
         </van-field>
+        <div class="wc-type-hint ziwi-text-muted">
+          列表「工艺性质」列按该工位承担的工序现算；这里只在尚未挂工序时作为兜底显示。
+        </div>
         <van-field label="所属车间">
           <template #input>
             <SelectField
@@ -425,6 +436,14 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 档案类别字段下方的兜底说明：贴着字段走，别占出一整行高度。 */
+.wc-type-hint {
+  margin-top: -8px;
+  padding: 0 16px;
+  font-size: var(--ziwi-font-size-sm, 12px);
+  line-height: 1.5;
+}
+
 /* 「待核对」与类型标签同格并排，别让两个 tag 粘在一起。
  * 视觉尺寸靠 CSS 压到与旁边 size="small" 一致 —— 不写 `size="small"` 是因为
  * Vant4 的 TagSize 里没有 small（那组是既有类型错误，本次不往上加）。 */
