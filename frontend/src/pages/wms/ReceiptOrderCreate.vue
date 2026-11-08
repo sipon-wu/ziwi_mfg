@@ -24,6 +24,13 @@ const form = ref({
 const showWhPicker = ref(false)
 
 const warehouseOptions = ref<WarehouseOption[]>([])
+/**
+ * ★ Vant4 Picker 的选中值只来自 `modelValue`（`Picker.mjs:34`，默认 `[]`）。
+ * 不绑 `v-model` 时「不滚动直接点确认」（选第一项）拿不到值，而这里的
+ * `onWhConfirm` 原本还写了 `selectedOptions[0].value`（没有 `?.`）——
+ * 于是点第一项会直接 TypeError。两处都修。
+ */
+const whPicker = ref<any[]>([])
 const typeOptions = [
   { value: 'purchase', label: '采购入库' },
   { value: '生产入库', label: '生产入库' },
@@ -40,6 +47,7 @@ onMounted(async () => {
   try {
     const warehouses: any[] = await get('/wms/warehouses/all/active')
     warehouseOptions.value = (warehouses || []).map((w: any) => ({ value: w.id, label: w.name }))
+    whPicker.value = warehouseOptions.value.length ? [warehouseOptions.value[0].value] : []
   } catch {
     // 仓库列表加载失败，用户可手动输入 ID
   }
@@ -50,7 +58,7 @@ async function onPickWarehouse() {
 }
 
 function onWhConfirm({ selectedOptions }: { selectedOptions: Array<{ value: number }> }) {
-  form.value.warehouse_id = selectedOptions[0].value
+  form.value.warehouse_id = selectedOptions[0]?.value
   showWhPicker.value = false
 }
 
@@ -141,6 +149,7 @@ function goBack() { router.push('/wms/receipt-orders') }
 
     <van-popup v-model:show="showWhPicker" position="bottom">
       <van-picker
+        v-model="whPicker"
         :columns="warehouseOptions.map((w) => ({ text: w.label, value: w.value }))"
         @confirm="onWhConfirm"
         @cancel="showWhPicker = false"

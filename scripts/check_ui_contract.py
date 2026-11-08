@@ -25,6 +25,7 @@ F. `media_breakpoint`    `@media (min|max)-width` 字面量必须 ∈ {600, 768,
 G. `inline_statuslabel`  页面内声明 `statusLabel` / `statusColor` / `RESULT_MAP`
 H. `legacy_term`         「维护」字样（`config/term.ts` 白名单豁免）
 I. `kpi_state_missing`   `<KpiCard>` 未声明 `state`（**目标 0**，见 §I 注释）
+J. `picker_unbound`      `<van-picker>` 未绑 `v-model`/`:model-value`（**目标 0**，见 §J 注释）
 
 ratchet 策略（架构 §8.5）
 ------------------------
@@ -350,6 +351,39 @@ def check_kpi_state(report: Report) -> None:
             report.add("kpi_state_missing", path, lineno, snippet)
 
 
+# ── J. van-picker 必须绑模型值 ─────────────────────────────────
+PICKER_OPEN = re.compile(r"<van-picker\b.*?/>", re.S)
+PICKER_MODEL = re.compile(r"(?:^|\s)(?::|v-bind:)?(?:model-value|v-model)\s*=")
+
+
+def picker_unbound(text: str) -> list[tuple[int, str]]:
+    """找出没绑 `v-model` / `:model-value` 的 `<van-picker ... />`。
+
+    为什么这是**缺陷**而不只是写法：
+    `vant` 4.9.24 的 `picker/Picker.mjs:34` 是 `ref(props.modelValue.slice(0))`，
+    `modelValue` 的默认值是 `[]`。不绑模型值时，`selectedOptions` 由
+    `selectedValues[i]` 反查得到 → 恒为 `undefined`。于是
+    **「不滚动、直接点确认」（即选第一项，最常见的一次操作）拿到的值是空**，
+    而界面上那一项却是高亮的 —— 看着选上了，实际没选。
+    2026-11-08 实测：`#/wms/stock-move` 点确认后弹层关闭、字段仍为空。
+    只要用户滚动一下就能"碰巧"正常，所以这个缺陷极难在人工点测中发现。
+
+    纯函数，供 `--self-test` 复用。
+    """
+    hits: list[tuple[int, str]] = []
+    for m in PICKER_OPEN.finditer(text):
+        if not PICKER_MODEL.search(m.group(0)):
+            lineno = text[: m.start()].count("\n") + 1
+            hits.append((lineno, " ".join(m.group(0).split())[:110]))
+    return hits
+
+
+def check_picker_bound(report: Report) -> None:
+    for path in iter_frontend_files((".vue",)):
+        for lineno, snippet in picker_unbound("\n".join(read_lines(path))):
+            report.add("picker_unbound", path, lineno, snippet)
+
+
 def run_checks() -> Report:
     """跑全部检查项。"""
     report = Report()
@@ -364,6 +398,7 @@ def run_checks() -> Report:
         "inline_statuslabel",
         "legacy_term",
         "kpi_state_missing",
+        "picker_unbound",
     ):
         report.counts.setdefault(key, 0)
 
@@ -376,6 +411,7 @@ def run_checks() -> Report:
     check_inline_statuslabel(report)
     check_legacy_term(report)
     check_kpi_state(report)
+    check_picker_bound(report)
     return report
 
 
@@ -384,28 +420,54 @@ def self_test() -> int:
 
     ★ 没有负向用例的闸 = 没有闸。历史教训：热区闸曾只剩"断言 CSS 变量文本存在"，
       报 24/24 全绿，实际一个控件都没量过。
+
+    用例是 (说明, 判据函数, 输入, 期望命中数) —— 判据函数一起传，
+    免得"用 A 判据去跑 B 用例"这种自证自身出错、还以为闸坏了。
     """
     cases = [
-        # (说明, 输入, 期望命中数)
-        ("漏传 state 必须报", '<KpiCard title="待响应" :value="1" />', 1),
-        ("传 :state 不许报", '<KpiCard title="待响应" :value="1" :state="s" />', 0),
-        ("传 state 字面量不许报", '<KpiCard title="a" :value="1" state="real" />', 0),
-        ("多行标签里 state 也算", '<KpiCard\n  title="a"\n  :value="1"\n  :state="s"\n/>', 0),
-        ("v-bind:state 也算", '<KpiCard title="a" v-bind:state="s" />', 0),
+        # ── I. KpiCard 必须声明 state ──
+        ("I 漏传 state 必须报", kpi_state_missing,
+         '<KpiCard title="待响应" :value="1" />', 1),
+        ("I 传 :state 不许报", kpi_state_missing,
+         '<KpiCard title="待响应" :value="1" :state="s" />', 0),
+        ("I 传 state 字面量不许报", kpi_state_missing,
+         '<KpiCard title="a" :value="1" state="real" />', 0),
+        ("I 多行标签里 state 也算", kpi_state_missing,
+         '<KpiCard\n  title="a"\n  :value="1"\n  :state="s"\n/>', 0),
+        ("I v-bind:state 也算", kpi_state_missing,
+         '<KpiCard title="a" v-bind:state="s" />', 0),
         # 退化注入：若把判据写成「标签里出现 state 子串就放过」，这条会漏报
-        ("相似属性名不许冒充 state", '<KpiCard title="a" stateless="x" :value="1" />', 1),
+        ("I 相似属性名不许冒充 state", kpi_state_missing,
+         '<KpiCard title="a" stateless="x" :value="1" />', 1),
         # 退化注入：若判据退化成"整个文件出现 state 就不报"，一个文件两处只传一处会漏
-        ("同一文件两张卡只传一处必须报第二张",
+        ("I 同文件两张卡只传一处必须报第二张", kpi_state_missing,
          '<KpiCard title="a" :state="s" />\n<KpiCard title="b" :value="2" />', 1),
-        ("无 KpiCard 不许误报", '<div class="x">hello</div>', 0),
+        ("I 无 KpiCard 不许误报", kpi_state_missing, '<div class="x">hello</div>', 0),
+        # ── J. van-picker 必须绑模型值 ──
+        ("J 不绑模型值的 picker 必须报", picker_unbound,
+         '<van-picker :columns="c" @confirm="f" />', 1),
+        ("J 绑 v-model 不许报", picker_unbound,
+         '<van-picker v-model="v" :columns="c" />', 0),
+        ("J 绑 :model-value 不许报", picker_unbound,
+         '<van-picker :model-value="[a]" :columns="c" />', 0),
+        ("J 多行 picker 也要能判", picker_unbound,
+         '<van-picker\n  :columns="c"\n/>', 1),
+        ("J 多行绑了 v-model 不许报", picker_unbound,
+         '<van-picker\n  v-model="v"\n  :columns="c"\n/>', 0),
+        # 退化注入：若判据只认「同一行出现 v-model」，多行写法会被漏判；
+        # 相似属性名（data-model-x）也不许冒充。
+        ("J 相似属性不许冒充 model-value", picker_unbound,
+         '<van-picker :columns="c" data-model-x="1" />', 1),
+        ("J 一个文件两个 picker 只绑一处必须报第二个", picker_unbound,
+         '<van-picker v-model="v" :columns="c" />\n<van-picker :columns="c" />', 1),
     ]
+
     bad = 0
-    for i, (why, text, want) in enumerate(cases, 1):
-        got = len(kpi_state_missing(text))
-        flag = "ok" if got == want else "FAIL"
+    for i, (why, fn, text, want) in enumerate(cases, 1):
+        got = len(fn(text))
         if got != want:
             bad += 1
-        print(f"  [{flag}] I{i} {why}：期望 {want} 命中，实得 {got}")
+        print(f"  [{'ok' if got == want else 'FAIL'}] {i:2d} {why}：期望 {want} 命中，实得 {got}")
     if bad:
         print(f"  ✗ 自证失败 {bad}/{len(cases)} 条 —— 判据本身不可信，拒绝出结论")
         return 1
@@ -470,7 +532,7 @@ def judge(report: Report, baseline: dict) -> list:
     problems = []
 
     # 硬性归零项
-    for key in ("dead_tailwind", "min_width_480", "kpi_state_missing"):
+    for key in ("dead_tailwind", "min_width_480", "kpi_state_missing", "picker_unbound"):
         if report.counts.get(key, 0) > 0:
             problems.append(f"{key} = {report.counts[key]}，要求 0")
 
@@ -590,7 +652,7 @@ def main() -> int:
                 print(f"  … 另有 {len(report.findings) - limit} 条，用 -v 查看全部")
         return 1
 
-    print("\n通过：dead_tailwind / min_width_480 / media_breakpoint / kpi_state_missing 全为 0，ratchet 未回退")
+    print("\n通过：dead_tailwind / min_width_480 / media_breakpoint / kpi_state_missing / picker_unbound 全为 0，ratchet 未回退")
     return 0
 
 

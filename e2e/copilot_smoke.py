@@ -165,10 +165,20 @@ async def main() -> int:
                f"reason={rej.get('reason') if rej else None}")
 
         # ③ 无数据固定话术
+        #
+        # ★ 判据不能用「上周有没有数据」：fixture 的报工记在「昨天」，而「昨天」
+        #   是否落在「上周」取决于今天是周几 —— 每到**周一**，昨天（周日）就落进
+        #   「上周」，这条断言在周一必然翻红。2026-11-09 00:0x 实测踩到：同一份代码
+        #   周日晚还是 6/6 全绿，跨过零点变 5/6，而这一晚没有任何代码变更。
+        #   同理「本月」在每月 1 号、「今天」在 fixture 换日时都会翻。
+        #   所以改成切到一个**一定没有数据**的租户：要验的是"没数据时不许编"，
+        #   与周几、日历、跑在几点都无关。租户 id 用随机串，不依赖任何别处的 fixture。
+        _CURRENT_TENANT["id"] = f"copilot-empty-{uuid.uuid4().hex[:8]}"
         ev = await ask("上周产量是多少")
         ans = _find(ev, "answer")
         narrative = ans["payload"]["narrative"] if ans else ""
         _check("③ 无数据返回固定话术（零臆造）", "未查询到" in narrative, narrative[:40])
+        _CURRENT_TENANT["id"] = "default"
 
         # ④ 租户隔离
         _CURRENT_TENANT["id"] = "other"

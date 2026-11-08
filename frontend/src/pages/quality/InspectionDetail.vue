@@ -62,6 +62,13 @@ const activeRow = ref(0)
 
 const itemColumns = computed(() =>
   items.value.map((i) => ({ text: i.item_name, value: i.id })))
+/**
+ * ★ Vant4 Picker 的选中值只认 `modelValue`（`Picker.mjs:34`，默认 `[]`）。
+ * 不绑 `v-model` 时「不滚动直接点确认」（= 选第一项）拿到的是空值 ——
+ * 界面高亮着第一项，`onPick` 却拿不到 id，表现为「点了没反应」。
+ * 种子在 items 赋值后同步（见 fetchDetail）。
+ */
+const itemPicker = ref<any[]>([])
 
 const judged = computed(() => !!order.value?.result)
 const filledDrafts = computed(() =>
@@ -105,6 +112,7 @@ async function fetch() {
 async function fetchItems() {
   const d: any = await get('/inspection-items', { page: 1, page_size: 100 })
   items.value = d?.items || []
+  itemPicker.value = items.value.length ? [items.value[0].id] : []
 }
 
 function addRow() {
@@ -338,6 +346,7 @@ function goExecute() {
 
     <van-popup v-model:show="showPicker" position="bottom" round>
       <van-picker
+        v-model="itemPicker"
         :columns="itemColumns"
         @confirm="onPick"
         @cancel="showPicker = false"

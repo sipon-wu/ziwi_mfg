@@ -17,6 +17,12 @@ const keyword = ref('')
 const warehouseId = ref<any>(null)
 const page = ref(1); const total = ref(0); const pageSize = 20
 const warehouses = ref<any[]>([])
+/**
+ * ★ Vant4 Picker 的选中值只认 `modelValue`（`Picker.mjs:34` → `props.modelValue.slice(0)`，
+ * 默认 `[]`）。不绑 `v-model` 时「不滚动直接点确认」（= 选第一项）拿到的是空值，
+ * 界面却高亮着第一项 —— 看着选上了、实际没选。这里种子的 `[null]` 对应首项「全部」。
+ */
+const whPicker = ref<any[]>([null])
 const showWhPicker = ref(false)
 
 // 高级检索 + 行展开
@@ -42,7 +48,10 @@ function condText(c: SearchCondition) {
   return describeCondition(c, cfg)
 }
 
-async function loadWarehouses() { warehouses.value = await get<any[]>('/wms/warehouses/all/active') }
+async function loadWarehouses() {
+  warehouses.value = await get<any[]>('/wms/warehouses/all/active')
+  whPicker.value = [whPicker.value.length ? whPicker.value[0] : null]
+}
 const loadFailed = ref(false)
 const loadErrorMessage = ref('')
 const loadErrorKind = ref<'network' | 'business'>('business')
@@ -72,6 +81,8 @@ async function loadData() {
 function onSearch() { page.value = 1; loadData() }
 function onWhConfirm({ selectedOptions }: any) {
   warehouseId.value = selectedOptions[0]?.value
+  // 关弹层写在函数里：多语句内联处理器里函数名只是表达式、不会被调用（详见 StockMove 注释）
+  showWhPicker.value = false
   onSearch()
 }
 
@@ -127,8 +138,8 @@ onMounted(() => { loadWarehouses(); loadData() })
     />
 
     <van-popup v-model:show="showWhPicker" position="bottom">
-      <van-picker :columns="[{ text: '全部', value: null }, ...warehouses.map(w => ({ text: w.name, value: w.id }))]"
-        @confirm="onWhConfirm; showWhPicker = false" @cancel="showWhPicker = false" />
+      <van-picker v-model="whPicker" :columns="[{ text: '全部', value: null }, ...warehouses.map(w => ({ text: w.name, value: w.id }))]"
+        @confirm="onWhConfirm" @cancel="showWhPicker = false" />
     </van-popup>
 
     <AdvancedSearchPanel
