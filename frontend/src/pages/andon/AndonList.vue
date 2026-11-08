@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
 import { showToast } from 'vant'
 import type { PaginatedResponse, AndonCall } from '@/types'
+import type { KpiState } from '@/types/search'
 import { usePagination } from '@/composables/usePagination'
 import { useAdvancedSearch } from '@/composables/useAdvancedSearch'
 import KpiCard from '@/components/KpiCard.vue'
@@ -96,6 +97,20 @@ function isToday(dateStr?: string | null): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
 }
 
+/**
+ * KPI 三态（加载中 / 未接入 / 真实值）。
+ *
+ * ★ 旧写法三张卡都没传 `state`：取数失败时 `kpi` 被置成三个 `'—'`，
+ *   组件按「真实值」分支渲染，卡上就出现一个孤零零的破折号 ——
+ *   看不出是「真的没有」还是「没取到」。现在失败/未知显式走「未接入」。
+ */
+const kpiState = computed<KpiState>(() => {
+  if (kpiLoading.value) return 'loading'
+  const v = kpi.value
+  const blank = v.pending === '—' && v.responding === '—' && v.resolvedToday === '—'
+  return blank ? 'unavailable' : 'real'
+})
+
 async function loadKpi() {
   kpiLoading.value = true
   try {
@@ -160,9 +175,9 @@ drill.onChange(() => { resetPage(); void loadData() })
   <div>
     <DrilldownBanner :total="total" />
     <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px;">
-      <KpiCard title="待响应" :value="kpi.pending" color="#D85A30" />
-      <KpiCard title="响应中" :value="kpi.responding" color="#BA7517" />
-      <KpiCard title="今日已解决" :value="kpi.resolvedToday" color="#1D9E75" />
+      <KpiCard title="待响应" :value="kpi.pending" color="#D85A30" :state="kpiState" />
+      <KpiCard title="响应中" :value="kpi.responding" color="#BA7517" :state="kpiState" />
+      <KpiCard title="今日已解决" :value="kpi.resolvedToday" color="#1D9E75" :state="kpiState" />
     </div>
 
     <ZiwiListToolbar

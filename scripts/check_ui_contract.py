@@ -24,6 +24,7 @@ E. `raw_transition`      `.vue` 内裸 `transition: …\d+m?s` / `cubic-bezier(`
 F. `media_breakpoint`    `@media (min|max)-width` 字面量必须 ∈ {600, 768, 1024}
 G. `inline_statuslabel`  页面内声明 `statusLabel` / `statusColor` / `RESULT_MAP`
 H. `legacy_term`         「维护」字样（`config/term.ts` 白名单豁免）
+I. `kpi_state_missing`   `<KpiCard>` 未声明 `state`（**目标 0**，见 §I 注释）
 
 ratchet 策略（架构 §8.5）
 ------------------------
@@ -313,6 +314,42 @@ def check_legacy_term(report: Report) -> None:
                 report.add("legacy_term", path, lineno, line.strip()[:110])
 
 
+# ── I. KpiCard 必须显式声明 state ────────────────────────────────
+KPICARD_OPEN = re.compile(r"<KpiCard\b")
+#: 属性名边界：前面必须是空白，允许 `state=` / `:state=` / `v-bind:state=`
+STATE_ATTR = re.compile(r"(?:^|\s)(?::|v-bind:)?state\s*=")
+
+
+def kpi_state_missing(text: str) -> list[tuple[int, str]]:
+    """找出没传 `state` 的 `<KpiCard ...>` 开标签。
+
+    为什么要这道闸：`KpiCard.state` 已收紧为必填，但 vue-tsc 不在
+    `run_all.py` 里 —— 只看 TS 的话，一个漏传的调用点在 CI 里是**静默通过**的。
+    而漏传的后果是空卡冒充真实值（见 `components/KpiCard.vue` 头注释）。
+
+    纯函数，供 `--self-test` 复用：闸的自证不能靠"再写一遍实现"。
+
+    已知取舍：开标签用「首个 `>`」界定，属性值里若出现 `>`（如 `v-if="a > b"`）
+    会提前截断 —— 当前无此写法，且截断方向是**多报**（把后面的 state 截掉），
+    不会漏报，属可接受的保守偏差。
+    """
+    hits: list[tuple[int, str]] = []
+    for m in KPICARD_OPEN.finditer(text):
+        start = m.start()
+        end = text.find(">", start)
+        tag = text[start:] if end < 0 else text[start:end]
+        if not STATE_ATTR.search(tag):
+            lineno = text[:start].count("\n") + 1
+            hits.append((lineno, " ".join(tag.split())[:110]))
+    return hits
+
+
+def check_kpi_state(report: Report) -> None:
+    for path in iter_frontend_files((".vue",)):
+        for lineno, snippet in kpi_state_missing("\n".join(read_lines(path))):
+            report.add("kpi_state_missing", path, lineno, snippet)
+
+
 def run_checks() -> Report:
     """跑全部检查项。"""
     report = Report()
@@ -326,6 +363,7 @@ def run_checks() -> Report:
         "media_breakpoint",
         "inline_statuslabel",
         "legacy_term",
+        "kpi_state_missing",
     ):
         report.counts.setdefault(key, 0)
 
@@ -337,7 +375,42 @@ def run_checks() -> Report:
     check_media_breakpoint(report)
     check_inline_statuslabel(report)
     check_legacy_term(report)
+    check_kpi_state(report)
     return report
+
+
+def self_test() -> int:
+    """检查项自身的行为自证（正向 + 负向 + 退化注入）。
+
+    ★ 没有负向用例的闸 = 没有闸。历史教训：热区闸曾只剩"断言 CSS 变量文本存在"，
+      报 24/24 全绿，实际一个控件都没量过。
+    """
+    cases = [
+        # (说明, 输入, 期望命中数)
+        ("漏传 state 必须报", '<KpiCard title="待响应" :value="1" />', 1),
+        ("传 :state 不许报", '<KpiCard title="待响应" :value="1" :state="s" />', 0),
+        ("传 state 字面量不许报", '<KpiCard title="a" :value="1" state="real" />', 0),
+        ("多行标签里 state 也算", '<KpiCard\n  title="a"\n  :value="1"\n  :state="s"\n/>', 0),
+        ("v-bind:state 也算", '<KpiCard title="a" v-bind:state="s" />', 0),
+        # 退化注入：若把判据写成「标签里出现 state 子串就放过」，这条会漏报
+        ("相似属性名不许冒充 state", '<KpiCard title="a" stateless="x" :value="1" />', 1),
+        # 退化注入：若判据退化成"整个文件出现 state 就不报"，一个文件两处只传一处会漏
+        ("同一文件两张卡只传一处必须报第二张",
+         '<KpiCard title="a" :state="s" />\n<KpiCard title="b" :value="2" />', 1),
+        ("无 KpiCard 不许误报", '<div class="x">hello</div>', 0),
+    ]
+    bad = 0
+    for i, (why, text, want) in enumerate(cases, 1):
+        got = len(kpi_state_missing(text))
+        flag = "ok" if got == want else "FAIL"
+        if got != want:
+            bad += 1
+        print(f"  [{flag}] I{i} {why}：期望 {want} 命中，实得 {got}")
+    if bad:
+        print(f"  ✗ 自证失败 {bad}/{len(cases)} 条 —— 判据本身不可信，拒绝出结论")
+        return 1
+    print(f"  ✓ 自证 {len(cases)}/{len(cases)} 通过")
+    return 0
 
 
 def load_baseline() -> dict:
@@ -397,7 +470,7 @@ def judge(report: Report, baseline: dict) -> list:
     problems = []
 
     # 硬性归零项
-    for key in ("dead_tailwind", "min_width_480"):
+    for key in ("dead_tailwind", "min_width_480", "kpi_state_missing"):
         if report.counts.get(key, 0) > 0:
             problems.append(f"{key} = {report.counts[key]}，要求 0")
 
@@ -452,7 +525,16 @@ def main() -> int:
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="列出每条命中（默认只列前 20 条）"
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="只跑检查项自身的正负向自证，不扫代码（用于改判据后先自证）",
+    )
     args = parser.parse_args()
+
+    if args.self_test:
+        print("UI 契约闸 · 判据自证")
+        return self_test()
 
     report = run_checks()
 
@@ -462,6 +544,12 @@ def main() -> int:
 
     baseline = load_baseline()
     problems = judge(report, baseline)
+
+    # ★ 判定前先自证：判据坏了，下面所有数字都是假绿。
+    n_bad = self_test()
+    if n_bad:
+        print("\n✗ 判据自证未通过，本次结论不予采信")
+        return 1
 
     if args.json:
         print(
@@ -502,7 +590,7 @@ def main() -> int:
                 print(f"  … 另有 {len(report.findings) - limit} 条，用 -v 查看全部")
         return 1
 
-    print("\n通过：dead_tailwind / min_width_480 / media_breakpoint 全为 0，ratchet 未回退")
+    print("\n通过：dead_tailwind / min_width_480 / media_breakpoint / kpi_state_missing 全为 0，ratchet 未回退")
     return 0
 
 

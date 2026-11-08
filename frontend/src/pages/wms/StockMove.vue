@@ -54,10 +54,10 @@ onMounted(() => { loadWarehouses(); loadMaterials() })
   <div>
     <van-nav-bar title="库存移动" />
     <van-form @submit="handleSubmit" style="padding:16px">
-      <van-field name="warehouse" label="目标仓库" :value="selectedWh ? (warehouses.find(w => w.id === selectedWh)?.name || '') : ''" is-link @click="showWhPicker = true" />
-      <van-field name="material" label="物料" :value="materials.find(m => m.id === form.material_id)?.code || ''" is-link @click="showMatPicker = true" />
-      <van-field name="source_location" label="源库位" :value="locations.find(l => l.id === form.source_location_id)?.location_code || ''" is-link @click="showSrcLocPicker = true" />
-      <van-field name="target_location" label="目标库位" :value="locations.find(l => l.id === form.target_location_id)?.location_code || ''" is-link @click="showTgtLocPicker = true" />
+      <van-field name="warehouse" label="目标仓库" :model-value="selectedWh ? (warehouses.find(w => w.id === selectedWh)?.name || '') : ''" is-link readonly @click="showWhPicker = true" />
+      <van-field name="material" label="物料" :model-value="materials.find(m => m.id === form.material_id)?.code || ''" is-link readonly @click="showMatPicker = true" />
+      <van-field name="source_location" label="源库位" :model-value="locations.find(l => l.id === form.source_location_id)?.location_code || ''" is-link readonly @click="showSrcLocPicker = true" />
+      <van-field name="target_location" label="目标库位" :model-value="locations.find(l => l.id === form.target_location_id)?.location_code || ''" is-link readonly @click="showTgtLocPicker = true" />
       <van-field v-model.number="form.quantity" label="移动数量" type="digit" />
       <van-field v-model="form.unit" label="单位" />
       <van-field v-model="form.batch_no" label="批号" />

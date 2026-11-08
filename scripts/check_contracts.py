@@ -91,11 +91,14 @@ BASELINE = Path(__file__).with_name("contracts_baseline.json")
 
 # 已知死代码：整个文件没有调用方，里面的不一致先不拦，但要一直看得见。
 # 条件一旦变化（有人接线）必须先清掉这一条 —— 所以每次运行都会打印出来。
-DEAD_CODE = {
-    "app/services/data_collection_service.py":
-        "DataCollectionService 全无引用（api/data_collection.py 直接用 repo 打 SQL），"
-        "待整体删除或接线",
-}
+#
+# ★ 2026-11-08 清零：原登记项 `app/services/data_collection_service.py` 已删除。
+#   它不只是没人引用，方法名还与 repo 脱节（调 `repo.list_tasks` /
+#   `repo.list_iot_devices` / `repo.list_monitors`，而 repo 里是
+#   `list_collect_tasks` / `list_devices` / `list_link_monitors`）——
+#   真被接上会立刻 AttributeError，属**过期副本**而不是「待接线」，
+#   故按「删除」处理。机制保留空表，下次出现死代码仍在这里登记。
+DEAD_CODE: dict[str, str] = {}
 
 DYN = "\u2026"  # 动态片段占位：f-string 的 {} / 变量拼接，静态看不见内容
 

@@ -24,14 +24,14 @@
 | B-17 | **`/wms/reports/summary` 名叫"收发存汇总"，实际只给期末快照** | 端点声明 `start_date` / `end_date` 两个参数，**从头到尾没被使用**；返回只有 `current_qty` / `locked_qty` / `available_qty` —— 没有期初、没有收入、没有发出。前端报表页拿它当"库存汇总"用，数字对得上，所以一直没人发现 | 客户要"本月收发存"时给不出来；更要紧的是**参数收下不报错**，调用方以为区间生效了，实际拿到的是"此刻" —— 这是最容易让对账对不上的形态（口径错但不报错） | 建端点时只实现了库存表聚合，`start_date`/`end_date` 是从别的报表抄来的签名，没落地 | 二选一：①真的实现收发存（期初取区间前余额、收入/发出按 `inventory_transactions` 按类型汇总、期末=期初+收入−发出）；②把两个参数删掉、改名为"库存快照"，别让人以为能查历史。**倾向②**，真要做收发存应当独立端点 |
 | B-18 | **staging 上有 5 组 2026-07 遗留的重复单号，唯一索引一直建不起来** | `PO-RCV-07130753-001~004` 各 2 条、`ISO-07130753-001` 2 条，全是 07-12 23:53 那批"重复建单"测试留下的（同一秒建两遍）。`migrations/20261031_unique_doc_no.py` 遇到重复会**拒绝建索引并留给人判** —— 于是 `uq_receipt_order_tenant_no` / `uq_issue_order_tenant_no` 从来没建成，单号唯一性在 staging 上一直是空的 | 探针 `doc_no_unique D10` 恒红；更实际的是这条防线在预发布环境等于没有 | 迁移设计如此（不自动清理单号是有意的，见该文件说明） | 11-01 已把后建的那批加 `-DUP{id}` 后缀释放唯一键并补建索引。**待拍板**：这批 `-DUP` 单要不要从 staging 彻底删掉（含其实收明细），还是留着当"当年踩过的坑"的物证 |
 | B-19 | **`mfg1_e2e` 里还有写死的陈旧结论文案（PARTIAL 项）** | TC-04 说「BOM 快照/齐套性随下达链路阻断」，但同一条输出里「下达: 下达成功」—— BUG-5 早已修复，文案没跟着改；TC-02 说「供应商/客户主数据后端无路由」，那是产品决策（见 B-11），不是缺陷 | 每次跑都把一个**陈旧结论**原样打出来，读报告的人会以为链路仍是断的。属于「假信号」，和 C-85 修的 TC-07/TC-08 同一类 | 只改了结论文案，没跟上真实状态；TC-07/TC-08 已在 `a829819` 之后顺手改成真调接口，TC-04/TC-02 还没动 | 要么把 TC-04 补成真验证（completed_qty 回写 + BOM 快照比对），要么把 PARTIAL 降级成明确的「未实现」；TC-02 直接引用 B-11 说明即可。**不要**只改字面让它看起来绿 |
-| B-20 | **批次三级赋码链路不完整（TD-/TZ-/TC-）** | 场景真源要求定子 `TD-`、转子 `TZ-`、成品 `TC-` 三级码在 MA020 合装永久绑定；staging 280 个批次里只有 2 个 `TC-`，`TD-`/`TZ-` 一个都没有，其余是 `PUR/WO/B/QD` 等业务批号 | 客户要的「成品码展开定子/转子全历史、反向由定子码查成品」没有数据载体；V9 账本 PASS 只证明追溯接口能跑，不证明三级赋码成立 | 造数脚本按通用批号生成，没按工艺卡三级赋码规则落 `batches` 与绑定节点 | 见 §五：先确认 MA020 是扫码绑定交互还是后台自动关联，再定编码规则与绑定表；不接受只补两行种子数据充数 |
-| B-21 | **`operations.is_critical` 45 道工序全 0** | 模型、`basic_data_repo`、PFMEA 发布回写链路都在（迁移 `20261104_operation_critical.py` 每次部署都会跑）；但 staging 实测 45 道工序 `is_critical=true` 为 0 条 | 路线页关键工序标记恒不亮，PFMEA 高风险联动没有实值可验 | 存量种子从未跑过 PFMEA 发布，字段默认 false 是合法初值，不是字段坏了 | 见 §五：先定关键工序的业务判定真源（PFMEA RPN 阈值还是客户工艺卡标注），再决定补维护入口还是补种子；不许批量刷 true |
-| B-22 | **洁净度等级实值全空** | `core/enums.py::CLEANLINESS_LABELS`、`core/env_req.py`、前端 `enums.ts`、`test_env_req_domain.py` 的值域/派生/测试闸都完备；但 staging 45 道工序 `env_req` 全为 null | 工序「环」要素筛选与洁净度看板恒空。注意这是**实值缺失不是实现缺失**，别照旧结论去重做值域 | 客户 V1.1 补充条款只确认了在线充磁、炉时≥30 分、同装 4pcs、RT060 无温度烘烤，未给洁净度等级 | 见 §五：需客户确认哪几道工序有洁净要求及等级；`none`（评估过不需要）与空（没填）必须分开，不许拿 `none` 批量回填 |
-| B-23 | **`wc_type` 两条口径轴仍并存** | `WC_TYPE_LABELS` 已是唯一值域（C-59 把兜底与派生工艺性质拆开），staging 35 个工位分布 machining 3 / quality 9 / heat_treat 4 / assembly 19；但档案字段与由工序派生的工艺性质在筛选语义上仍可能同时出现 | 同一页面两个工位类型筛选器取值不同会给出不同结果集，且不报错 | 值域统一了，语义标签没统一 | 见 §五：定一个展示名 + 一个派生真源，另一个改叫「档案类别」并标注兜底；补静态闸防两份筛选配置再长出来 |
-| B-24 | **驾驶舱与车间大屏两套 KPI 视觉** | `CockpitKpi.vue`（`ck` 样式）与 `WorkshopScreen.vue` 复用的 `components/KpiCard.vue` 都吃 `KpiState`，布局/配色/三态表现各一套 | 同一指标两个屏长得不一样；#73 的下探契约闸只覆盖驾驶舱那套 | 两个组件在不同迭代各自建成，没有收敛 | 见 §五：抽一份 KPI 视觉真源、两边只传 props；改造必须同步跑 `check_drilldown_contract.py` 与下探 E2E |
-| B-25 | **`van-field` 绑定写法混用** | 旧项写的 `:value` 已不存在；实测 `AdvancedSearchPanel.vue` 同一文件里 `:model-value`（197/205 行）与 `v-model`（216/219/225/228 行）并存，`ZiwiQtyField.vue` 用 `:model-value` | 值回显与输入事件两套语义混在一个表单里，改一处容易漏另一处；Vant4 下 `:value` 会静默不生效 | 历次改造只改了出问题的那几行，没做全量收敛 | 见 §五：统一 `:model-value` + `@update:model-value`，补静态闸禁 `:value` 与同文件混用；纯前端低风险 |
-| B-26 | **`data_collection_service.py` 死代码** | 3087 字节，`DataCollectionService` 全仓零引用；`scripts/check_contracts.py::DEAD_CODE` 每轮打印 11 处命中，`deliverables/mfg1-coverage-validation-report-20261103.md` 第 183 行记着方法名与仓储实际方法全对不上 | 有人接线时会连环 AttributeError；一直留着也让契约报告长期带一条噪音 | 早期骨架服务，`api/data_collection.py` 后来直接用 repo 打 SQL | 见 §五：二选一——删文件并从 `DEAD_CODE` 移除，或接线并修方法名；先确认 M12 数据采集还需不需要 service 层 |
-
+| B-20 | **批次三级赋码链路不完整（TD-/TZ-/TC-）** **→ 2026-11-08 复核：仍开，但已给出可执行规格（§5.5）** | 场景真源要求定子 `TD-`、转子 `TZ-`、成品 `TC-` 三级码在 MA020 合装永久绑定；staging 280 个批次里只有 2 个 `TC-`，`TD-`/`TZ-` 一个都没有，其余是 `PUR/WO/B/QD` 等业务批号 | 客户要的「成品码展开定子/转子全历史、反向由定子码查成品」没有数据载体；V9 账本 PASS 只证明追溯接口能跑，不证明三级赋码成立 | 造数脚本按通用批号生成，没按工艺卡三级赋码规则落 `batches` 与绑定节点 | 见 §五：先确认 MA020 是扫码绑定交互还是后台自动关联，再定编码规则与绑定表；不接受只补两行种子数据充数 |
+| B-21 | **`operations.is_critical` 45 道工序全 0** **→ 2026-11-08 定性：非代码缺陷，链路完好（§5.4）** | 模型、`basic_data_repo`、PFMEA 发布回写链路都在（迁移 `20261104_operation_critical.py` 每次部署都会跑）；但 staging 实测 45 道工序 `is_critical=true` 为 0 条 | 路线页关键工序标记恒不亮，PFMEA 高风险联动没有实值可验 | 存量种子从未跑过 PFMEA 发布，字段默认 false 是合法初值，不是字段坏了 | 见 §五：先定关键工序的业务判定真源（PFMEA RPN 阈值还是客户工艺卡标注），再决定补维护入口还是补种子；不许批量刷 true |
+| B-22 | **洁净度等级实值全空** **→ 2026-11-08 定性：非代码缺陷，缺的是业务实值（§5.4）** | `core/enums.py::CLEANLINESS_LABELS`、`core/env_req.py`、前端 `enums.ts`、`test_env_req_domain.py` 的值域/派生/测试闸都完备；但 staging 45 道工序 `env_req` 全为 null | 工序「环」要素筛选与洁净度看板恒空。注意这是**实值缺失不是实现缺失**，别照旧结论去重做值域 | 客户 V1.1 补充条款只确认了在线充磁、炉时≥30 分、同装 4pcs、RT060 无温度烘烤，未给洁净度等级 | 见 §五：需客户确认哪几道工序有洁净要求及等级；`none`（评估过不需要）与空（没填）必须分开，不许拿 `none` 批量回填 |
+| B-23 | **`wc_type` 两条口径轴仍并存** **→ 2026-11-08 定性：已是门禁守卫的口径张力，非缺陷（§5.4）** | `WC_TYPE_LABELS` 已是唯一值域（C-59 把兜底与派生工艺性质拆开），staging 35 个工位分布 machining 3 / quality 9 / heat_treat 4 / assembly 19；但档案字段与由工序派生的工艺性质在筛选语义上仍可能同时出现 | 同一页面两个工位类型筛选器取值不同会给出不同结果集，且不报错 | 值域统一了，语义标签没统一 | 见 §五：定一个展示名 + 一个派生真源，另一个改叫「档案类别」并标注兜底；补静态闸防两份筛选配置再长出来 |
+| B-24 | ~~**驾驶舱与车间大屏两套 KPI 视觉**~~ **已闭 → C-86**（真问题是三态语义不是视觉） | `CockpitKpi.vue`（`ck` 样式）与 `WorkshopScreen.vue` 复用的 `components/KpiCard.vue` 都吃 `KpiState`，布局/配色/三态表现各一套 | 同一指标两个屏长得不一样；#73 的下探契约闸只覆盖驾驶舱那套 | 两个组件在不同迭代各自建成，没有收敛 | 见 §五：抽一份 KPI 视觉真源、两边只传 props；改造必须同步跑 `check_drilldown_contract.py` 与下探 E2E |
+| B-25 | ~~**`van-field` 绑定写法混用**~~ **已闭 → C-87**（`:value` 是真缺陷不是风格） | 旧项写的 `:value` 已不存在；实测 `AdvancedSearchPanel.vue` 同一文件里 `:model-value`（197/205 行）与 `v-model`（216/219/225/228 行）并存，`ZiwiQtyField.vue` 用 `:model-value` | 值回显与输入事件两套语义混在一个表单里，改一处容易漏另一处；Vant4 下 `:value` 会静默不生效 | 历次改造只改了出问题的那几行，没做全量收敛 | 见 §五：统一 `:model-value` + `@update:model-value`，补静态闸禁 `:value` 与同文件混用；纯前端低风险 |
+| B-26 | ~~**`data_collection_service.py` 死代码**~~ **已闭 → C-88**（确认是过期副本，按删除处理） | 3087 字节，`DataCollectionService` 全仓零引用；`scripts/check_contracts.py::DEAD_CODE` 每轮打印 11 处命中，`deliverables/mfg1-coverage-validation-report-20261103.md` 第 183 行记着方法名与仓储实际方法全对不上 | 有人接线时会连环 AttributeError；一直留着也让契约报告长期带一条噪音 | 早期骨架服务，`api/data_collection.py` 后来直接用 repo 打 SQL | 见 §五：二选一——删文件并从 `DEAD_CODE` 移除，或接线并修方法名；先确认 M12 数据采集还需不需要 service 层 |
+| B-27 | **UI 契约闸（`check_ui_contract.py`）已经红了很久，而且没进 `run_all`** | 2026-11-08 实跑：`media_breakpoint = 3`（`OperationList.vue:608` 480px、`Cockpit.vue:564` 900px、`Cockpit.vue:669` 720px，允许值只有 600/768/1024），`inline_style = 311` 超基线 306。而 `run_all.py` 的七道闸里**没有这一道**，所以它红了也没人知道 | 这是一道**看起来存在、实际不生效**的闸 —— 比没有闸更糟：`ui_contract_baseline.json` 停在 306 让人以为在守，实际已漂 5 条 | 基线之后又有人写内联 style / 自造断点，闸没进流水线所以没人拦 | 二选一：①把 3 处断点改成允许值、把 `inline_style` 清回 306，再把它接进 `run_all`；②确认废弃就直接删闸删基线，别留着假守。**不许直接重写基线把它们洗掉** |
 
 ## 二、已排期
 
@@ -128,6 +128,9 @@
 | C-83 | **四处「SQLite 收下、PG 拒绝」的方言/类型缺陷：两个接口 100% 500、两条派生链全断** + 静态闸补 2 条规则 | `e27135a` | 全量回归从 820/24 收敛到 833/24 后逐条定位，其中四处是真缺陷：**①库存预警扫描 100% 500** —— `wms_repo.list_below_safety_stock` 的 `HAVING current_stock < m.safety_stock_qty` 引用了 SELECT 别名；PG 的 HAVING 在 GROUP BY 之后求值、**看不到 select-list 别名**（`UndefinedColumnError`），SQLite 允许。改为 HAVING 里重复写聚合表达式。**②月报接口 100% 500** —— `production_repo.monthly_report` 里 `SELECT :month_start as month ... WHERE report_date >= :month_start` 把**同一参数**既当无类型常量又当日期比较，asyncpg 推断不出统一类型（`AmbiguousParameterError`）；拆出独立的 `:month_label`（`YYYY-MM`）专供回显。**③停机起点补录从来没通过** —— `PUT /tpm/downtimes/{id}` 收裸 `dict`，`started_at` 的 ISO 串原样进 `TIMESTAMPTZ` 参数（`DataError: expected datetime, got 'str'`）；改收 `UpdateDowntimeRequest(Optional[datetime])`。**④NCR 判返工两条派生链全断** —— `ncr_service._spawn_rework` 把 `"priority": "high"` 塞进 `work_orders.priority`（Integer），SQLite 亲和性兜住、PG 直接 `DataError`；连带"处置→自动生成返工工单"与"→自动生成再检检验单"在 staging 上跑不出来。改 `5`（0-5，越大越急）。**★静态闸补两条**：H「HAVING 引用 SELECT 别名」、I「写接口用裸 dict 收请求体」。**★刻意不做的一条**：整数列被赋字符串字面量 —— `priority` 是同名多态列（`work_orders`/`maintenance_tasks`/`trial_orders` 是 Integer，`lab_requests`/`andon_call` 是 String），行级扫描要么漏掉真正要拦的、要么误报 14 处合法写法，**一个 14 处误报的闸等于没有闸**，理由写进脚本 docstring 留档。pytest 1274 passed、静态闸 0 命中 |
 | C-84 | **全端点查询参数扫描一次性捞出 8 个 500，归为 6 个根因**（含 2 处「参数挂错表」的静默错数） | `b36336b` | 新写的 `e2e/query_param_sweep_e2e.py` 从 OpenAPI 枚举 192 个 GET / 339 个查询参数逐条注入样本值，**只把 5xx 判失败**，一次跑出全部 8 个断点 —— 换成"改一处、部署一次、再发现下一处"要来回 8 趟。根因六条：**①`work-reports?report_date=`** DATE 列绑字符串（`expected a date, got 'str'`）→ 仓储层转 `date`，API 层补 422。**②`inspection-orders?start_date=/end_date=`** TIMESTAMPTZ 绑字符串 → 新增 `_day_start()` 转当天零点；顺带修正语义 `<= end_date`→`< 次日零点`（原先查 11-01 反而查不到 11-01 的单）。**③`inspection-standards?qc_point_id=` / `quality-reports?qc_point_id=` 参数挂错表** —— 这两张表**根本没有 qc_point_id 列**，仓储层签名是 `(…, name, standard_type, is_enabled)` / `(…, report_type, period)`，多传的位置参数顺次落进下一个槽位：传数字 500、**传字符串则静默按错误字段过滤（接口 200、数据全错）**。删除伪参数，`quality-reports` 换成仓储层真正支持的 `report_type`/`period`。**④`collect/health`** `data_time >= :today::date` —— `::` 被 SQLAlchemy `text()` 当成第二个绑定参数，编出来就是 `syntax error at or near ":"`。**⑤`wms/reports/turnover`** `round(double precision, integer) does not exist`（PG 的 `round(x,n)` 只吃 numeric）→ 除法与舍入挪到 Python。**★同时修掉双表一对多 JOIN 互相放大**：原 SQL 同时 LEFT JOIN `inventory` 和 `inventory_transactions`，3 条库存行 × 10 条流水 = 30 行，`SUM(i.quantity)` 放大 10 倍、`SUM(t.quantity)` 放大 3 倍，周转率算错**且不报错**。改为三个单表 GROUP BY 后在 Python 合并。**⑥`wms/reports/slow-moving`** `can't subtract offset-naive and offset-aware datetimes`（TIMESTAMPTZ 读回来 aware、`datetime.now()` naive）→ 统一 UTC aware。另：`test_quality_api.py` 两条用例原先在**给有缺陷的契约背书**（`assert args[2] == 1  # qc_point_id`），改为断言真实筛选 + 钉死参数个数 |
 | C-85 | **测试覆盖缺口：3 个探针长期游离在套件外 + 浏览器脚本 6 处过时假设** | `b36336b` / `a829819` | 「全面测试」的实质是**先盘点再跑**：`e2e/` 下 42 个 py、`browser_test/` 下 24 个 js，`run_all.py` 只覆盖 38 个 py、浏览器只跑过 2 个。**①纳管**：`query_param_sweep_e2e`（新增）、`copilot_smoke`、`n5_posting_spec` 三个长期躺目录里没进套件的探针并入 `DEFAULT_PROBES`（38→41）；`run_all` 的汇总识别补 `"6/6 通过"` 形态（注意它是 通过数/总数，直接当通X断Y 会把 6/6 记成 6 通 6 断）。`closed_loop_probe.py` 是打印式排查脚本、无 PASS/FAIL，明确**不纳管**。**②浏览器脚本 6 处过时假设**（每一条都单独核过代码/接口才定性为"探针错"而非产品缺陷）：登录写死 `sleep(2000)`（staging 实测 ~4s 才跳转，后面 12~20 条断言全被带成假红）｜`role_perm_ui_e2e` 的 `API` 写死 `127.0.0.1:8000` → **界面打 staging、API 打本地库**，角色建到本地去了｜角色编码 `__e2e_role` 下划线开头违反「小写字母开头」规则 → 400｜U2b 写死权限总数 332（现 371，等于给权限体系设天花板）｜`permission_enforce` 把驾驶舱**可选 KPI 探活**的 403 算成页面故障（Cockpit 每个调用都 try/catch、无权限按设计降级成"暂不可用"）｜`stage5_rowdetail`/`stage5_union` 用旧标记 `.rd-row`（新版并集网格是 `.rd-cell`）+ 基础数据 4 页已改表格版 |
+| C-86 | **`KpiCard.state` 可选导致 6 个调用点渲染空卡冒充真实值**（B-24 收口） | 本批 | 原以为 B-24 是「两套视觉要合并」，取证后**推翻**：`CockpitKpi.vue` 头注释与本文件 `Dashboard.vue` 头注释各自写明分工（Cockpit 有占比进度条/异常语义着色/下探，KpiCard 是 4px 色条白卡），**刻意不复用**，视觉不同是有意的。真正的缺陷在三态语义：`KpiCard.state` 是**可选**，漏传时模板落到 `{{ value }}` 分支，`value` 为 `null` 就渲染成一张**空卡** —— 既不是 0 也不是「未接入」，看着像正常但什么都没说，且 TS 拦不住（漏传可选 prop 合法）。实测 6 个调用点漏传：`AndonList.vue` 3 张（失败时 value 被置成 `'—'`，卡上出现一个孤零零的破折号）、`EnergyDeviceList.vue` 3 张（`total` 失败时也是 0 → 显示「0 台」与「一台没接」长得一样；另两张塞 `"计算中"` / `"-"` 冒充读数）。**修法**：①`state` 收紧为**必填**（`KpiState`），让 vue-tsc 逐条报出漏传点；②读数为 `null`/`undefined`/`NaN` 时**一律按「未接入」显示**（`state:'real'` 配 null 属自相矛盾输入，不许空白也不许兜底成 0）；③补齐 6 处调用点，能耗页两张未接入指标改 `state="unavailable"`。**★新增静态闸 I `kpi_state_missing`（目标 0）**：vue-tsc 不在 `run_all` 里，只靠 TS 等于 CI 静默通过；闸带 8 条自证（含"相似属性名 `stateless` 不许冒充 state""同文件两张卡只传一处必须报第二张"两条退化注入），`--self-test` 8/8 通过、实跑 `kpi_state_missing = 0`。验收：vue-tsc 66 条与基线一致、改动文件 0 错；后端 1709 passed / 0 |
+| C-87 | **WMS 三页 6 个选完不显示的 picker 字段（`:value` 在 Vant4 下静默失效）**（B-25 收口） | 本批 | 旧结论写「`:value` 已不存在」，**实测订正为 6 处仍在**：`StockMove.vue` 4 个（目标仓库/物料/源库位/目标库位）、`StockQuery.vue` 1 个、`StockReport.vue` 1 个，全是 `is-link @click` 的只读展示字段。根因不是风格问题：本地 `node_modules/vant` 是 **4.9.24**，`Field.mjs` 的 props 只有 `modelValue`（第 23 行），`value` 不是 prop → 走属性 fallthrough 落到根节点成 DOM 属性，**输入框永远空**；而 `Field` 渲染 `Cell` 时 `value` 走的是 slot（`Field.mjs:541`），slot 优先于 Cell 的 `value` prop，所以连"歪打正着"都没有 —— 选了仓库/物料，字段仍是空白。同仓 168 处 `v-model` 才是 Vant4 正解。**修法**：6 处改 `:model-value` + 补 `readonly`（与 `lab/RequestList.vue`、`lab/StandardsList.vue` 的 picker 写法对齐），防止手输脏值。**★刻意不动**的 4 处：`ControlLimitList.vue:215/216` 等 `:model-value` 配 `@update:model-value` 是**有意的双向受控**（`Number()` 转换、`null` 回填），改成 `v-model` 会把转换逻辑丢掉。验收：vue-tsc 66 条与基线一致；构建入口由 `index-C9Qmsnpo.js` 变 `index-CdqzC76U.js` |
+| C-88 | **`data_collection_service.py` 是过期副本不是「待接线」**（B-26 收口） | 本批 | 全仓零引用（`grep -rn DataCollectionService` 只命中自身），但**删它的理由不是没人用**：它的方法名与 `data_collection_repo` 已经脱节 —— service 调 `repo.list_tasks` / `repo.list_records` / `repo.list_iot_devices` / `repo.list_monitors`，而 repo 实际是 `list_collect_tasks` / `list_collect_records` / `list_devices` / `list_link_monitors`（`api/data_collection.py` 390 行全程直调 repo，用的正是后者）。也就是说「接线」这条路**不成立**：接上就 AttributeError。按过期副本处理直接删除，`check_contracts.py::DEAD_CODE` 清空并保留机制（`DEAD_CODE: dict[str, str] = {}`，下次真出现死代码仍在此登记），文件头注明删除理由。验收：契约闸 `✅ 无新增契约断裂（基线内 16 处存量）`、扫描文件 206→205、「已知死代码」噪音块整段消失；`run_all` 覆盖棘轮 462/462 不变 |
 
 ### "读错表/读错范围"专项（C-44 暴露的缺陷形态）
 比"报错"更贵的一类是**静默读错**：接口 200、字段齐全、界面正常渲染，只是数据是别的范围/另一张表的。症状统一为"某个功能一直给出恒定值"，而查代码往往看不出问题（SQL 是合法的、只是条件少了）。
@@ -215,62 +218,106 @@ SQLite 驱动什么都不挑（日期给字符串、布尔给整数都收），a
 
 ---
 
-## 五、长期项方案（2026-11-08 取证，只出方案不实施）
+## 五、长期项方案（2026-11-08 第二轮：三项已落地，四项已定性）
 
-> 本节只给方案与判据，**一行实现都没写**。取证口径：staging `AH-THR`
-> （`t_1692982c9cb7`），2026-11-08 部署 `08b57be` 后只读回读。
-> 上表 B-20 ~ B-26 是本节的索引；需要哪一项落地，先拍板优先级再单独开链。
+> 第一轮（同日上午）只出方案不实施。第二轮按「有想法就做」直接推进，
+> 结果是：**B-24 / B-25 / B-26 已落地并各自配闸**（§三 C-86 ~ C-88）；
+> **B-21 / B-22 / B-23 取证后定性为非代码缺陷**（§5.4）；
+> **B-20 仍开**，但已给出可执行规格（§5.5），下一轮不必再调研。
+> 取证口径：staging `AH-THR`（`t_1692982c9cb7`）只读回读 + 本地全量门禁。
 
-### 5.1 四项统一原则（七项共用）
+### 5.1 四项统一原则（全部七项共用，未变）
 
 1. **值域单一真源**：枚举与口径只在 `backend/app/core/enums.py` 和
    `frontend/src/config/enums.ts` 定义，界面出口走 `enumLabel` / `enumOptions`
-   等既有函数。B-22 / B-23 不许再造第二份清单。
-2. **实值类问题回到客户工艺卡**：B-20 / B-21 / B-22 都是「库里没填」，
-   但缺的是**业务事实**不是字段。不许用种子脚本编造、不许批量刷默认值换绿；
-   先拿 V1.1 之后的客户确认件，再定录入或注入口。
-3. **先补负向自证闸再改**：本轮三条红全是探针自身问题，修法一律配了
-   退化注入（恒空 / 旧写法注入必须报红）。这七项落地时同样要求
-   「把判据猴补丁成恒真，自测必须报红」，否则不算完成。
+   等既有函数。不许再造第二份清单。
+2. **实值类问题回到客户工艺卡**：缺的若是**业务事实**而不是字段，
+   不许用种子脚本编造、不许批量刷默认值换绿。
+3. **先补负向自证闸再改**：判据必须能自证 —— 把它猴补丁成恒真，自测必须报红。
+   本轮新增的闸 I 带 8 条自证，就是这个标准的样板。
 4. **门禁不变**：pytest → 本地 run_all → staging run_all → 容器内产能闸
    `--check` → 覆盖棘轮 462/462 → 有前端改动再核构建入口 hash。
 
-### 5.2 优先级分组（自行判断，待拍板）
+### 5.2 状态与优先级（2026-11-08 复核后）
 
-| 组 | 项 | 判断 |
+| 状态 | 项 | 说明 |
 |---|---|---|
-| P1 低成本 / 低风险 | B-25、B-26 | 纯前端写法收敛与死代码二选一，不碰业务数据；B-26 删除后契约报告少一条长期噪音 |
-| P2 中成本 / 需业务确认 | B-21、B-22、B-24 | 值域与组件都在，缺的是实值判定真源或一次视觉收敛；B-24 要连带下探契约闸 |
-| P3 高成本 / 需产品拍板 | B-20、B-23 | B-20 跨 M13 追溯与车间扫码绑定交互，工作量与验收口径都需先定义；B-23 涉及档案字段与派生语义分离，C-59 只做了一半 |
+| **已闭** | B-24 / B-25 / B-26 | C-86 三态语义收紧 + 闸 I；C-87 六处 picker 回显；C-88 删过期副本 |
+| **已定性 · 待业务输入** | B-21 / B-22 | 代码链路完好，缺的是业务实值（§5.4） |
+| **已定性 · 口径张力** | B-23 | 已有门禁守卫，只差定一处展示语义（§5.4） |
+| **待设计** | B-20 | 需 schema 增量 + 扫码交互决策（§5.5） |
 
 ### 5.3 值域 / 口径真源与影响面
 
 | 项 | 值域或口径真源 | 影响面 |
 |---|---|---|
-| B-20 | `docs/seed-scenario-A推进器厂-2026-11-03.md` §1.1 三级赋码；`batches.batch_no` 与 MA020 绑定节点 | M13 批次追溯、车间触屏扫码、V9 账本、客诉/召回范围 |
-| B-21 | `operations.is_critical`（PFMEA 发布回写，见 `fmea_repo.py`） | 路线页关键工序标记、PFMEA 联动、M03 质量计划 |
-| B-22 | `CLEANLINESS_LABELS` 与 `env_req.py`（值域已完备） | 工序高级检索、洁净度看板、V1.1 工艺卡补充 |
-| B-23 | `WC_TYPE_LABELS` 与 `WC_TYPE_EXTRA_ALLOWED`（值域已统一） | 工作中心列表与高级检索、工序派生工艺性质、产能工位聚合 |
-| B-24 | `KpiState`（`frontend/src/types/search`） | 驾驶舱、车间大屏、#73 KPI 下探契约闸 |
-| B-25 | Vant4 `model-value` 契约 | 高级检索面板、数量输入组件、所有 `van-field` 页面 |
-| B-26 | `scripts/check_contracts.py::DEAD_CODE` | 契约闸报告、M12 数据采集服务层 |
+| B-20 | `docs/seed-scenario-A推进器厂-2026-11-03.md` §1.1 三级赋码；`batches` 表结构 | M13 批次追溯、车间触屏扫码、V9 账本、客诉/召回范围 |
+| B-21 | `operations.is_critical`（PFMEA 发布回写，`fmea_repo.py`） | 路线页关键工序标记、PFMEA 联动、M03 质量计划 |
+| B-22 | `CLEANLINESS_LABELS` + `core/env_req.py`（值域已完备） | 工序高级检索、洁净度看板、V1.1 工艺卡补充 |
+| B-23 | `WC_TYPE_LABELS` + `WC_TYPE_EXTRA_ALLOWED`（值域已统一） | 工作中心列表与高级检索、工序派生工艺性质、产能工位聚合 |
 
-### 5.4 开放问题（需 Kane / 客户回答，本轮不自行拍板）
+### 5.4 三项「看起来是缺陷、取证后不是」的结论
 
-1. **B-20**：MA020 三码绑定是车间扫码交互（沿用 T01–T06b 触屏件）还是
-   后台按工序自动关联？单台整机是否允许缺定子码或转子码？缺码时阻断合装
-   还是记 BOUNDARY 放行？
-2. **B-21**：关键工序由 PFMEA 的 RPN 阈值自动判定，还是客户工艺卡直接标注？
-   存量 45 道工序要逐张回标，还是只对新单生效？
-3. **B-22**：客户 V1.1 之后是否另有洁净度清单？哪些工序填 `none`、
-   哪些留空（未评估）？这决定要不要新增录入界面。
-4. **B-23**：筛选器上要展示「档案类别」还是「派生工艺性质」？两者都留时
-   默认用哪个？
-5. **B-24**：车间大屏是否也要支持 KPI 下探？若支持，
-   `check_drilldown_contract.py` 的目标页清单要同步扩。
-6. **B-26**：M12 数据采集还计划保留 service 层吗？删掉会不会影响
-   `api/data_collection.py` 的后续重构方向？
+写在这里是为了**下一轮不要重复投入**。三条都有代码物证，不是推测。
 
-> 本轮交付边界：以上七项**只登记方案与开放问题，不改代码、不改数据**。
-> 相关实测数字见 `deliverables/report-sim-ah-thr.json` 与
-> `deliverables/ah-thruster-validation.json`（均为 2026-11-08 部署后回读）。
+1. **B-21 `is_critical` 全 0 = 没发布过高风险 PFMEA，不是功能坏了。**
+   链路四段全在：`models/basic_data.py:56` 建列（`nullable=False` +
+   `server_default false`）；`basic_data_repo.py:62~77` 手工建工序时
+   `setdefault(False)` 并显式写入；`fmea_repo.py:97` 注释与
+   `:195` 查询证明 **PFMEA 发布时按高风险项回写**；前端
+   `OperationList.vue:388/487`（列表标「关键」+ 表单开关）、
+   `RouteEditor.vue:58/197`（路线步骤读 `op_is_critical` 且注明「步骤自身不存该字段」）、
+   `config/searchFields.ts:181/192`（高级检索可按关键工序筛）。
+   → **结论：任何一处都不缺，缺的是「有人发布过一次高风险 PFMEA」。**
+   要验它只需走一遍 PFMEA 发布，不需要改代码。
+
+2. **B-22 洁净度全 null = 没维护，不是实现缺失。**
+   `core/env_req.py` 有 `encode/decode/flat_clean_level` 三件套；
+   `basic_data_repo.py:18~31` 读取时把 `env_req` JSON 解成结构化值并
+   **物化平铺 `clean_level`**（专供客户端检索求值）；前端
+   `OperationList.vue:17~20/33~37/80~88` 有完整录入控件（含独立 ref
+   避免 `editing.env_req` 踩空）、`ListRowDetail.vue:100~115` 有人读渲染、
+   `searchFields.ts:177` 有洁净度枚举筛选。**值域、派生、录入、检索、展示五段俱全。**
+   → 缺的是客户工艺卡里的洁净度等级。**`none`（评估过不需要）与空（没填）
+   必须分开**，不许拿 `none` 批量回填。
+
+3. **B-23 `wc_type` 两轴并存 = 已被门禁守住的已知张力，不是缺陷。**
+   `core/enums.py:148~199` 把这件事写透了：值域唯一真源 `WC_TYPE_LABELS`、
+   额外值白名单 `WC_TYPE_EXTRA_ALLOWED`、断言闸 `test_wc_type_domain.py`
+   把「比 `OP_TYPE` 多出来的值」钉死在白名单；第 170 行明确写
+   「两个答案都对……**当前没有任何计算按 `wc_type` 分支 —— 它只做等值筛选与展示**」。
+   → 只要没有计算逻辑按它分支，两轴并存不会产生错数；剩下的是**展示语义**
+   （筛选器标签叫「类型」还是「档案类别」），属文案级决策，不构成风险。
+
+### 5.5 B-20 可执行规格（下一步照做，不必重新调研）
+
+**现状硬事实**（2026-11-08 复核，省得下一轮再查一遍）：
+
+- `batches` 表（`models/wms.py:143`）字段只有：`id / tenant_id / batch_no /
+  material_id / supplier_batch_no / manufacture_date / expiry_date / status /
+  is_locked / lock_reason / created_at`，唯一约束 `uq_batches_tenant_material_no`。
+  **没有 `parent_batch_id`、没有 `batch_type`、没有 `work_order_id`**
+  → 「成品码展开定子/转子全历史」在现有结构上**没有载体**。
+- 全仓**无 TD-/TZ-/TC- 生成逻辑**，唯一命中的是
+  `test_iot_ingest_and_json_cols.py:145` 里写死的一个测试字串。
+- 平台**无序列号实体**：`is_serial_managed` 只是物料标志位（该缺口已在
+  `seed-scenario` §5 声明为 G1）。
+
+**三条路线（按代价排序，推荐 A）**：
+
+| 路线 | 做法 | 代价 | 能支撑什么 |
+|---|---|---|---|
+| **A 批次承载三级码**（推荐） | `batches` 增 `batch_type`(raw/wip/final) + `parent_batch_id`；赋码走**可配置前缀模板**（TD/TZ/TC 是客户命名，不许写死在平台代码里）；MA020 合装报工时建父子绑定 | 一次迁移 + 报工钩子 + 追溯查询沿 parent 链展开 | 双向追溯（成品→定子/转子、定子→成品）够用；不是严格序列号级 |
+| B 独立码实体 | 新建 `trace_codes(code, type, parent_code, work_order_id, operation_code)`，与批次并存 | 建表 + 扫码 UI + 绑定校验 + 反向查询，工作量最大 | 真正的序列号级追溯（G1 的完整解） |
+| C 只做种子近似 | 造数脚本按 TD/TZ/TC 生成 `batch_no` 充数 | 最小 | **只能让账本看起来有数据，属假绿**。不要做 |
+
+**仍需业务回答但不阻塞 A 开工的两问**：
+① MA020 三码绑定是车间扫码交互（沿用 T01–T06b 触屏件）还是后台按工序自动关联？
+② 单台整机缺定子码或转子码时，阻断合装还是记 BOUNDARY 放行？
+
+### 5.6 本轮交付边界
+
+- 代码改动只有 C-86 / C-87 / C-88 三项 + 新增静态闸 I（`kpi_state_missing`）。
+- **B-20 / B-21 / B-22 / B-23 一行代码都没改、一条数据都没动。**
+- 实测数字见 `deliverables/report-sim-ah-thr.json`（49/0）与
+  `deliverables/ah-thruster-validation.json`（PASS 14）。

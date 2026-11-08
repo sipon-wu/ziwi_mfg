@@ -83,7 +83,7 @@ onMounted(() => { loadWarehouses(); loadData() })
     <van-nav-bar title="库存查询" />
     <van-cell-group inset style="margin:8px">
       <van-field v-model="keyword" label="物料" placeholder="搜索物料编码/名称" @change="onSearch" />
-      <van-field name="warehouse" label="仓库" :value="warehouses.find(w => w.id === warehouseId)?.name || '全部'" is-link @click="showWhPicker = true" />
+      <van-field name="warehouse" label="仓库" :model-value="warehouses.find(w => w.id === warehouseId)?.name || '全部'" is-link readonly @click="showWhPicker = true" />
     </van-cell-group>
 
     <div class="ziwi-filter-bar ziwi-gap-2 ziwi-py-2 ziwi-px-4">

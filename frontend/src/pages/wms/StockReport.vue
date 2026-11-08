@@ -55,7 +55,7 @@ onMounted(() => { loadWarehouses(); loadReport() })
         <van-radio name="summary" style="margin-right:16px">汇总报表</van-radio>
         <van-radio name="location">库位明细</van-radio>
       </van-radio-group>
-      <van-field name="warehouse" label="仓库筛选" :value="warehouses.find(w => w.id === warehouseId)?.name || '全部'" is-link @click="showWhPicker = true" />
+      <van-field name="warehouse" label="仓库筛选" :model-value="warehouses.find(w => w.id === warehouseId)?.name || '全部'" is-link readonly @click="showWhPicker = true" />
     </van-cell-group>
 
     <!-- 汇总报表 -->
