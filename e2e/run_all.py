@@ -356,8 +356,16 @@ def _child_env() -> dict:
     # 账号密码同理（值本来就来自同一组环境变量，这里只是补齐别名）
     if env.get("E2E_USER") and not env.get("ADMIN_USER"):
         env["ADMIN_USER"] = env["E2E_USER"]
-    if env.get("E2E_PWD") and not env.get("ADMIN_PWD"):
-        env["ADMIN_PWD"] = env["E2E_PWD"]
+    if env.get("E2E_PWD"):
+        if not env.get("ADMIN_PWD"):
+            env["ADMIN_PWD"] = env["E2E_PWD"]
+        # ★ 第四个别名：`query_param_sweep_e2e` 与 `n5_posting_spec` 读的是
+        #   `E2E_PASSWORD`（其余 35 个读 `E2E_PWD`）。2026-11-09 实测：只传
+        #   `E2E_PWD=Ah@2026seed` 时这两个探针悄悄用默认 `admin123` 去登
+        #   `ah_admin` → 401「用户名或密码错误」，而 run_all 的汇总只显示
+        #   「登录失败」，看着像认证挂了。别名表本来就该和上面三组一样补齐。
+        if not env.get("E2E_PASSWORD"):
+            env["E2E_PASSWORD"] = env["E2E_PWD"]
 
     host = ""
     for v in (env.get("BASE_URL", ""), api):

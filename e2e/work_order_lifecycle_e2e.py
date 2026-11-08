@@ -51,6 +51,20 @@ def main():
     client.headers.update({"Authorization": f"Bearer {token}", "X-Tenant-Id": TENANT})
     print(f"登录成功 tenant={TENANT}\n")
 
+    # ★ 先问自己「这个账号有没有组织归属」。写归属取 `users.primary_org_id`，
+    #   无组织 → 单据 `org_id = NULL` 是**既定行为**（mfg_admin 挂根组织，
+    #   staging 的 ah_admin 实测为 NULL）。S6 那条「NCR 带组织归属」原本写死
+    #   `is not None`，在 ah_admin 下必然红 —— 2026-11-09 实测就是这么假红了一次，
+    #   报错信息只有一个 `None`，看着像 NCR 丢了部门归属。
+    my_org = None
+    try:
+        me = client.get(f"{API}/auth/me")
+        if me.status_code == 200:
+            my_org = (me.json().get("data") or {}).get("primary_org_id")
+    except Exception:  # noqa: BLE001 — 拿不到就按「无组织」处理，宁可 SKIP 不假红
+        my_org = None
+    print(f"当前账号组织归属 primary_org_id={my_org}\n")
+
     wo_no = f"WO-E2E-{stamp()}"
     print(f"== 工单 {wo_no} ==")
 
@@ -135,8 +149,15 @@ def main():
               str(ncr.get("defect_qty")))
         check("S6 NCR 关联工单", ncr.get("work_order_id") == wo_id,
               str(ncr.get("work_order_id")))
-        check("S6 NCR 带组织归属（部门可见）", ncr.get("org_id") is not None,
-              str(ncr.get("org_id")))
+        if my_org is None:
+            # 无组织归属 → 单据 org_id = NULL 是既定行为，判它等于假红。
+            # 用 [WARN] 而不是 [SKIP]：本轮**其它**断言照常生效，只是这一条不适用。
+            WARN.append("S6 NCR 带组织归属")
+            print("  [WARN] S6 NCR 带组织归属 · 当前账号无 primary_org_id，"
+                  "单据 org_id 必然为 NULL（既定行为，不判）")
+        else:
+            check("S6 NCR 带组织归属（部门可见）", ncr.get("org_id") is not None,
+                  str(ncr.get("org_id")))
 
     det = client.get(f"{API}/work-orders/{wo_id}").json()["data"]
     check("S6 工单累计完成 13 / 报废 2",

@@ -130,20 +130,38 @@ def load_spec() -> dict:
         return app.openapi()
     except Exception as e:  # noqa: BLE001
         print(f"[WARN] 本地导入 app 失败（{e}），回退到 HTTP 取 openapi.json")
-        r = httpx.get(f"{API_ROOT}/openapi.json", timeout=30)
-        if "json" not in (r.headers.get("content-type") or ""):
-            # 生产环境 nginx 只反代 /api/v1/*，站点根的 /openapi.json 会被
-            # SPA 兜底成 index.html。这时候报 JSONDecodeError 毫无信息量。
-            raise RuntimeError(
-                f"{API_ROOT}/openapi.json 返回的不是 JSON"
-                f"（{r.headers.get('content-type')}，{len(r.content)} 字节）——"
-                " 多半被前端 SPA 兜底了。请确保能 `from app.main import app`。"
-            )
-        return r.json()
+        # ★ 先试 API 前缀下那份，再试站点根。2026-11-09 实测 staging：
+        #   `/openapi.json`（站点根）被 nginx 的 SPA 兜底成 HTML（200 + text/html），
+        #   `/api/v1/openapi.json` 是 404 —— 线上**根本没暴露 OpenAPI**
+        #   （`openapi_url=None`）。原实现只试站点根，于是每次跑 staging 都抛
+        #   RuntimeError 判失败，看起来像"接口挂了"，其实是这个探针没有素材可用。
+        for cand in (f"{API}/openapi.json", f"{API_ROOT}/openapi.json"):
+            try:
+                r = httpx.get(cand, timeout=30)
+            except Exception:  # noqa: BLE001
+                continue
+            if "json" in (r.headers.get("content-type") or "") and r.status_code == 200:
+                return r.json()
+        raise OpenApiUnavailable(
+            f"{API}/openapi.json 与 {API_ROOT}/openapi.json 都拿不到 JSON ——"
+            " 线上未暴露 OpenAPI 时本探针没有素材可扫（见异常处理里的 SKIP 分支）。"
+        )
+
+
+class OpenApiUnavailable(RuntimeError):
+    """拿不到 OpenAPI 文档。**这是环境缺失，不是缺陷** —— 必须如实 SKIP。"""
 
 
 def main() -> int:
-    spec = load_spec()
+    # ★ 拿不到 OpenAPI = 没有素材，不是缺陷。如实 SKIP（0 通 0 断 + `[SKIP]`），
+    #   否则每次跑 staging 都红一条，跑的人早晚会学会无视这个探针 —— 那比没探针更糟。
+    try:
+        spec = load_spec()
+    except OpenApiUnavailable as e:
+        print(f"[SKIP] {e}")
+        print(f"      当前账号能登录，但 OpenAPI 不可读，无法枚举 query 参数。base={API}")
+        print("\n===== 合计 0 项：PASS 0 / FAIL 0（SKIP）=====")
+        return 0
     paths = spec.get("paths", {})
 
     with httpx.Client(timeout=60, follow_redirects=False) as c:
