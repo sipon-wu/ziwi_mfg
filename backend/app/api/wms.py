@@ -28,13 +28,15 @@ from app.services.wms_service import (
     InventoryAlertService, MaterialRequestService,
 )
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
+from app.repositories.dictionary_repo import DictionaryRepository
+from app.core.trace_code import RULE_FINAL, TRACE_RULE_DICT_CODE, prefix_of
 from app.services.idempotency import run_once
 from app.schemas.wms import (
     WarehouseCreate, WarehouseUpdate,
     ZoneCreate, ZoneUpdate,
     LocationCreate, LocationUpdate,
     MaterialCreate, MaterialUpdate,
-    BatchCreate, BatchUpdate,
+    BatchCreate, BatchUpdate, BatchComposeRequest,
     StockMoveRequest, LocationBatchGenerateRequest,
     ReceiptOrderCreate, ReceiptOrderUpdate, ReceiptOrderItemUpdate,
     IssueOrderCreate, IssueOrderUpdate, IssueOrderItemUpdate,
@@ -408,6 +410,66 @@ async def create_batch(req: BatchCreate, current_user: dict = Depends(get_curren
     result = await svc.create(data)
     return {"code": 0, "message": "批次创建成功", "data": result}
 
+
+@router.post("/batches/compose")
+async def compose_batch(
+    req: BatchComposeRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: BatchRepository = Depends(get_tenant_repo(BatchRepository)),
+    dict_repo: DictionaryRepository = Depends(get_tenant_repo(DictionaryRepository)),
+):
+    """扫码组套：扫描定子码 + 转子码 → 现场合成一个成品码，并建立父子关系。
+
+    权限码：``M04:wms_batch:execute``（2026-11-09 实测，非 ``batch:create``）。
+    ``compose`` 已登记进 ``core/permissions.py`` 的 ``EXECUTE_SUFFIXES``；不登记
+    的话末段动作词会被当成资源名，推出 ``M04:wms_batch_compose:create`` ——
+    一个没有任何角色拥有的码，除通配 ``*`` 外全员 403。
+
+    ★ 语义是「扫到才生效」：不提供"缺码也提交"的分支。缺码就是没扫到，
+      调用方不该发起这次请求 —— 真缺了直接 400，别静默成半成品。
+
+    ★ 成品码前缀不写死：从字典 ``trace_code_rule`` 读（item_code=规则键，
+      item_value=前缀）。客户叫 TD/TZ/TC 还是别的，是数据不是代码。
+    """
+    rules = await _trace_prefix_rules(dict_repo)
+    svc = BatchService(repo)
+    try:
+        data = await svc.compose(
+            stator_no=req.stator_no,
+            rotor_no=req.rotor_no,
+            work_order_id=req.work_order_id,
+            final_prefix=prefix_of(rules, RULE_FINAL),
+            tenant_id=current_user.get("tenant_id", "default"),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"code": 0, "message": "组套成功", "data": data}
+
+
+async def _trace_prefix_rules(dict_repo: DictionaryRepository) -> dict:
+    """读字典 ``trace_code_rule`` → {规则键: 前缀}。
+
+    字典没建 / 没配项 / 项被停用，都返回空 dict —— 由 `prefix_of` 走中性兜底。
+    **不在这里预置客户命名**：预置等于替客户拍板，猜错了比空着更难查。
+    """
+    try:
+        d = await dict_repo.get_dict_by_code(TRACE_RULE_DICT_CODE)
+        if not d:
+            return {}
+        items = await dict_repo.list_items(d["id"])
+    except Exception:  # noqa: BLE001 — 字典不可用不该挡住组套
+        return {}
+    out: dict = {}
+    for it in items or []:
+        code = (it.get("item_code") or "").strip()
+        val = (it.get("item_value") or "").strip()
+        if code and val and (it.get("status") or "active") == "active":
+            out[code] = val
+    return out
+
+
 @router.get("/batches/{batch_id}")
 async def get_batch(batch_id: int, repo: BatchRepository = Depends(get_tenant_repo(BatchRepository, require_auth=True))):
     svc = BatchService(repo)
@@ -415,6 +477,40 @@ async def get_batch(batch_id: int, repo: BatchRepository = Depends(get_tenant_re
     if not b:
         raise HTTPException(404, detail={"code": "404-0000", "message": "批次不存在"})
     return {"code": 0, "message": "success", "data": b}
+
+
+@router.get("/batches/{batch_id}/composition")
+async def composition_batch(
+    batch_id: int,
+    repo: BatchRepository = Depends(get_tenant_repo(BatchRepository, require_auth=True)),
+):
+    """组套构成：这个码是由哪些码组成的 / 它被装进了哪个码。
+
+    权限码：``M04:wms_batch:read``（2026-11-09 实测，非 ``batch:read``）。
+    ``composition`` 登记进 EXECUTE_SUFFIXES 只为让资源名收敛回 ``batch``，
+    不引入新权限码。
+
+    ★ **和 ``GET /trace/batch/{batch_no}`` 不是一回事，别合并**：
+      那条追溯走的是**物料流转**（原料批 → 收货/领料单 → 工单 → 成品批），
+      靠单据当边；这条走的是**装配构成**（定子码 + 转子码 → 成品码），
+      靠 `batches.parent_batch_id` 当边。两条边不同源，合并会得出错的关系。
+
+    两个方向都返回，前端按 `batch_type` 显示对应那半：
+    - 成品码（final）→ `children` 是它的定子 / 转子
+    - 部件码（wip）→ `parent` 是引用它的成品码
+    """
+    svc = BatchService(repo)
+    self_row = await svc.get(batch_id)
+    if not self_row:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    children = await repo.children_of(batch_id)
+    parent = await repo.parent_of(batch_id)
+    return {"code": 0, "message": "success", "data": {
+        "batch": self_row,
+        "children": children,
+        "parent": parent,
+    }}
+
 
 @router.put("/batches/{batch_id}")
 async def update_batch(batch_id: int, req: BatchUpdate,

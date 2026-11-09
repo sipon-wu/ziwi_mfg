@@ -350,12 +350,125 @@ class BatchRepository(MultiTenantRepository):
         )
 
     async def create(self, data: dict) -> int:
+        # ★ 固定列 INSERT 少一列 = 运行时 500（本仓踩过多次）。新增
+        #   `batch_type` / `parent_batch_id` 时必须同时补列名、占位符与
+        #   `setdefault` —— 否则老的调用方（`find_or_create`）传进来的 dict
+        #   没有这两个键，SQLAlchemy 直接 KeyError/绑定失败。
+        payload = {
+            "tenant_id": data.get("tenant_id"),
+            "batch_no": data.get("batch_no"),
+            "material_id": data.get("material_id"),
+            "supplier_batch_no": data.get("supplier_batch_no"),
+            "manufacture_date": data.get("manufacture_date"),
+            "expiry_date": data.get("expiry_date"),
+            "status": data.get("status") or "active",
+            "is_locked": data.get("is_locked", False),
+            "lock_reason": data.get("lock_reason"),
+            "batch_type": data.get("batch_type") or "raw",
+            "parent_batch_id": data.get("parent_batch_id"),
+        }
         return await self.execute(
             """INSERT INTO batches (tenant_id, batch_no, material_id, supplier_batch_no,
-               manufacture_date, expiry_date, status, is_locked, lock_reason)
+               manufacture_date, expiry_date, status, is_locked, lock_reason,
+               batch_type, parent_batch_id)
                VALUES (:tenant_id, :batch_no, :material_id, :supplier_batch_no,
-               :manufacture_date, :expiry_date, :status, :is_locked, :lock_reason)""",
-            data,
+               :manufacture_date, :expiry_date, :status, :is_locked, :lock_reason,
+               :batch_type, :parent_batch_id)""",
+            payload,
+        )
+
+    # ── 2026-11-09 B-20：组套追溯用 ────────────────────────────────
+
+    async def find_by_no(self, batch_no: str) -> List[Dict]:
+        """按码查批次（**跨物料**）。
+
+        扫码枪只吐一串码，现场不知道它对应哪个物料。唯一约束是
+        `(tenant_id, material_id, batch_no)` —— 结构上同一个码可以挂在不同物料下，
+        所以这里返回列表，由服务层判断「0 条 / 1 条 / 多条歧义」，不在这里猜。
+
+        ★ 注解必须写 `List[Dict]` 而不是 `list[dict]`：本类里有同名方法 `list()`，
+          类作用域内 `list` 会解析成那个**函数对象**，`list[dict]` 当场
+          `TypeError: 'function' object is not subscriptable`（启动即炸）。
+        """
+        page = await self.query_page(
+            """SELECT b.*, m.code AS material_code, m.name AS material_name
+               FROM batches b LEFT JOIN materials m ON m.id = b.material_id
+               WHERE b.batch_no = :no
+               ORDER BY b.id""",
+            {"no": batch_no}, 1, 20,
+        )
+        return page.get("items") or page.get("list") or []
+
+    async def latest_no(self, prefix_pattern: str) -> Optional[str]:
+        """当天该前缀下最大的码，用于算下一个流水号。
+
+        `ORDER BY LENGTH(...) DESC, ... DESC` 是必要的：流水号超过 4 位后
+        字符串比较会错（`-10000` 按字典序排在 `-9999` 前面），只按码排序会
+        把 9999 当最大值，然后一直撞唯一约束。
+        """
+        row = await self.query_one(
+            """SELECT batch_no FROM batches
+               WHERE batch_no LIKE :p
+               ORDER BY LENGTH(batch_no) DESC, batch_no DESC
+               LIMIT 1""",
+            {"p": f"{prefix_pattern}%"},
+        )
+        return (row or {}).get("batch_no")
+
+    async def children_of(self, batch_id: int) -> List[Dict]:
+        """成品码 → 部件（定子 / 转子）。"""
+        page = await self.query_page(
+            """SELECT b.*, m.code AS material_code, m.name AS material_name
+               FROM batches b LEFT JOIN materials m ON m.id = b.material_id
+               WHERE b.parent_batch_id = :id
+               ORDER BY b.id""",
+            {"id": batch_id}, 1, 50,
+        )
+        return page.get("items") or page.get("list") or []
+
+    async def parent_of(self, batch_id: int) -> Optional[dict]:
+        """部件码 → 挂了它的成品码。"""
+        return await self.query_one(
+            """SELECT b.*, m.code AS material_code, m.name AS material_name
+               FROM batches b
+               JOIN batches c ON c.parent_batch_id = b.id
+               LEFT JOIN materials m ON m.id = b.material_id
+               WHERE c.id = :id
+               ORDER BY b.id
+               LIMIT 1""",
+            {"id": batch_id},
+        )
+
+    async def link_parent(self, batch_id: int, parent_batch_id: int) -> int:
+        """把部件码挂到成品码上，返回影响行数。
+
+        `AND parent_batch_id IS NULL` 兼做**乐观锁**：两个工位同时对同一个定子码
+        组套时，第二个 UPDATE 影响 0 行 → 服务层据此报冲突并回滚整笔。
+        没有这个条件，同一个定子会被两台整机同时"认领"，追溯就此分叉。
+        """
+        return await self.execute(
+            "UPDATE batches SET parent_batch_id = :pid "
+            "WHERE id = :id AND parent_batch_id IS NULL",
+            {"pid": parent_batch_id, "id": batch_id},
+        )
+
+    async def resolve_final_material(self, work_order_id: int) -> Optional[dict]:
+        """工单 → 成品物料。
+
+        扫码组套现场只扫得到两个部件码（外加所在工单），成品该挂哪个物料必须
+        现查：`work_orders.product_code` ↔ `materials.code`。查不到就是成品没在
+        物料主数据建档 —— 那种情况下组套出来的码进不了库存，宁可当场报错。
+
+        跨表只读放在这里而不是新建一个仓储：批次域只有这一处需要，
+        为一行 JOIN 拉一个 `WorkOrderRepository` 进来反而让依赖更重。
+        """
+        return await self.query_one(
+            """SELECT wo.id AS work_order_id, wo.wo_no, wo.product_code,
+                      m.id AS material_id, m.code AS material_code, m.name AS material_name
+               FROM work_orders wo
+               LEFT JOIN materials m ON m.code = wo.product_code
+               WHERE wo.id = :wid""",
+            {"wid": work_order_id},
         )
 
     async def update(self, id: int, data: dict) -> int:

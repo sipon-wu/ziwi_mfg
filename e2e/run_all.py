@@ -95,6 +95,10 @@ DEFAULT_PROBES = [
     "supplier_master_e2e",
     "inspection_entry_e2e",
     "batch_trace_e2e",
+    # B-20 扫码组套（定子码 + 转子码 → 合成一个成品码）：自备三件主数据 + 工单，
+    # 覆盖成功形状 / 双向可查 / 重复组套被拒 / 缺码 / 扫到不存在的码 / 成品码再组套。
+    # 回收走 `probe_artifacts.py`（物料 `E2E-BC-*` → 连带删它的 batches 子行）。
+    "batch_compose_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",
     "equipment_fault_loop_e2e",

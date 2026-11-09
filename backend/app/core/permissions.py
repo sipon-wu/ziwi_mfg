@@ -81,6 +81,18 @@ EXECUTE_SUFFIXES: Set[str] = {
     "export", "move", "check", "sync", "ack", "calculate", "rollback",
     "reverse", "red-flush", "submit", "publish", "start", "stop", "reset",
     "reassign", "assign", "pause", "resume", "submit-inspection",
+    # 扫码组套（B-20 / C-95）：`POST /wms/batches/compose` 的末段是动作词。
+    # 不登记的话资源名被推成 `batch_compose`，权限码变成
+    # M04:batch_compose:create —— 一个没有任何角色拥有的码，除通配 * 外全员 403，
+    # 且报错文案指向页面上根本不存在的权限项（与 C-44 / C-45 / A-S1 / C-65 /
+    # material-check / init-admin / bom-diff / aql-plan 同一形态，第 N 次）。
+    # 登记后收敛回 M04:batch:create —— 能建批次的人就能做组套。
+    "compose",
+    # 组套构成 `GET /wms/batches/{id}/composition`：查询动作，登记只为让资源名
+    # 收敛回 `batch`（权限码 M04:batch:read），别让 `/composition` 变成第四个
+    # 无人拥有的资源。★ 与 `/trace/batch/{no}` 的物料流转追溯是两条不同的边，
+    # 不能合并成一个端点。
+    "composition",
     # 备件领用：不登记的话资源名会被推成 spare_part_consume，
     # 权限码变成 M02:spare_part_consume:create —— 一个没有任何角色拥有的码，
     # 除通配 *（admin）之外全员 403，且报错文案指向一个页面上不存在的权限项

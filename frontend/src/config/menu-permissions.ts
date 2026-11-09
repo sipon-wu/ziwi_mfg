@@ -48,6 +48,10 @@ export const menuPermissions: MenuPermission[] = [
       { childId: 'reports', perm: 'M01:report_daily:read' },
       { childId: 'schedule', perm: 'M01:work_order:read' },
       { childId: 'boms', perm: 'M02:bom:read' },
+      // 合装组套（B-20）走的是仓储批次域的写权限，不是 M01 —— 若不显式声明，
+      // 子菜单继承父级的 M01:work_order:read，于是"能看工单"的人都能看见入口，
+      // 点进去调 compose 却要 M04:wms_batch:execute 直接 403（system 组踩过同一坑）。
+      { childId: 'compose_batches', perm: 'M04:wms_batch:execute' },
     ],
   },
   {

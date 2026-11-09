@@ -399,6 +399,9 @@ const allMenuTree: MenuItem[] = [
     children: [
       { id: 'work_orders', path: '/work-orders', label: '工单管理' },
       { id: 'work_reports', path: '/work-reports', label: '报工管理' },
+      // B-20 合装组套：车间执行动作，所以挂在生产管理下而不是另开仓储组
+      // （仓储那 14 个页面本来就没有菜单入口，见台账 B-26，不在这一条里动）
+      { id: 'compose_batches', path: '/wms/batches/compose', label: '合装组套' },
       { id: 'reports', path: '/reports', label: '生产报表' },
       { id: 'schedule', path: '/schedule', label: '生产排产' },
       { id: 'boms', path: '/boms', label: 'BOM管理' },

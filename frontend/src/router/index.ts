@@ -142,6 +142,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'wms/stock-move', name: 'StockMove', component: () => import('@/pages/wms/StockMove.vue'), meta: { perm: 'M04:wms_inventory:read', title: '库存移动' } },
       { path: 'wms/inventory-counts', name: 'CountList', component: () => import('@/pages/wms/CountList.vue'), meta: { perm: 'M04:wms_inventory_count:read', title: '盘点管理' } },
       { path: 'wms/batches', name: 'BatchList', component: () => import('@/pages/wms/BatchList.vue'), meta: { title: '批次管理' } },
+      // B-20 合装组套：定子码 + 转子码 → 合成一个成品码（MA020 合装工位现场页）。
+      // ★ 路由必须排在 `wms/batches` 之后、且路径不能与 `wms/batches/:id` 同形 ——
+      //   本组没有 :id 路由，但保持 `/batches/compose` 这个字面段，将来加详情页
+      //   （`wms/batches/:id`）时不会被动态段吃掉。
+      { path: 'wms/batches/compose', name: 'BatchCompose', component: () => import('@/pages/wms/BatchCompose.vue'), meta: { perm: 'M04:wms_batch:execute', title: '合装组套' } },
       { path: 'wms/alerts', name: 'AlertList', component: () => import('@/pages/wms/AlertList.vue'), meta: { title: '库存预警' } },
       { path: 'wms/reports', name: 'StockReport', component: () => import('@/pages/wms/StockReport.vue'), meta: { title: '库存报表' } },
       // M16 - 试产管理

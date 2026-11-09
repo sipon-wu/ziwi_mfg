@@ -241,6 +241,106 @@ class BatchService:
     async def lock(self, id: int, reason: str):
         return {"affected": await self.repo.lock(id, reason)}
 
+    async def compose(self, *, stator_no: str, rotor_no: str, work_order_id: int,
+                      final_prefix: str, tenant_id: str) -> dict:
+        """定子码 + 转子码 → 合成一个成品码（MA020 合装扫码）。
+
+        ## 为什么「扫到才生效」
+
+        现场没有"提交组套表单"这一步：扫码枪扫到才算数，两个码都在才会产生
+        组套记录。所以这里不存在「缺码也允许提交」的分支 —— 缺码就是没扫到，
+        调用方根本不该发起这次请求。缺了直接报 400，别让它静默成一个半成品。
+
+        也因此：**没扫码的整机会体现为「有产量、无组套记录」**，追溯查它时
+        如实显示没有部件记录，不伪造、也不拦报工。
+
+        ## 校验顺序（错在哪一步要说得出来）
+
+        1. 码非空 → 2. 码存在且唯一 → 3. 父码本身不是成品码 → 4. 父码没被组套过
+        → 5. 工单的成品物料已建档 → 6. 生成成品码 → 7. 条件 UPDATE 绑定（乐观锁）
+
+        第 4 步和第 7 步是同一件事的两道关：4 是给人看的早失败，7 是并发下
+        真正兜底的那道（两个人同时扫同一个定子，第二个人的 UPDATE 影响 0 行）。
+        """
+        from app.core.business_time import business_today
+        from app.core.trace_code import (
+            RULE_FINAL, code_prefix_pattern, compose_code, seq_of,
+        )
+
+        stator_no = (stator_no or "").strip()
+        rotor_no = (rotor_no or "").strip()
+        if not stator_no or not rotor_no:
+            raise ValueError("定子码与转子码都要扫到才能组套（扫到才生效）")
+        if stator_no == rotor_no:
+            raise ValueError("定子码与转子码不能是同一个码")
+
+        parents: list[dict] = []
+        for label, code in (("定子码", stator_no), ("转子码", rotor_no)):
+            rows = await self.repo.find_by_no(code)
+            if not rows:
+                raise LookupError(f"{label}「{code}」不存在，请先确认该部件已赋码")
+            if len(rows) > 1:
+                raise ValueError(
+                    f"{label}「{code}」命中 {len(rows)} 条批次记录（不同物料同码），"
+                    "请先在批次台账核对，系统不替你挑一条")
+            row = rows[0]
+            if (row.get("batch_type") or "") == "final":
+                raise ValueError(
+                    f"{label}「{code}」已经是成品码，不能再拿去组套")
+            already = await self.repo.parent_of(row["id"])
+            if already:
+                raise ValueError(
+                    f"{label}「{code}」已组套到成品码「{already.get('batch_no')}」，"
+                    "不能重复组套（返修请先拆解）")
+            parents.append(row)
+
+        wo = await self.repo.resolve_final_material(work_order_id)
+        if not wo:
+            raise LookupError(f"工单 {work_order_id} 不存在")
+        if not wo.get("material_id"):
+            raise ValueError(
+                f"工单「{wo.get('wo_no')}」的产品「{wo.get('product_code')}」"
+                "未在物料主数据建档，组套出的成品码无法入库")
+
+        prefix = final_prefix or ""
+        if not prefix:
+            raise ValueError("成品码前缀未配置")
+        today = business_today().isoformat()
+        latest = await self.repo.latest_no(code_prefix_pattern(prefix, today))
+        seq = (seq_of(latest) or 0) + 1
+        final_no = compose_code(prefix, today, seq)
+
+        new_id = await self.repo.create({
+            "tenant_id": tenant_id,
+            "batch_no": final_no,
+            "material_id": wo["material_id"],
+            "status": "active",
+            "batch_type": "final",
+        })
+
+        for p in parents:
+            affected = await self.repo.link_parent(p["id"], new_id)
+            if affected < 1:
+                # 并发：刚查过还没挂，落库这一刻被别人抢了 → 整笔回滚
+                raise ValueError(
+                    f"部件码「{p['batch_no']}」刚刚被另一次组套占用，请重新扫码")
+
+        return {
+            "batch_id": new_id,
+            "batch_no": final_no,
+            "rule": RULE_FINAL,
+            "work_order_id": wo["work_order_id"],
+            "wo_no": wo.get("wo_no"),
+            "material_id": wo["material_id"],
+            "material_code": wo.get("material_code"),
+            "parents": [
+                {"batch_id": p["id"], "batch_no": p["batch_no"],
+                 "material_id": p.get("material_id"),
+                 "material_code": p.get("material_code")}
+                for p in parents
+            ],
+        }
+
 
 # ============================================
 # 库存 Service

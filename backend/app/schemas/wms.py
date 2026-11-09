@@ -136,6 +136,28 @@ class BatchCreate(BaseModel):
     status: str = "active"
     is_locked: bool = False
     lock_reason: Optional[str] = None
+    # 三级码（B-20）：不填按来料码处理 —— 收货入账建的都是原料批次
+    batch_type: str = Field("raw", description="raw 原料码 / wip 部件码 / final 成品码")
+    parent_batch_id: Optional[int] = Field(None, description="组套父批次ID（一般由扫码组套写入，不手填）")
+
+    @field_validator("batch_type")
+    @classmethod
+    def _valid_batch_type(cls, v: str) -> str:
+        allowed = {"raw", "wip", "final"}
+        if v not in allowed:
+            raise ValueError(f"batch_type 只能是 {sorted(allowed)}，收到 {v!r}")
+        return v
+
+
+class BatchComposeRequest(BaseModel):
+    """扫码组套：定子码 + 转子码 → 合成一个成品码。
+
+    ★ 没有「缺码也提交」这种请求 —— 现场是扫到才生效，两个码都在才会发起。
+      这里三个字段都必填，缺一个连请求都构造不出来（前端按钮也是两码齐才可点）。
+    """
+    work_order_id: int = Field(..., description="合装所在工单（成品物料由它反查）")
+    stator_no: str = Field(..., min_length=1, max_length=64, description="定子码（扫码）")
+    rotor_no: str = Field(..., min_length=1, max_length=64, description="转子码（扫码）")
 
 class BatchUpdate(BaseModel):
     supplier_batch_no: Optional[str] = None

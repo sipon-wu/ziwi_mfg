@@ -1,7 +1,7 @@
 """M20 仓储管理（WMS）模块 — ORM 模型（15 张表）"""
 from sqlalchemy import (
     Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean,
-    UniqueConstraint, text,
+    UniqueConstraint, Index, text,
 )
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
@@ -154,6 +154,17 @@ class Batch(Base):
     status           = Column(String(32), default="active", comment="active/locked/expired/blocked")
     is_locked        = Column(Boolean, default=False, comment="是否锁定")
     lock_reason      = Column(String(256), comment="锁定原因")
+    # ── 2026-11-09 B-20：三级码与组套（定子 + 转子 → 合成成品码）────────────
+    # `batch_type` 只表达「这个码是哪一级」，不表达命名规则 —— 客户叫 TD/TZ/TC
+    # 还是别的，由 `core/trace_code.py` 的前缀模板决定，代码里不许出现字面量。
+    # ★ nullable=False 必须同时给 server_default：`default=` 只作用于 ORM 层，
+    #   手写迁移 ALTER 出来的列对存量行是 NULL，PG 会直接拒绝 NOT NULL。
+    batch_type       = Column(String(16), nullable=False, server_default="raw",
+                              comment="码级别：raw 原料码 / wip 部件码 / final 成品码")
+    # 组套的父子关系：成品码的 `parent_batch_id` 指向定子码 / 转子码。
+    # 定子码与转子码各自只有一行成品码引用它（业务上是一对一），但**不加唯一约束**
+    # —— 返修拆解后重新组套是正常场景，硬约束会把返修卡死。
+    parent_batch_id  = Column(BigInteger, comment="组套父批次ID（成品码 → 定子码/转子码）")
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
 
     # 收货入账时按 (物料, 批次号) find_or_create，必须靠唯一约束兜住并发重复。
@@ -162,6 +173,10 @@ class Batch(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "material_id", "batch_no",
                          name="uq_batches_tenant_material_no"),
+        # 双向追溯的两个方向都要走索引：成品码展开部件（按 parent 查）、
+        # 部件码反查成品（按 id 回看谁挂了我）。SQLAlchemy 2.0 的 CreateTable
+        # **不带索引**，所以这条在迁移里必须逐条 CREATE INDEX 补上。
+        Index("ix_batches_tenant_parent", "tenant_id", "parent_batch_id"),
     )
 
 

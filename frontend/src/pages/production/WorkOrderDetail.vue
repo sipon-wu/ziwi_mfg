@@ -330,6 +330,18 @@ function fmtTime(v?: string | null) {
           @click="runPrecheck">
           齐套预检（看缺什么）
         </van-button>
+        <!-- 合装组套（B-20）：定子码 + 转子码在合装工位合成一个成品码。
+             入口挂在工单上而不是独立菜单 —— 现场是「按这张单做这台机」，
+             先选单再扫码的话顺序对了，也不会组到别的单的成品物料上。
+             后端 compose 需要 work_order_id，这里带过去就不用现场再扫一次单。 -->
+        <van-button
+          v-perm="'M04:wms_batch:execute'"
+          plain
+          style="flex:1 1 45%"
+          :data-action="'compose'"
+          @click="router.push(`/wms/batches/compose?wo=${order.id}&wo_no=${encodeURIComponent(order.wo_no)}`)">
+          合装组套
+        </van-button>
         <!-- 打印流转卡：纸质件要随工单流转、各工序签认，是现场刚需 -->
         <ZiwiPrintButton doc-type="work_order" :doc-id="order.id" text="打印流转卡" />
         <!-- 打印贴标（热敏 80×60）：贴在工件/周转箱上，靠二维码回查这张单。
