@@ -129,3 +129,8 @@ class AuditAction:
     # 第几版第几份"全靠它 —— 与 print_artifacts 互为双证（表可被清库，
     # 审计不可）。副本号与版本号写进 after，改不了。
     PRINT_RENDER = "print.render"
+    # 返修拆解（C-97）：把成品码下挂的部件码摘掉。
+    # ★ 这是**唯一会把组套历史从业务表里抹掉**的动作 —— `detach_children` 一执行，
+    #   `batches.parent_batch_id` 就没了，事后想知道"这台机器原来装的哪个定子码"
+    #   只能靠这条审计的 before 快照。所以它不只是留痕，它是那份历史的唯一副本。
+    WMS_BATCH_DECOMPOSE = "wms.batch.decompose"

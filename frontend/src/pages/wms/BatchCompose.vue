@@ -167,6 +167,12 @@ async function doLookup(code: string): Promise<void> {
   const target = (code || '').trim()
   lookupError.value = ''
   lookupResult.value = null
+  // 换码重查时把拆解确认区收回去：否则上一台的「确认拆解」按钮会留在新码下面，
+  // 手快点下去拆的就是另一台机器。
+  decomposeOpen.value = false
+  decomposeReason.value = ''
+  decomposeError.value = ''
+  decomposeDone.value = ''
   if (!target) return
   lookupLoading.value = true
   try {
@@ -194,6 +200,66 @@ async function doLookup(code: string): Promise<void> {
     lookupError.value = errorText(e, '查询失败')
   } finally {
     lookupLoading.value = false
+  }
+}
+
+/* ── 返修拆解（C-97）────────────────────────────────────────────
+ *
+ * ## 为什么入口放在这里，而不是列表页每行一个按钮
+ *
+ * 拆解的对象一定是**已经组套过的成品码**。列表页上绝大多数码没有子件，
+ * 每行放一个按钮，99% 的人点下去只会得到"没有组套关系"的报错 ——
+ * 那不是入口，那是噪音。
+ *
+ * 这里的位置是"查完成分、眼看着那台机器由哪两个件组成、决定要换掉"，
+ * 拆解动作在语义上就长在这个位置。
+ *
+ * ## 为什么要点两下
+ *
+ * 第一次点只是**展开确认区**（把将要解除的部件码逐条摆出来），第二次才真拆。
+ * 拆解会改追溯链，一步到位的按钮在车间的触摸屏上迟早被误触 ——
+ * 而误触的后果是那台机器的构成记录被清掉。
+ */
+const decomposeOpen = ref(false)
+const decomposeReason = ref('')
+const decomposeError = ref('')
+const decomposeDone = ref('')
+const decomposeBusy = ref(false)
+
+/** 只有「成品码 + 确实有子件」才给拆解入口 —— 其余情况按钮本身就是误导 */
+const canDecompose = computed(
+  () => !!lookupResult.value
+    && lookupResult.value.batch?.batch_type === 'final'
+    && lookupResult.value.children.length > 0,
+)
+
+async function doDecompose(): Promise<void> {
+  const r = lookupResult.value
+  if (!r?.batch?.id) return
+  const reason = decomposeReason.value.trim()
+  if (reason.length < 2) {
+    decomposeError.value = '请填写拆解原因（返修单号或换件说明）'
+    return
+  }
+  decomposeError.value = ''
+  decomposeBusy.value = true
+  try {
+    const data = await post<any>(`/wms/batches/${r.batch.id}/decompose`, { reason })
+    decomposeOpen.value = false
+    decomposeReason.value = ''
+    // ★ 重查构成，不在本地把 children 置空：本地改状态等于界面自己编事实，
+    //   下次刷新又变回来，中间那段时间看到的都是假的。
+    await doLookup(r.batch.batch_no)
+    // ★ 成功提示必须放在 doLookup **之后**：doLookup 开头会清空 decomposeDone
+    //   （换码时要清），先设再查等于设了个立刻被抹掉的提示 —— 用户看不到任何反馈，
+    //   只会怀疑"到底拆没拆"。2026-11-09 浏览器探针 D1 抓到的就是这个。
+    decomposeDone.value =
+      `已解除 ${data?.released_count ?? 0} 个部件码，可以重新组套了`
+  } catch (e) {
+    // 后端文案已经说清是哪一步（不是成品码 / 没有组套 / 已入库），原样展示
+    decomposeError.value = errorText(e, '拆解失败')
+  } finally {
+    decomposeBusy.value = false
   }
 }
 </script>
@@ -322,6 +388,64 @@ async function doLookup(code: string): Promise<void> {
               <ZiwiCodeText :code="c.batch_no" :label="c.material_code || ''" size="sm" />
             </li>
           </ul>
+        </div>
+
+        <!-- ── 拆解成功提示 ──
+             ★ 必须放在 `canDecompose` 的 **外面**：拆完之后子件就空了，
+               `canDecompose` 立刻变 false，整个拆解块会消失 ——
+               提示放在块里面，等于拆成功的那一刻自己把回执一起删掉，
+               用户看不到任何反馈（2026-11-09 探针 D1 抓到的就是这个）。 -->
+        <p v-if="decomposeDone" class="bc-decompose__done" role="status">
+          {{ decomposeDone }}
+        </p>
+
+        <!-- ── 返修拆解（C-97）────────────────────────────────────────
+             `compose` 撞到「已组套的部件码」会报「不能重复组套（返修请先拆解）」，
+             这句话在 2026-11-09 之前指向一个不存在的功能 —— 返修要换件时，
+             那个部件码永久绑死在旧成品上。入口就放在"看清成分之后"。
+             两段式是刻意的：第一下只展开确认区，第二下才真拆。 -->
+        <div v-if="canDecompose" class="bc-decompose">
+          <template v-if="!decomposeOpen">
+            <van-button
+              class="bc-decompose__open"
+              block
+              plain
+              type="warning"
+              @click="decomposeOpen = true"
+            >
+              返修拆解（解除这 {{ lookupResult.children.length }} 个部件码）
+            </van-button>
+          </template>
+          <template v-else>
+            <p class="bc-decompose__warn" role="alert">
+              将解除：<strong>
+                {{ lookupResult.children.map(c => c.batch_no).join(' / ') }}
+              </strong>
+              。解除后成品码本身仍有效，但这些部件码会变成「未组套」，可重新组套。
+              此操作会写入审计留痕。
+            </p>
+            <van-field
+              v-model="decomposeReason"
+              label="拆解原因"
+              placeholder="返修单号或换件说明（必填）"
+              maxlength="200"
+              show-word-limit
+            />
+            <p v-if="decomposeError" class="bc-error" role="alert">{{ decomposeError }}</p>
+            <div class="bc-decompose__actions">
+              <van-button block plain :disabled="decomposeBusy" @click="decomposeOpen = false">
+                取消
+              </van-button>
+              <van-button
+                block
+                type="danger"
+                :loading="decomposeBusy"
+                @click="doDecompose"
+              >
+                确认拆解
+              </van-button>
+            </div>
+          </template>
         </div>
       </div>
     </section>
@@ -462,6 +586,42 @@ async function doLookup(code: string): Promise<void> {
 .bc-lookup__none {
   font-size: var(--ziwi-font-size-sm);
   color: var(--ziwi-text-muted);
+}
+
+/* ── 返修拆解 ──────────────────────────────────────────────── */
+.bc-decompose {
+  margin-top: var(--ziwi-gap-md);
+  padding-top: var(--ziwi-gap-md);
+  border-top: 1px dashed var(--ziwi-line-2, #ebedf0);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ziwi-gap-sm);
+}
+.bc-decompose__warn {
+  margin: 0;
+  font-size: var(--ziwi-font-size-sm);
+  line-height: 1.6;
+  color: var(--ziwi-warning-text, #b26500);
+  background: var(--ziwi-warning-bg, #fff7e6);
+  border-radius: var(--ziwi-radius-sm, 4px);
+  padding: 8px 10px;
+  /* 长码串要能断行：定子/转子码连写时会把版面顶出去 */
+  word-break: break-all;
+}
+.bc-decompose__done {
+  margin: 0;
+  font-size: var(--ziwi-font-size-sm);
+  color: var(--ziwi-success-text, #07c160);
+}
+.bc-decompose__actions {
+  display: grid;
+  /* 两个按钮等宽：确认拆解不该比取消更容易点中 */
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ziwi-gap-sm);
+}
+/* 热区 44px：车间触摸屏靠拇指点，默认 32px 的按钮在手持机上是灾难 */
+.bc-decompose :deep(.van-button) {
+  min-height: 44px;
 }
 
 /* 手持档（H）：窄屏把「标签 + 码」改成上下两行，避免码被挤成省略号 */

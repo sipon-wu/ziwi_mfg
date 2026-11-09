@@ -93,6 +93,11 @@ EXECUTE_SUFFIXES: Set[str] = {
     # 无人拥有的资源。★ 与 `/trace/batch/{no}` 的物料流转追溯是两条不同的边，
     # 不能合并成一个端点。
     "composition",
+    # 返修拆解 `POST /wms/batches/{id}/decompose`（C-97）：**写动作**，不登记的话
+    # 资源名被推成 `batch_decompose`，权限码 M04:batch_decompose:create ——
+    # 没有任何角色拥有它，除通配 * 外全员 403，而报错文案会指向一个页面上
+    # 根本不存在的权限项。登记后收敛回 M04:batch:execute。
+    "decompose",
     # 备件领用：不登记的话资源名会被推成 spare_part_consume，
     # 权限码变成 M02:spare_part_consume:create —— 一个没有任何角色拥有的码，
     # 除通配 *（admin）之外全员 403，且报错文案指向一个页面上不存在的权限项

@@ -345,6 +345,99 @@ class BatchService:
             ],
         }
 
+    async def decompose(self, *, final_batch_id: int, reason: str) -> dict:
+        """返修拆解：把成品码下挂的部件码全部摘掉，让它们能被重新组套。
+
+        ## 为什么非有这个动作
+
+        `compose` 撞到「已组套的部件码」会报
+        「不能重复组套（**返修请先拆解**）」—— 而 2026-11-09 之前拆解**根本不存在**。
+        文案把一个不存在的入口指给现场，整机返修要换定子时那个定子码就永久
+        绑死在旧成品上，只能手工改库。**给用户指一条不存在的路，比不指更糟。**
+
+        ## 为什么只清关系、不作废成品码
+
+        成品码是**贴在那台机器上的物理标签**。拆解改变的是"这台机器当前登记了
+        哪些部件"，机器本身没消失、码也还能扫。把码标成作废，机器上的标签就
+        成了废码，而机器还在产线上跑 —— 那才是真的误导。
+
+        拆解后该成品码 = 「当前没有已登记的组套关系」。重新组套会由 `compose`
+        另建一个新成品码（它总是新建），旧码保留它的历史（审计里有）。
+
+        ## 为什么已入库的码不许拆
+
+        `inventory.batch_id` 指向的码如果组套关系被改了，账上那台机器的构成
+        就与实物对不上，而且账面上看不出任何变化。要求先做出库/报废，是为了让
+        "账和实物同时变化"，而不是只改一半。
+
+        ## 校验顺序（错在哪一步要说得出来）
+
+        1. 原因非空 → 2. 码存在且属本租户 → 3. 它是成品码 → 4. 它确实有子件
+        → 5. 它不在库存里 → 6. 摘关系（影响 0 行 = 并发被别人先拆了）
+        """
+        reason = (reason or "").strip()
+        if len(reason) < 2:
+            # 空原因等于没有留痕。半年后看到"某人拆了某个码"没法解释任何事。
+            raise ValueError("拆解必须填写原因（返修单号或换件说明）")
+
+        batch = await self.repo.get(final_batch_id)
+        if not batch:
+            raise LookupError(f"成品码 {final_batch_id} 不存在或不属于当前租户")
+
+        if (batch.get("batch_type") or "") != "final":
+            # 部件码/原料码本身没有子件；拿它们来拆只会静默返回"拆了 0 个"，
+            # 而现场以为拆成功了，继续去组套才发现还被占着。
+            raise ValueError(
+                f"码「{batch.get('batch_no')}」不是成品码"
+                f"（当前{_batch_type_hint(batch.get('batch_type'))}），没有可拆解的组套关系")
+
+        children = await self.repo.children_of(final_batch_id)
+        if not children:
+            # ★ 不静默成功：拆解是"改变追溯链"的动作，返回成功等于告诉对方
+            #   "现在可以重新组套了"，而实际上它本来就没组套过 ——
+            #   这种成功最难查（对方会去质疑 compose 为什么还报冲突）。
+            raise ValueError(
+                f"成品码「{batch.get('batch_no')}」当前没有组套关系，无需拆解")
+
+        qty = await self.repo.inventory_qty_of_batch(final_batch_id)
+        if qty > 0:
+            raise ValueError(
+                f"成品码「{batch.get('batch_no')}」当前库存 {qty:g}，"
+                "已入库的码不允许拆解；请先做出库或报废处理")
+
+        affected = await self.repo.detach_children(final_batch_id)
+        if affected < 1:
+            # 上面刚查到有子件，落库前被另一个人拆掉了。
+            raise ValueError(
+                f"成品码「{batch.get('batch_no')}」的组套关系刚刚被另一次拆解清空，请刷新后重试")
+
+        return {
+            "batch_id": final_batch_id,
+            "batch_no": batch.get("batch_no"),
+            "reason": reason,
+            "released": [
+                {"batch_id": c["id"], "batch_no": c.get("batch_no"),
+                 "material_code": c.get("material_code"),
+                 "material_name": c.get("material_name")}
+                for c in children
+            ],
+            "released_count": len(children),
+            # 拆解不产生新码，所以这里没有 batch_type —— 明确告诉界面
+            # 「码还是原来那个，只是关系清了」，别让界面去猜。
+            "note": "部件码已解除绑定，可重新组套；成品码本身仍有效",
+        }
+
+
+def _batch_type_hint(code: str | None) -> str:
+    """`raw`/`wip`/`final` → 「原料码」这类中文，用于报错文案。
+
+    报错必须说人话：现场手里拿的是一串码，看到「不是成品码（当前 wip）」
+    还得去查 wip 是什么 —— 一句话就能说清的事不该让人再查一次。
+    """
+    from app.core.enums import batch_type_label
+
+    return batch_type_label(code) or "未知级别"
+
 
 # ============================================
 # 库存 Service

@@ -42,7 +42,7 @@ from app.schemas.wms import (
     ZoneCreate, ZoneUpdate,
     LocationCreate, LocationUpdate,
     MaterialCreate, MaterialUpdate,
-    BatchCreate, BatchUpdate, BatchComposeRequest,
+    BatchCreate, BatchUpdate, BatchComposeRequest, BatchDecomposeRequest,
     StockMoveRequest, LocationBatchGenerateRequest,
     ReceiptOrderCreate, ReceiptOrderUpdate, ReceiptOrderItemUpdate,
     IssueOrderCreate, IssueOrderUpdate, IssueOrderItemUpdate,
@@ -456,6 +456,55 @@ async def compose_batch(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"code": 0, "message": "组套成功", "data": data}
+
+
+@router.post("/batches/{batch_id}/decompose")
+async def decompose_batch(
+    batch_id: int,
+    req: BatchDecomposeRequest,
+    current_user: dict = Depends(get_current_user),
+    repo: BatchRepository = Depends(get_tenant_repo(BatchRepository)),
+    db: AsyncSession = Depends(get_db),
+):
+    """返修拆解：把成品码下的部件码摘掉，让它们能重新组套。
+
+    权限码：``M04:wms_batch:execute``。``decompose`` 已登记进
+    ``core/permissions.py`` 的 ``EXECUTE_SUFFIXES`` —— 不登记的话末段动作词会被
+    当成资源名，推出 ``M04:wms_batch_decompose:create`` 这种没有任何角色拥有的码，
+    除通配 ``*`` 外全员 403，而报错文案还指着一个不存在的权限项。
+
+    ★ **审计必须写，而且不能"顺手"不写**：`detach_children` 一执行，
+      `batches.parent_batch_id` 就置空了 —— 组套**历史在业务表里是不可逆地没了**。
+      这台机器原来装的是哪个定子，事后只能从这条审计的 `before` 快照里找。
+      所以这里先取构成快照，再拆，再落审计。
+    """
+    svc = BatchService(repo)
+
+    # 先留"拆之前"的构成快照。拆完再取就只剩空数组了 ——
+    # 审计里记一堆空值等于没记，而且看起来还像"本来就没组套"。
+    before_children = await repo.children_of(batch_id)
+
+    try:
+        data = await svc.decompose(final_batch_id=batch_id, reason=req.reason)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "BATCH_NOT_FOUND", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "BATCH_DECOMPOSE_REJECTED", "message": str(exc)})
+
+    await AuditService(db).log(
+        AuditAction.WMS_BATCH_DECOMPOSE,
+        tenant_id=current_user.get("tenant_id"),
+        actor_id=current_user.get("id"),
+        actor_name=current_user.get("real_name") or current_user.get("username"),
+        object_type="batch",
+        object_id=str(batch_id),
+        before={"batch_no": data["batch_no"], "children": before_children},
+        after={"children": [], "reason": data["reason"]},
+        message=f"返修拆解：{data['batch_no']} 解除 {data['released_count']} 个部件码",
+    )
+    return {"code": 0, "message": "拆解完成", "data": data}
 
 
 async def _trace_prefix_rules(dict_repo: DictionaryRepository) -> dict:

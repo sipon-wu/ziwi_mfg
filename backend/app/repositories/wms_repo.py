@@ -455,6 +455,35 @@ class BatchRepository(MultiTenantRepository):
             {"pid": parent_batch_id, "id": batch_id},
         )
 
+    async def detach_children(self, parent_batch_id: int) -> int:
+        """拆解：把挂在某成品码下的部件码全部摘掉，返回影响行数。
+
+        ★ 只清 `parent_batch_id`，不动成品码本身，也不删任何行：
+          · 成品码是**贴在实物上的物理标签**，拆解不会让那台机器消失 ——
+            把码作废会让机器上的标签变成"废码"，而机器还在。
+          · 部件码也只是"暂时不挂在任何成品下"，它自己的有效期、物料、来源
+            全都还在，拆完照样能重新组套。
+        ★ 组套**历史**不在 `batches` 里留（这列一置空就没了），靠
+          `audit_logs`（action=`wms.batch.decompose`）的 before 快照保存。
+          清历史行是不可逆的，所以必须在服务层强制写审计，不能只靠自觉。
+        """
+        return await self.execute(
+            "UPDATE batches SET parent_batch_id = NULL WHERE parent_batch_id = :id",
+            {"id": parent_batch_id},
+        )
+
+    async def inventory_qty_of_batch(self, batch_id: int) -> float:
+        """该码当前的库存数量（跨库位合计，0 表示不在库里）。
+
+        拆解前要看这个：库存行上的 `batch_id` 指向的码如果组套关系被改了，
+        账上那台机器的构成就与实物对不上。**已入库的码不许拆**（见服务层）。
+        """
+        row = await self.query_one(
+            "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory WHERE batch_id = :id",
+            {"id": batch_id},
+        )
+        return float((row or {}).get("qty") or 0)
+
     async def resolve_final_material(self, work_order_id: int) -> Optional[dict]:
         """工单 → 成品物料。
 

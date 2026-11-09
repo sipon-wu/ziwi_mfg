@@ -4,6 +4,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.core.enums import (
+    BATCH_TYPES,
     WAREHOUSE_TYPE_LABELS,
     WAREHOUSE_TYPES,
     normalize_warehouse_type,
@@ -143,9 +144,10 @@ class BatchCreate(BaseModel):
     @field_validator("batch_type")
     @classmethod
     def _valid_batch_type(cls, v: str) -> str:
-        allowed = {"raw", "wip", "final"}
-        if v not in allowed:
-            raise ValueError(f"batch_type 只能是 {sorted(allowed)}，收到 {v!r}")
+        # 值域唯一真源在 `core/enums.py::BATCH_TYPES`，不在这里再抄一份 ——
+        # 抄两处就会出现"加了值只改了校验、注释还停在旧清单"的漂移。
+        if v not in BATCH_TYPES:
+            raise ValueError(f"batch_type 只能是 {sorted(BATCH_TYPES)}，收到 {v!r}")
         return v
 
 
@@ -158,6 +160,33 @@ class BatchComposeRequest(BaseModel):
     work_order_id: int = Field(..., description="合装所在工单（成品物料由它反查）")
     stator_no: str = Field(..., min_length=1, max_length=64, description="定子码（扫码）")
     rotor_no: str = Field(..., min_length=1, max_length=64, description="转子码（扫码）")
+
+
+class BatchDecomposeRequest(BaseModel):
+    """返修拆解：把成品码下挂的部件码全部摘掉，让它们能被重新组套。
+
+    ## 为什么必须有这个动作
+
+    `BatchService.compose` 遇到「已组套的部件码」直接报错，文案是
+    「不能重复组套（**返修请先拆解**）」—— 但这个拆解动作在 2026-11-09 之前
+    **根本不存在**：文案把一个不存在的入口指给了现场。结果是整机返修要换定子时，
+    那个定子码永久绑死在旧成品上，只能手工改库。
+
+    ## ★ 码用路径参数，不在 body 里重复
+
+    `POST /batches/{batch_id}/decompose` 已经把目标码放在路径上（与
+    `GET /batches/{id}/composition`、`POST /batches/{id}/lock` 一致）。
+    body 里再放一个 `final_batch_id` 就是两处真源 —— 传到不一致时该信谁？
+    这类"两个 id"的入参最后一定会出现前端拼错一个、后端按另一个执行的静默错。
+
+    ## `reason` 为什么必填
+
+    拆解会改变追溯链，是「事后一定要能解释」的动作。留痕里没有原因，
+    半年后看到一条"某人拆了某个码"等于没记。最小要求：一句话说清为什么拆
+    （返修单号 / 换件原因）。
+    """
+    reason: str = Field(..., min_length=2, max_length=200,
+                        description="拆解原因（返修单号/换件说明），进审计留痕")
 
 class BatchUpdate(BaseModel):
     supplier_batch_no: Optional[str] = None
