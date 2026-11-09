@@ -1,6 +1,6 @@
 // 批次码标签（C-97）· 浏览器级验收
 //
-// 跑法（先 `DIST_DIR=frontend/dist_c97 PORT=5189 node scripts/serve_alpha.js`）：
+// 跑法（先 `DIST_DIR=frontend/dist_<本次构建> PORT=5189 node scripts/serve_alpha.js`）：
 //   BASE_URL=http://127.0.0.1:5189 node e2e/browser_test/_probe_batch_label.js
 //
 // 断四件事：

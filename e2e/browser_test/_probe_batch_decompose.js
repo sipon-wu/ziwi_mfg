@@ -1,6 +1,6 @@
 // 返修拆组套（C-97）· 浏览器级验收
 //
-// 跑法（先 `DIST_DIR=frontend/dist_c97c PORT=5189 node scripts/serve_alpha.js`，
+// 跑法（先 `DIST_DIR=frontend/dist_<本次构建> PORT=5189 node scripts/serve_alpha.js`，
 //      后端在 http://127.0.0.1:8000）：
 //   BASE_URL=http://127.0.0.1:5189 node e2e/browser_test/_probe_batch_decompose.js
 //
@@ -16,8 +16,9 @@
 // （要么是空的，要么是别人上一轮留下的）。**偷别人的数据跑，单独跑就会红**，
 // 所以这里用 API 现场造一对部件码 + 组套，跑完把关系拆掉。
 //
-// ★ 码本身（E2E-DEC-*）跑完仍在库里，交给 `scripts/clean_e2e_residue.py --apply` 收；
-//   探针结尾会打印提示，不假装自己清干净了。
+// ★ 码本身（E2E-DEC-*）跑完仍在库里。清理：`scripts/probe_artifacts.py --yes`
+//   优先，但 `E2E-DEC-*` 这种前缀**不在任何自动识别规则里**（实测），需按 batch_no
+//   前缀手工删 batches 行。探针结尾会打印提示，不假装自己清干净了。
 const { chromium } = require('@playwright/test')
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5189'
