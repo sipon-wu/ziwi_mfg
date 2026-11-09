@@ -242,7 +242,8 @@ class BatchService:
         return {"affected": await self.repo.lock(id, reason)}
 
     async def compose(self, *, stator_no: str, rotor_no: str, work_order_id: int,
-                      final_prefix: str, tenant_id: str) -> dict:
+                      final_prefix: str, tenant_id: str,
+                      prefix_source: str = "dict") -> dict:
         """定子码 + 转子码 → 合成一个成品码（MA020 合装扫码）。
 
         ## 为什么「扫到才生效」
@@ -329,6 +330,9 @@ class BatchService:
             "batch_id": new_id,
             "batch_no": final_no,
             "rule": RULE_FINAL,
+            # 前缀来源：dict = 字典里配的（本案应为 TC）；fallback = 没配、用了中性兜底。
+            # 带出去是为了让"码形不合方案书"在界面上看得见，而不是等标签贴上去才发现。
+            "prefix_source": prefix_source,
             "work_order_id": wo["work_order_id"],
             "wo_no": wo.get("wo_no"),
             "material_id": wo["material_id"],

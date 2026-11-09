@@ -29,7 +29,12 @@ from app.services.wms_service import (
 )
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
 from app.repositories.dictionary_repo import DictionaryRepository
-from app.core.trace_code import RULE_FINAL, TRACE_RULE_DICT_CODE, prefix_of
+from app.core.trace_code import (
+    RULE_FINAL,
+    TRACE_RULE_DICT_CODE,
+    prefix_of,
+    resolve_prefix,
+)
 from app.services.idempotency import run_once
 from app.schemas.wms import (
     WarehouseCreate, WarehouseUpdate,
@@ -432,14 +437,18 @@ async def compose_batch(
       item_value=前缀）。客户叫 TD/TZ/TC 还是别的，是数据不是代码。
     """
     rules = await _trace_prefix_rules(dict_repo)
+    # ★ 前缀与来源一起取：字典没配时用中性兜底，码形就和方案书 §2.1 不一致了
+    #   （方案书是 TC-YYYYMMDD-流水号）。这种情况必须让调用方看得见。
+    final_prefix, prefix_source = resolve_prefix(rules, RULE_FINAL)
     svc = BatchService(repo)
     try:
         data = await svc.compose(
             stator_no=req.stator_no,
             rotor_no=req.rotor_no,
             work_order_id=req.work_order_id,
-            final_prefix=prefix_of(rules, RULE_FINAL),
+            final_prefix=final_prefix,
             tenant_id=current_user.get("tenant_id", "default"),
+            prefix_source=prefix_source,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

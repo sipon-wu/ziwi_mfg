@@ -30,6 +30,8 @@ import ZiwiCodeText from '@/components/ziwi/ZiwiCodeText.vue'
 interface ComposeResult {
   batch_id: number
   batch_no: string
+  /** 前缀来源：dict = 字典 trace_code_rule 配的（方案书 §2.1 为 TC）；fallback = 没配 */
+  prefix_source?: 'dict' | 'fallback'
   material_id: number
   material_code: string | null
   work_order_id: number
@@ -268,6 +270,13 @@ async function doLookup(code: string): Promise<void> {
       <p class="bc-result__meta">
         物料 {{ result.material_code || '—' }} · 工单 {{ result.wo_no || result.work_order_id }}
       </p>
+      <!-- ★ 兜底前缀必须显形：方案书 §2.1 是 TC-YYYYMMDD-流水号，
+           没配字典时系统用中性兜底（F），码照样生成、标签照样打得出来 ——
+           等主机厂 MES 解析失败才发现就晚了。提示给出可执行的下一步。 -->
+      <p v-if="result.prefix_source === 'fallback'" class="bc-warn" role="alert">
+        当前用的是<strong>兜底前缀</strong>，与方案书 §2.1 的 <code>TC-YYYYMMDD-流水号</code> 不一致。
+        请让管理员在字典 <code>trace_code_rule</code> 里配置成品码前缀 TC。
+      </p>
       <ul class="bc-parents">
         <li v-for="p in result.parents" :key="p.batch_id" class="bc-parents__row">
           <span class="bc-parents__label">部件</span>
@@ -369,6 +378,20 @@ async function doLookup(code: string): Promise<void> {
   margin: 0;
   font-size: var(--ziwi-font-size-sm);
   color: var(--ziwi-text-muted);
+}
+
+.bc-warn {
+  margin: 0;
+  padding: var(--ziwi-gap-sm);
+  border-radius: var(--ziwi-radius-sm);
+  background: var(--ziwi-warning-bg, #fff7e6);
+  color: var(--ziwi-warning-text, #8a5a00);
+  font-size: var(--ziwi-font-size-sm);
+  line-height: var(--ziwi-lineheight-normal);
+}
+
+.bc-warn code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .bc-error {

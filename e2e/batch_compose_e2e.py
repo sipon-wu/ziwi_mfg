@@ -27,7 +27,8 @@
 断的地方打 ``[GAP]``，退出码恒 0 —— 探测脚本的职责是**取证**，不是断言环境完美。
 """
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -163,9 +164,25 @@ def main() -> int:
                   f"HTTP {r.status_code} {detail_msg(r) if r.status_code != 200 else ''}"):
         print(f"\n通 {len(OK)} / 断 {len(GAP)}")
         return 0
-    report("C1-2 生成了成品码（沿用前缀模板，非空）",
-           bool(final_no) and final_no.startswith("F-"),
-           f"batch_no={final_no} rule={d.get('rule')}")
+    # ── 码形是否合方案书 §2.1 ──
+    # 方案书写死 `TC-YYYYMMDD-流水号`（8 位日期）。这里不只判"非空"：
+    # 前缀对不对、日期够不够 8 位，都要正面判 —— 码会长到客户标签上，
+    # 形态错了主机厂 MES 解析不了，而我们这边一切都是 200。
+    src = d.get("prefix_source")
+    if src != "dict":
+        gap("C1-2 成品码前缀来自字典（方案书 §2.1 要求 TC）",
+            f"prefix_source={src!r} —— 字典 trace_code_rule 没配，用的是中性兜底；"
+            f"跑 `migrations/20261109_trace_code_rule_seed.py --tenant <租户>` 补配置")
+    else:
+        ok("C1-2 成品码前缀来自字典", f"batch_no={final_no}")
+
+    # 业务日 = UTC+8（与 backend/core/business_time.py 同一口径）
+    expect_date = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y%m%d")
+    shape = re.fullmatch(r"TC-(\d{8})-(\d{4,})", final_no or "")
+    report("C1-2b 码形是 TC-YYYYMMDD-流水号", bool(shape),
+           f"batch_no={final_no}")
+    report("C1-2c 日期段是 8 位且等于业务日", bool(shape) and shape.group(1) == expect_date,
+           f"码里 {shape.group(1) if shape else '—'} vs 业务日 {expect_date}")
     report("C1-3 成品码挂工单的产品物料",
            d.get("material_id") == mats["fg"][1],
            f"material_id={d.get('material_id')} 期望={mats['fg'][1]}")
