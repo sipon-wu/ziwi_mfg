@@ -150,7 +150,23 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
-    const res = await post<{ warnings?: string[] }>('/work-reports', payload)
+    const res = await post<{
+      warnings?: string[]
+      assigned_codes?: { batch_id: number; batch_no: string }[]
+      code_rule?: string | null
+    }>('/work-reports', payload)
+    // ── B-30：赋码节点到了会**当场出部件码**（方案书 §2.1：工序1 出定子码、
+    // 工序7 出转子码）。这串码必须当场给现场看：码是要贴到实物上的，
+    // 不显示就得有人去批次台账里翻，等于没出。
+    const codes = res?.assigned_codes || []
+    if (codes.length) {
+      await showDialog({
+        title: `已生成 ${codes.length} 个部件码`,
+        message:
+          codes.map((c) => c.batch_no).join('\n') +
+          '\n\n请照此打印并贴到对应部件上。',
+      })
+    }
     // 后端的 warnings 必须露出来。最典型的一条是 B-1 的「本次报工工序不是末道
     // 工序，产出计入在制、不计入完工数」—— 报工成功了但完工数没动，不解释的话
     // 现场会以为是系统没记上，然后再报一遍（报工没有幂等键）。

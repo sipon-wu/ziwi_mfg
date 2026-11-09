@@ -56,6 +56,33 @@ TRACE_RULES: Final[tuple[str, ...]] = (
 # 字典编码：`dictionaries.dict_code`。项：item_code=规则键，item_value=前缀。
 TRACE_RULE_DICT_CODE: Final = "trace_code_rule"
 
+# ── 赋码节点配置入口（B-30）───────────────────────────────────────
+# 字典编码：`trace_code_node`。项：item_code=规则键，item_value=**工序编码**。
+# 「哪道工序完工该出哪个码」是**数据**，不是代码 —— 方案书按工序编码写
+# （工序1 CW010 出定子码、工序7 RT010 出转子码），换一条产线工序编码就变了，
+# 写死在代码里等于把这一家的工艺卡刻进平台。
+TRACE_NODE_DICT_CODE: Final = "trace_code_node"
+
+# 哪些规则**可以**由报工自动赋码。
+#
+# ★ 刻意不含 `RULE_FINAL`，这不是遗漏：
+#   成品码是合装工位扫「定子码 + 转子码」当场合成的（`BatchService.compose`），
+#   一台整机一个码。如果 MA020 报工时再自动出一个，同一台整机就会有**两个**
+#   成品码 —— 一个空号（报工出的）一个真码（扫码出的），追溯时按码查会劈叉，
+#   而且两个码长得一模一样，现场分不出哪个该贴。
+#   同理不含 `RULE_RAW`：来料码跟着供应商的批次走，不归报工管。
+REPORT_ASSIGNABLE_RULES: Final[tuple[str, ...]] = (
+    RULE_WIP_STATOR, RULE_WIP_ROTOR,
+)
+
+# 规则键 → 中文名。给提示文案用（不许在业务代码里散落字面量）。
+RULE_LABELS: Final[dict[str, str]] = {
+    RULE_RAW: "原料码",
+    RULE_WIP_STATOR: "定子码",
+    RULE_WIP_ROTOR: "转子码",
+    RULE_FINAL: "成品码",
+}
+
 # 未配置时的中性兜底。刻意不用客户命名 —— 见模块注释。
 FALLBACK_PREFIX: Final[dict[str, str]] = {
     RULE_RAW: "R",

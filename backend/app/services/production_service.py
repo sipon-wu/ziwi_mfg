@@ -1075,6 +1075,37 @@ class ProductionService:
                 reporter_id=data.get("reporter_id"), tenant_id=tenant_id,
             )
 
+        # ── B-30：赋码节点到了就自动出部件码 ────────────────────────────
+        # 方案书 §2.1 三个节点里，成品码在合装工位扫码合成（`BatchService.compose`），
+        # 定子码 / 转子码在这里出 —— 哪道工序出哪个码由字典 `trace_code_node` 配，
+        # 没配就静默跳过（绝大多数租户没配，这条路径必须零副作用）。
+        #
+        # ★ 两处刻意的取舍：
+        #   1. **不让赋码失败阻断报工** —— 活已经干完了，赋码出不来是主数据/配置
+        #      问题，与上面 `_raise_production_receipt`（入库单建不出来只说明原因）
+        #      同一口径。所以只把原因塞进 warnings。
+        #   2. 但**撞号例外**：并发下两个工位算出同一个流水号，唯一约束会拦住 INSERT，
+        #      此时继续往前走等于提交一个"报工进了、码没出"的半截状态，
+        #      比整笔失败更难查。所以这一种直接 400 让人重试。
+        from sqlalchemy.exc import IntegrityError
+
+        from app.services.trace_assign import assign_for_report
+
+        try:
+            assign = await assign_for_report(
+                self.repo, tenant_id=tenant_id, order=order, report_id=report_id,
+                operation_code=reported_op or "", qty=output_qty,
+            )
+        except IntegrityError as exc:
+            raise _bad_request(
+                "自动赋码与另一次赋码撞号（并发提交），本次报工已整笔回滚，请重试",
+                "400-0009",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — 赋码是附加动作，不许拖垮报工
+            assign = {"assigned": 0, "codes": [], "rule": None, "label": "",
+                      "warnings": [f"自动赋码未完成：{exc}"]}
+        warnings.extend(assign.get("warnings") or [])
+
         return {
             "message": "报工提交成功",
             "report_id": report_id,
@@ -1088,6 +1119,10 @@ class ProductionService:
             "finished_delta": finished_delta,
             "ncr_id": ncr_id,
             "warnings": warnings,
+            # B-30：本次报工若命中赋码节点，这里带出实际生成的部件码，
+            # 现场可以照着打印/贴标；没赋码就是空列表，不必再查一次批次台账。
+            "assigned_codes": assign.get("codes") or [],
+            "code_rule": assign.get("rule"),
         }
 
     async def _raise_production_receipt(self, order: dict) -> dict:

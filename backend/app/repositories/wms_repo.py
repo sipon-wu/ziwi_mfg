@@ -366,14 +366,17 @@ class BatchRepository(MultiTenantRepository):
             "lock_reason": data.get("lock_reason"),
             "batch_type": data.get("batch_type") or "raw",
             "parent_batch_id": data.get("parent_batch_id"),
+            # 2026-11-09 B-30：部件码自动赋码时记「这批码是哪张报工出的」。
+            # 同样必须进 payload 与占位符 —— 少一列就是运行时绑定失败。
+            "source_report_id": data.get("source_report_id"),
         }
         return await self.execute(
             """INSERT INTO batches (tenant_id, batch_no, material_id, supplier_batch_no,
                manufacture_date, expiry_date, status, is_locked, lock_reason,
-               batch_type, parent_batch_id)
+               batch_type, parent_batch_id, source_report_id)
                VALUES (:tenant_id, :batch_no, :material_id, :supplier_batch_no,
                :manufacture_date, :expiry_date, :status, :is_locked, :lock_reason,
-               :batch_type, :parent_batch_id)""",
+               :batch_type, :parent_batch_id, :source_report_id)""",
             payload,
         )
 

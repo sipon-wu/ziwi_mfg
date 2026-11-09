@@ -28,6 +28,7 @@ from app.services.wms_service import (
     InventoryAlertService, MaterialRequestService,
 )
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
+from app.services.trace_assign import load_trace_dict
 from app.repositories.dictionary_repo import DictionaryRepository
 from app.core.trace_code import (
     RULE_FINAL,
@@ -462,21 +463,13 @@ async def _trace_prefix_rules(dict_repo: DictionaryRepository) -> dict:
 
     字典没建 / 没配项 / 项被停用，都返回空 dict —— 由 `prefix_of` 走中性兜底。
     **不在这里预置客户命名**：预置等于替客户拍板，猜错了比空着更难查。
+
+    ★ 读取逻辑只有一份（`services/trace_assign.py::load_trace_dict`）：
+      报工自动赋码那条路也要读同一张字典，两处各写一遍迟早会漂 ——
+      一边按 `status='active'` 过滤、一边不过滤，就会出现"组套用 TC、
+      报工用兜底"这种同一租户两套前缀的怪事。
     """
-    try:
-        d = await dict_repo.get_dict_by_code(TRACE_RULE_DICT_CODE)
-        if not d:
-            return {}
-        items = await dict_repo.list_items(d["id"])
-    except Exception:  # noqa: BLE001 — 字典不可用不该挡住组套
-        return {}
-    out: dict = {}
-    for it in items or []:
-        code = (it.get("item_code") or "").strip()
-        val = (it.get("item_value") or "").strip()
-        if code and val and (it.get("status") or "active") == "active":
-            out[code] = val
-    return out
+    return await load_trace_dict(dict_repo, TRACE_RULE_DICT_CODE)
 
 
 @router.get("/batches/{batch_id}")

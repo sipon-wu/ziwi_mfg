@@ -165,6 +165,15 @@ class Batch(Base):
     # 定子码与转子码各自只有一行成品码引用它（业务上是一对一），但**不加唯一约束**
     # —— 返修拆解后重新组套是正常场景，硬约束会把返修卡死。
     parent_batch_id  = Column(BigInteger, comment="组套父批次ID（成品码 → 定子码/转子码）")
+    # ── 2026-11-09 B-30：部件码自动赋码的来源 ────────────────────────────
+    # 报工提交时现场自动出码（定子路线首道 CW010 → 定子码，转子路线首道
+    # RT010 → 转子码），一次报工产出 N 件就出 N 个码。这一列记「这批码是哪张
+    # 报工出的」，它同时干两件事：
+    #   1. **追溯**：一台整机的定子码 → 这张报工 → 哪张工单、谁报的、什么时候；
+    #      没有它，码只能靠 batch_no 的日期段猜，猜不出工单。
+    #   2. **幂等**：同一次报工不可能重复赋码（重试时先按本列查一遍）。
+    # 可空：来料码（`batch_type='raw'`）与合装扫码出的成品码都不来自报工。
+    source_report_id = Column(BigInteger, comment="产出该码的报工ID（部件码自动赋码用）")
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
 
     # 收货入账时按 (物料, 批次号) find_or_create，必须靠唯一约束兜住并发重复。
@@ -177,6 +186,8 @@ class Batch(Base):
         # 部件码反查成品（按 id 回看谁挂了我）。SQLAlchemy 2.0 的 CreateTable
         # **不带索引**，所以这条在迁移里必须逐条 CREATE INDEX 补上。
         Index("ix_batches_tenant_parent", "tenant_id", "parent_batch_id"),
+        # 追「这批码是哪张报工出的」要走索引：一本追溯台账里这条查询是主路径。
+        Index("ix_batches_tenant_source_report", "tenant_id", "source_report_id"),
     )
 
 

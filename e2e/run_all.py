@@ -99,6 +99,11 @@ DEFAULT_PROBES = [
     # 覆盖成功形状 / 双向可查 / 重复组套被拒 / 缺码 / 扫到不存在的码 / 成品码再组套。
     # 回收走 `probe_artifacts.py`（物料 `E2E-BC-*` → 连带删它的 batches 子行）。
     "batch_compose_e2e",
+    # B-30 部件码自动赋码（报工命中赋码节点 → 按产出件数出 TD/TZ 码）：
+    # 守一件一码 / 码形 8 位日期 / 码能回到来源报工 / 非节点工序不出码，
+    # 最后用**自动出的码**去合装组套 —— 证明"报工出的码"和"扫码扫的码"
+    # 是同一套编号，不是两套。回收走 `probe_artifacts.py`（物料 `E2E-WIP-*`）。
+    "wip_code_assign_e2e",
     "doc_no_unique_e2e",
     "energy_threshold_e2e",
     "equipment_fault_loop_e2e",
