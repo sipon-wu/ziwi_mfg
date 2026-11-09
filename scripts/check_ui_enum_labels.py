@@ -79,6 +79,11 @@ ENUM_FIELDS = {
     # 工艺性质与洁净度都是**派生值**（不落库），但同样会被渲染到列表/详情里。
     # 派生值渲染成英文原码比落库字段更隐蔽 —— 数据库里查不到，只能靠界面看。
     "clean_level",
+    # ★ 2026-11-09 补：`batch_type`（原料码/部件码/成品码）。C-97 加批次标签入口时
+    #   实测漏的 —— 把 `{{ item.batch_type }}` 原样印出去，闸报"全绿"。
+    #   根因是这份白名单靠字段命名手维护，而 `batch_type` 从来没人登记过。
+    #   这类漏法是**闸本身的**覆盖缺口，不是页面写错了：闸绿不代表没裸渲染。
+    "batch_type",
 }
 
 # 出现这些就算"已中文化"，整行豁免
@@ -189,11 +194,14 @@ SELFTEST_TEMPLATE = """<template>
     <span>{{ row.remark }}</span>
     <!-- <span>{{ row.status }}</span> -->
     <van-cell title="状态" :value="getStateEntry('work_order', row.status).label" />
+    <!-- 2026-11-09：`batch_type` 必须被扫到。它曾整条不在白名单里，
+         裸渲染 `{{ item.batch_type }}` 时闸报全绿 —— 这条样例就是防它再掉出去。 -->
+    <span>{{ item.batch_type }}</span>
   </div>
 </template>
 """
 
-SELFTEST_EXPECT = {"bare_interp": 1, "bare_bind": 1, "raw_fallback": 1}
+SELFTEST_EXPECT = {"bare_interp": 2, "bare_bind": 1, "raw_fallback": 1}
 
 
 def run_selftest() -> bool:
@@ -206,7 +214,7 @@ def run_selftest() -> bool:
         for h in hits:
             print(f"  L{h['line']} [{h['kind']}] {h['detail']}")
         return False
-    print(f"自测 OK：三类问题各抓到 1 处，四条已中文化写法未误报")
+    print(f"自测 OK：{got} 全部命中，四条已中文化写法未误报")
     return True
 
 

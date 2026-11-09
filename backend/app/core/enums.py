@@ -300,3 +300,71 @@ def clean_level_label(code: str | None) -> str:
         return ""
     return CLEAN_LEVEL_LABELS.get(code, f"未知（{code}）")
 
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 批次码级别与批次状态（`batches.batch_type` / `batches.status`）
+#
+# 2026-11-09 收敛：这两个值域此前散在两处 ——`models/wms.py` 的列注释
+# （"raw/wip/final"、"active/locked/expired/blocked"）与
+# `schemas/wms.py::_valid_batch_type` 里硬编码的 `{"raw","wip","final"}`。
+# 注释与校验各写一份，就是 OP_TYPE 当初值域三份副本的同一个毛病：
+# 加一个值只改了校验，注释还停在旧清单，下一个人照注释写就 422。
+#
+# 现在唯一真源在本文件；`schemas/wms.py` 引用 `BATCH_TYPES`，
+# 打印模板引用 `batch_type_label()` / `batch_status_label()`。
+# ══════════════════════════════════════════════════════════════════════
+
+# 码级别。对应 `core/trace_code.py` 的四条命名规则：
+#   raw   ← RULE_RAW（来料码，跟供应商批次走）
+#   wip   ← RULE_WIP_STATOR / RULE_WIP_ROTOR（部件码：定子 / 转子）
+#   final ← RULE_FINAL（成品码，合装工位扫码合成）
+# ★ 注意 `wip` 是**一个**级别装两种部件码（定子/转子），
+#   具体是哪一种由 `batch_no` 的前缀区分，不靠 batch_type —— 两者不是同一维度。
+BATCH_TYPE_LABELS: dict[str, str] = {
+    "raw": "原料码",
+    "wip": "部件码",
+    "final": "成品码",
+}
+
+BATCH_TYPES: tuple[str, ...] = tuple(BATCH_TYPE_LABELS)
+
+BatchType = Literal[*BATCH_TYPE_LABELS]
+
+# 批次状态。
+# ★ `expired` / `blocked` 目前**没有代码写入**：过期是靠 `expiry_date` 与业务日
+#   比较**算出来**的（见 `services/inventory` 的出库校验），不是把 status 改成
+#   expired —— 存量从没被改成过期态。`blocked` 同理没有写入点。
+#   保留这两个值是因为模型列注释里已经声明了它们，且将来真要落"冻结"态还得用；
+#   但读的时候不要假设"status=expired 就一定是过期的"。
+BATCH_STATUS_LABELS: dict[str, str] = {
+    "active": "正常",
+    "locked": "已锁定",
+    "expired": "已过期",   # 预留：当前无写入点，过期靠 expiry_date 判定
+    "blocked": "已冻结",   # 预留：当前无写入点
+}
+
+BATCH_STATUSES: tuple[str, ...] = tuple(BATCH_STATUS_LABELS)
+
+BatchStatus = Literal[*BATCH_STATUS_LABELS]
+
+
+def batch_type_label(code: str | None) -> str:
+    """码级别转中文；未知值给「未知（原文）」，不回显原文冒充正常值。"""
+    if not code:
+        return ""
+    return BATCH_TYPE_LABELS.get(code, f"未知（{code}）")
+
+
+def batch_status_label(code: str | None) -> str:
+    """批次状态转中文；未知值给「未知（原文）」。"""
+    if not code:
+        return ""
+    return BATCH_STATUS_LABELS.get(code, f"未知（{code}）")
+
+
+# 自检：Literal 必须与 dict 同步（同 OP_TYPE / WAREHOUSE_TYPE 的做法）
+assert set(get_args(BatchType)) == set(BATCH_TYPE_LABELS), \
+    "BatchType 与 BATCH_TYPE_LABELS 不同步"
+assert set(get_args(BatchStatus)) == set(BATCH_STATUS_LABELS), \
+    "BatchStatus 与 BATCH_STATUS_LABELS 不同步"

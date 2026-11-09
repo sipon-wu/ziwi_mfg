@@ -30,8 +30,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.business_time import as_business_time
+from app.core.enums import batch_status_label, batch_type_label
 from app.models.production import WorkOrder, WorkReport
 from app.models.quality import InspectionOrder, InspectionResult
+from app.models.wms import Batch, Material
 from app.services.print.renderer import PrintDoc, Section
 
 # 中文标签。与前端 config/statusDict.ts 同源语义，但打印必须自带一份：
@@ -212,15 +214,158 @@ async def build_inspection_order(session: AsyncSession, tenant_id: str, doc_id: 
 
 Builder = Callable[[AsyncSession, str, str], Awaitable[PrintDoc]]
 
+
+async def build_batch(session: AsyncSession, tenant_id: str, doc_id: str) -> PrintDoc:
+    """追溯码标签（原料码 / 部件码 / 成品码 → 打印成标签贴到实物上）。
+
+    ## 为什么这个 builder 必须解决"父子关系"这一件事
+
+    单打一个码，纸上就只有一串字符 —— 贴到整机上之后，想知道这台机器的定子
+    和转子是哪两个，只能回系统按码查。但标签是**在车间现场**给人看的，
+    查系统要去办公室。所以成品码必须把它的子件码印在纸上。
+
+    ★ `parent_batch_id` 的方向是 **子件 → 成品**（`BatchService.compose` 对每个
+      父码调 `link_parent(父码id, 成品id)`），不是反过来。所以：
+        · 成品码的子件 = `WHERE parent_batch_id = 本码 id`
+        · 部件码的成品 = `WHERE id = 本码.parent_batch_id`
+      模型注释里"成品码 → 定子码/转子码"那句是把方向写反了，已一并订正。
+
+    ## 标签只有 6 行，所以 meta 的顺序就是优先级
+
+    `label.py::render_label` 取 `meta` 前 6 个**非空**项。成品码的「子件」必须
+    排在前面，否则纸矮的时候第一个被砍掉；原料码的「供应商批次 / 有效期」同理
+    （这两个字段是来料追溯的全部依据）。
+
+    ## `locked` 不画「作废」
+
+    `renderer._VOID_STATUS` 里是 `voided/cancelled/rejected` 这类"这张单/这个码
+    已经废了"。而批次 `locked` 是"这块料暂时不能动"，码本身仍然有效 ——
+    画作废大黑块会让人把好料当废料丢掉。锁定信息走 meta 的「状态」一行表达。
+    """
+    batch = (
+        await session.execute(
+            select(Batch).where(Batch.id == int(doc_id), Batch.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if batch is None:
+        raise LookupError("批次码不存在或不属于当前租户")
+
+    material = None
+    if batch.material_id:
+        material = (
+            await session.execute(
+                select(Material).where(
+                    Material.id == batch.material_id, Material.tenant_id == tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+
+    # 成品码 → 它的子件（定子/转子…）；部件码 → 它被组套进的成品
+    children = (
+        await session.execute(
+            select(Batch)
+            .where(Batch.parent_batch_id == batch.id, Batch.tenant_id == tenant_id)
+            .order_by(Batch.id)
+        )
+    ).scalars().all()
+    parent = None
+    if batch.parent_batch_id:
+        parent = (
+            await session.execute(
+                select(Batch).where(
+                    Batch.id == batch.parent_batch_id, Batch.tenant_id == tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+
+    # ★ 不写死「定子 / 转子」：换产线时子件可能完全不是这两个名字，
+    #   标签上写错名比不写更糟（现场会照着找不存在的部件）。
+    #   统一叫「子件」，具体是什么靠物料编码区分。
+    child_text = " / ".join(c.batch_no for c in children if c.batch_no)
+
+    meta = [
+        ("物料", f"{material.code} {material.name}".strip() if material else ""),
+        ("规格", material.spec if material else ""),
+        ("状态", batch_status_label(batch.status)),
+        ("子件", child_text),
+        ("所属成品", parent.batch_no if parent else ""),
+        ("供应商批次", batch.supplier_batch_no or ""),
+        ("生产日期", str(batch.manufacture_date) if batch.manufacture_date else ""),
+        ("有效期", str(batch.expiry_date) if batch.expiry_date else ""),
+        ("产出来源", f"报工#{batch.source_report_id}" if batch.source_report_id else ""),
+        ("创建时间", _fmt(batch.created_at)),
+        # 不印在纸面上也进快照：锁定原因变了，旧标签就该被判 superseded
+        ("锁定原因", batch.lock_reason or ""),
+    ]
+
+    sections = []
+    if children:
+        # ★ 子件段的「物料」列必须印**物料编码**，不是 `material_id`：
+        #   `material_id` 是内部主键，印在纸上是给现场看一串无意义的数字，
+        #   而且换库/重灌种子这串数字就变，纸质件与系统再也对不上。
+        #   （2026-11-09 第一版就印成了 `1`，A4 上看到「物料 1」才发现。）
+        child_mats: dict[int, Material] = {}
+        cids = [c.material_id for c in children if c.material_id]
+        if cids:
+            child_mats = {
+                m.id: m
+                for m in (
+                    await session.execute(
+                        select(Material).where(
+                            Material.id.in_(cids), Material.tenant_id == tenant_id
+                        )
+                    )
+                ).scalars().all()
+            }
+
+        def _mat_code(mid) -> str:
+            m = child_mats.get(mid)
+            return f"{m.code}" if m else ""
+
+        sections.append(
+            Section(
+                title=f"组套子件（共 {len(children)} 件）",
+                columns=[("子件码", 2.4), ("物料", 2.0), ("状态", 1.0), ("创建时间", 1.6)],
+                rows=[
+                    [
+                        c.batch_no or "",
+                        _mat_code(c.material_id),
+                        batch_status_label(c.status),
+                        _fmt(c.created_at),
+                    ]
+                    for c in children
+                ],
+            )
+        )
+
+    return PrintDoc(
+        doc_type="batch",
+        title=f"{batch_type_label(batch.batch_type)}标签",
+        doc_no=batch.batch_no or f"BATCH-{batch.id}",
+        meta=meta,
+        sections=sections,
+        signs=[],
+        doc_status=batch.status,
+        note=(
+            "本码贴在对应实物上，扫码可回查物料、组套关系与产出来源。"
+            "状态为「已锁定」的码，其物料不得投料或出库。"
+        ),
+    )
+
+
 REGISTRY: dict[str, Builder] = {
     "work_order": build_work_order,
     "inspection_order": build_inspection_order,
+    # B-30/C-97：追溯码标签。2026-11-09 前批次码只能去批次台账看，
+    # 现场要"重打一张贴上去"没有任何出口（`print` 模块只认工单与检验单）。
+    "batch": build_batch,
 }
 
 # 模板版本：改排版/改列/改页眉页脚必须同步 +1，否则历史留痕无法解释
 TEMPLATES: dict[str, tuple[str, str]] = {
     "work_order": ("WO-CARD", "1.0"),
     "inspection_order": ("IQC-SHEET", "1.0"),
+    "batch": ("TRACE-SHEET", "1.0"),
 }
 
 # 标签模板：与 A4 单据模板**分开登记**。
@@ -235,4 +380,8 @@ TEMPLATES: dict[str, tuple[str, str]] = {
 LABEL_TEMPLATES: dict[str, tuple[str, str]] = {
     "work_order": ("WO-LABEL", "1.0"),
     "inspection_order": ("INSP-LABEL", "1.0"),
+    # 码标签本来就只有 label80 一种纸型有意义（A4 印一串码等于浪费纸），
+    # 但两个字典都要登记：`print_service` 按 paper 查对应那份模板版本，
+    # 漏登记会让"用 A4 打码"直接 400，而不是打出一张很难看但可用的纸。
+    "batch": ("TRACE-LABEL", "1.0"),
 }

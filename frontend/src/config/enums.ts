@@ -226,6 +226,20 @@ export const LABEL_DICT: Record<string, Record<string, string>> = {
     package: '包装',
   },
 
+  /**
+   * 批次码级别（WMS 追溯码）。后端唯一真源 `core/enums.py::BATCH_TYPE_LABELS`。
+   *
+   * ★ `wip` 是**一个**级别装两种部件码（定子 / 转子），具体是哪一种由 `batch_no`
+   *   的前缀区分 —— 不要把这里拆成"定子码 / 转子码"，那是另一个维度。
+   * ★ 文案必须与打印标签的标题一致（`print/registry.py::build_batch` 用后端那份），
+   *   否则同一张纸在屏幕上叫"部件码"、印出来叫"半成品标签"，审核对不上。
+   */
+  batch_type: {
+    raw: '原料码',
+    wip: '部件码',
+    final: '成品码',
+  },
+
   /** 产品类型 */
   product_type: {
     final: '成品',

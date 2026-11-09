@@ -18,7 +18,7 @@
  * Chrome 的 PDF 插件不接受父窗口的 `print()`。所以按钮先试一次，试不动就
  * 明确提示「用预览右上角的打印图标」——比静默无反应强。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import {
@@ -33,8 +33,17 @@ import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 const route = useRoute()
 const router = useRouter()
 
-const docType = String(route.params.docType || '')
-const docId = String(route.params.docId || '')
+/**
+ * ★ 必须是 `computed` 而不是 `const docType = String(route.params.docType)`。
+ *
+ * 同一个路由只换参数时（扫完一箱再扫下一箱、改地址栏里的 id、从列表连点两张纸），
+ * Vue Router 会**复用组件实例**，`onMounted` 不会再跑。写成普通常量的话：
+ * 页面继续显示**上一张纸**，而纸上的留痕码还是旧的 —— 打印员照着屏幕核对
+ * 手里的纸，两边都对得上，但其实看的是另一张单。这种错不会报错，只会出一张
+ * 内容错的纸。2026-11-09 浏览器探针（`_probe_batch_label.js` D1/D2）抓到的就是这个。
+ */
+const docType = computed(() => String(route.params.docType || ''))
+const docId = computed(() => String(route.params.docId || ''))
 
 /** 纸型从 query 来（详情页「打印流转卡」/「打印贴标」分别带 a4 / label80）。 */
 const paper = computed<PrintPaper>(() =>
@@ -45,6 +54,9 @@ const paper = computed<PrintPaper>(() =>
 const DOC_TITLE: Record<string, string> = {
   work_order: '生产工单流转卡',
   inspection_order: '检验记录单',
+  // C-97：追溯码标签。措辞比纸面标题（"原料码标签"/"成品码标签"）宽一档 ——
+  // 这里还不知道具体是哪级码，写死一个级别会在另外两级上变成谎话。
+  batch: '追溯码标签',
 }
 
 const url = ref('')
@@ -74,7 +86,7 @@ async function load(): Promise<void> {
   loading.value = true
   failed.value = ''
   try {
-    const r = await renderPrint(docType, docId, paper.value)
+    const r = await renderPrint(docType.value, docId.value, paper.value)
     url.value = r.url
     meta.value = r.meta
   } catch (e: any) {
@@ -104,11 +116,31 @@ function onDownload(): void {
   const a = document.createElement('a')
   a.href = url.value
   const suffix = paper.value === 'a4' ? '' : '-label'
-  a.download = `${meta.value?.docNo || docType}-V${meta.value?.revision || 1}C${meta.value?.copyNo || 1}${suffix}.pdf`
+  a.download = `${meta.value?.docNo || docType.value}-V${meta.value?.revision || 1}C${meta.value?.copyNo || 1}${suffix}.pdf`
   a.click()
 }
 
 onMounted(load)
+
+/**
+ * 换单据/换纸型时重新出纸。
+ *
+ * ★ 两件事一起做：先 revoke 旧 blob（不 revoke 会把上一张 PDF 一直攥在内存里，
+ *   车间一体机常年不关浏览器），再重新加载。漏了 revoke 的话，扫一整天下来
+ *   内存里躺着几百份 PDF。
+ */
+watch(
+  () => `${route.params.docType}|${route.params.docId}|${route.query.paper || ''}`,
+  () => {
+    if (url.value) {
+      URL.revokeObjectURL(url.value)
+      url.value = ''
+    }
+    meta.value = null
+    hint.value = ''
+    load()
+  },
+)
 
 onBeforeUnmount(() => {
   // 不 revoke 会让整个 PDF 一直驻留内存；车间一体机常年不关浏览器
