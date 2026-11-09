@@ -57,6 +57,12 @@ Integer 列写 true/false 这类写法 **SQLite 全接、PG 全拒**，本地 py
   「看起来在守、实际不生效」比没有闸更糟 —— 它会消耗掉「我们有闸」这份信任。
   当日修好并接入，同时补齐 `media_breakpoint` / `raw_transition` / `legacy_term`
   三项的正负向自证（此前它们只有计数、没有判据用例）。
+
+收尾一档是 **菜单权限一致性闸**（`scripts/check_menu_permissions.py`）：前面几道
+管的是"数据 / 文字 / 设计值"，没有一道管"菜单和权限配置是不是同一套"。
+而这类错误**不报错就错**：`menuId` 拼错一个字符，整组退化成"不限权"，任何登录
+用户都看得见；组里漏声明一个子项，它就继承父级最宽的读码，"看得见点进去 403"。
+两种形态都不抛异常、不写日志，只能靠静态比对发现。
 """
 
 import argparse
@@ -572,6 +578,8 @@ def main():
     ap.add_argument("--skip-ui-contract", action="store_true",
                     help="跳过 UI 契约闸（内联 style / 死 Tailwind / 自造断点 / 裸动效时长 / "
                          "KpiCard 三态 / picker 模型值）")
+    ap.add_argument("--skip-menu-perms", action="store_true",
+                    help="跳过菜单权限一致性闸（menuId/childId 对不上、半声明靠继承）")
     ap.add_argument("--skip-judge-selftest", action="store_true",
                     help="跳过判据自证（run_all 自己的 PASS/FAIL/SKIP 判定逻辑的正反用例）")
     ap.add_argument("--selftest-judge", action="store_true",
@@ -833,9 +841,35 @@ def main():
             print("  · 判据自证 28/28 通过（明细见 scripts/check_ui_contract.py --self-test）")
         uic_fail = uic.returncode != 0
 
+    # ── 菜单权限一致性闸 ────────────────────────────────────────────
+    # 前七道闸管「数据对不对 / 界面文字对不对 / 设计值有没有漏」。**没有一道
+    # 管「菜单和权限配置是不是同一套」**。
+    #
+    # 而这一类错误的特点是：**不报错就错**。
+    #   · `menuPermissions` 里 menuId 拼错一个字符 → `filterMenuTree` 查不到
+    #     `permCfg` → 整组退化成"不限权"，任何登录用户都看得见（本该锁住的入口
+    #     敞着，没有任何异常）；
+    #   · 组里声明了 children 却漏掉某一项 → 该项继承父级最宽的那个读码 →
+    #     "能看仓库结构的人都能看见入库单"，点进去后端按各自域判权直接 403；
+    #   · 白名单允许的"靠继承"如果没人管，会一代代长下去，最后没人知道
+    #     某个入口到底按谁的权限在管。
+    #
+    # 纯静态（读 MainLayout.vue 与 menu-permissions.ts，不连库不起服务，<1 秒）。
+    # 闸内部先跑 6 条自证（5 负向 + 1 反向），自证不过即判失败。
+    menup_fail = False
+    if not a.skip_menu_perms:
+        root = os.path.dirname(HERE)
+        print("=" * 62)
+        mp = subprocess.run(
+            [py, os.path.join(root, "scripts", "check_menu_permissions.py")],
+            capture_output=True, text=True, cwd=root)
+        mout = ((mp.stdout or "") + (mp.stderr or "")).rstrip()
+        print(mout)
+        menup_fail = mp.returncode != 0
+
     return 1 if (bad_probes or nosum or cov_fail or con_fail or bd_fail
                  or cap_fail or pg_fail or ui_fail or drill_fail or uic_fail
-                 or judge_fail) else 0
+                 or menup_fail or judge_fail) else 0
 
 
 if __name__ == "__main__":

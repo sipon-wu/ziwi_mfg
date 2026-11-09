@@ -399,12 +399,43 @@ const allMenuTree: MenuItem[] = [
     children: [
       { id: 'work_orders', path: '/work-orders', label: '工单管理' },
       { id: 'work_reports', path: '/work-reports', label: '报工管理' },
-      // B-20 合装组套：车间执行动作，所以挂在生产管理下而不是另开仓储组
-      // （仓储那 14 个页面本来就没有菜单入口，见台账 B-26，不在这一条里动）
+      // B-20 合装组套：车间执行动作，所以挂在生产管理下而不是仓储组
+      // （仓储其余页面原本没有菜单入口，B-29 已补一组「仓储管理」，见下方 wms）
       { id: 'compose_batches', path: '/wms/batches/compose', label: '合装组套' },
       { id: 'reports', path: '/reports', label: '生产报表' },
       { id: 'schedule', path: '/schedule', label: '生产排产' },
       { id: 'boms', path: '/boms', label: 'BOM管理' },
+    ],
+  },
+  {
+    /**
+     * 仓储管理（B-29）
+     *
+     * 这 10 个页面从一开始就只加了路由、没加菜单（见台账 B-29）：能靠手输 URL
+     * 进去，但界面上一处入口都没有 —— 现场新员工拿到账号后根本不知道仓储
+     * 功能存在，培训得人肉发 URL。M04 那一整块在界面上等于隐形。
+     *
+     * 分组按标准 WMS 的作业顺序排：**结构 → 主数据 → 收发 → 库存 → 盘点 → 批次 → 预警 → 报表**，
+     * 不是按字母或按开发顺序。仓管每天的动作链路就是这一条。
+     *
+     * ★ 子项 id 与 `config/menu-permissions.ts` 里的 `childId` 必须逐条对上，
+     *   且**每条都显式声明权限码** —— 不声明就继承父级的 `wms_warehouse:read`，
+     *   会出现"能看仓库结构的人都能看见入库单，点进去却 403"（system 组踩过）。
+     */
+    id: 'wms',
+    label: '仓储管理',
+    icon: '<path d="M3 9.5L12 3l9 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 10.5V20a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1v-9.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="9" y="13" width="6" height="8" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+    children: [
+      { id: 'wms_warehouse_tree', path: '/wms/warehouse-tree', label: '仓库结构' },
+      { id: 'wms_materials', path: '/wms/materials', label: '物料主数据' },
+      { id: 'wms_receipt_orders', path: '/wms/receipt-orders', label: '入库单' },
+      { id: 'wms_issue_orders', path: '/wms/issue-orders', label: '出库单' },
+      { id: 'wms_stock_query', path: '/wms/stock-query', label: '库存查询' },
+      { id: 'wms_stock_move', path: '/wms/stock-move', label: '库存移动' },
+      { id: 'wms_inventory_counts', path: '/wms/inventory-counts', label: '盘点管理' },
+      { id: 'wms_batches', path: '/wms/batches', label: '批次管理' },
+      { id: 'wms_alerts', path: '/wms/alerts', label: '库存预警' },
+      { id: 'wms_reports', path: '/wms/reports', label: '库存报表' },
     ],
   },
   {

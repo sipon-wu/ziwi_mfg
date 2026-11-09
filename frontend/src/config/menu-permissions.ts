@@ -55,6 +55,36 @@ export const menuPermissions: MenuPermission[] = [
     ],
   },
   {
+    // 仓储管理（B-29）：10 个子项**逐条显式声明**，不留空继承。
+    //
+    // 为什么不留空：子项不声明时的语义是"继承父级 perm"，父级是
+    // `M04:wms_warehouse:read` —— 仓库结构是最宽的那个码，凡是能看仓库结构的人
+    // 都会看见入库单/盘点/报表；点进去后端按各自域判权，直接 403。
+    // （system 组与 composition 组都踩过这一形态。）
+    //
+    // 码的选择口径：**与页面主接口一致**，不是与菜单语义一致。
+    // 例如「库存移动」页面读的是 `wms_inventory`（移动动作本身要
+    // `wms_inventory_stock_move:create`，那是按钮级 v-perm 的事，不该卡菜单）。
+    //
+    // 覆盖核验（2026-11-09 实查本地库）：8 个种子角色**全部**持有下表 10 个 read 码，
+    // 因此这一组对仓管、检验员、工艺员一样可见，不存在"配了码但没人有"的假门。
+    menuId: 'wms',
+    perm: 'M04:wms_warehouse:read',
+    children: [
+      { childId: 'wms_warehouse_tree', perm: 'M04:wms_warehouse:read' },
+      { childId: 'wms_materials', perm: 'M04:wms_material:read' },
+      { childId: 'wms_receipt_orders', perm: 'M04:wms_receipt_order:read' },
+      { childId: 'wms_issue_orders', perm: 'M04:wms_issue_order:read' },
+      { childId: 'wms_stock_query', perm: 'M04:wms_inventory:read' },
+      { childId: 'wms_stock_move', perm: 'M04:wms_inventory:read' },
+      { childId: 'wms_inventory_counts', perm: 'M04:wms_inventory_count:read' },
+      { childId: 'wms_batches', perm: 'M04:wms_batch:read' },
+      { childId: 'wms_alerts', perm: 'M04:wms_inventory_alert:read' },
+      // 报表页有三个 tab，主接口是 /reports/stock-summary，故以此码为准。
+      { childId: 'wms_reports', perm: 'M04:wms_report_stock_summary:read' },
+    ],
+  },
+  {
     menuId: 'equipment',
     perm: 'M06:equipment:read',
     // T02：设备模块三个子菜单显式登记（与 MainLayout 的 children id 一一对应）。
