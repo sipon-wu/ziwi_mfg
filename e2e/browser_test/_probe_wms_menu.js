@@ -36,11 +36,21 @@ const EXPECTED = [
 ]
 
 const fails = []
+const skips = []
 let passed = 0
 const ok = (n, d = '') => { passed += 1; console.log(`  [OK ] ${n}${d ? ' · ' + d : ''}`) }
 const bad = (n, d = '') => { fails.push(`${n} · ${d}`); console.log(`  [FAIL] ${n}${d ? ' · ' + d : ''}`) }
+const skip = (n, why) => { skips.push(`${n} · ${why}`); console.log(`  [SKIP] ${n} · ${why}`) }
 const chk = (n, cond, d = '') => (cond ? ok(n, d) : bad(n, d))
 
+/**
+ * 登录；成功返回 true。
+ *
+ * ★ 两套环境的账号不同（本地有 test_inspector / test_key_user，staging 是
+ *   ah_qc1 / ah_wh1 等），且 staging 上这些账号的密码并未随仓库留存。
+ *   所以 C/D 段改成「登不进去就如实 SKIP」——**不许把环境差异报成缺陷**。
+ *   本地那两次是完整跑过的，staging 只要验 A/B（菜单真上线、10 项点得进去）。
+ */
 async function login(page, user, pwd) {
   await page.goto(`${BASE}/#/login`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => localStorage.clear())
@@ -50,7 +60,12 @@ async function login(page, user, pwd) {
   const t = await page.$('input[name="tenant_id"], input[name="tenant"]')
   if (t) await t.fill(TENANT)
   await page.click('button[type="submit"]')
-  await page.waitForFunction(() => !location.hash.includes('/login'), { timeout: 30000 })
+  try {
+    await page.waitForFunction(() => !location.hash.includes('/login'), { timeout: 15000 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 菜单里是否出现「仓储管理」组（父级 label 文本 + 可点） */
@@ -76,15 +91,19 @@ async function wmsGroup(page) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   const pageErr = []
   page.on('pageerror', (e) => pageErr.push(String(e)))
-  await login(page, process.env.E2E_ADMIN || 'mfg_admin', process.env.E2E_ADMIN_PWD || 'admin123')
+  const okAdmin = await login(page, process.env.E2E_ADMIN || 'mfg_admin',
+                              process.env.E2E_ADMIN_PWD || 'admin123')
+  chk('A0 admin 登录成功', okAdmin,
+    okAdmin ? '' : '登不进去 —— 账号/租户/密码与本环境不符，后续 A/B 段无意义')
 
-  const g = await wmsGroup(page)
+  const g = okAdmin ? await wmsGroup(page) : null
   chk('A1 admin 看到「仓储管理」组', !!g)
 
   if (!g) {
     await browser.close()
-    console.log(`\n通 ${passed} / 断 ${fails.length}`)
-    process.exit(0)
+    console.log(`\n通 ${passed} / 断 ${fails.length} / 跳过 ${skips.length}`)
+    fails.forEach((f) => console.log('  - ' + f))
+    process.exit(fails.length ? 1 : 0)
   }
 
   // 展开（子项默认 v-show=false）
@@ -111,7 +130,13 @@ async function wmsGroup(page) {
       await page.waitForTimeout(200)
     }
     await link.click()
-    await page.waitForTimeout(600)
+    // ★ 不能用固定 sleep：staging 上首屏要过公网、懒加载 chunk 也慢，
+    //   600ms 时可能还停在登录落地页（#/cockpit），于是把"还没跳"判成"跳错"。
+    //   本地千兆内网永远绿、staging 必红 —— 这类环境差异必须在判据里消除，
+    //   等的是「hash 真的变了」这个事实，不是等一段时间。
+    await page.waitForFunction((p) => location.hash.includes(p), path, { timeout: 15000 })
+      .catch(() => {})
+    await page.waitForTimeout(200)
 
     const url = await page.evaluate(() => location.hash)
     const forbidden = url.includes('/403')
@@ -126,27 +151,40 @@ async function wmsGroup(page) {
 
   // ══ C. 有权限的非 admin 也该看见 ══
   const p2 = await browser.newPage({ viewport: { width: 1440, height: 960 } })
-  await login(p2, process.env.E2E_INSP || 'test_inspector', process.env.E2E_INSP_PWD || 'test123456')
-  const g2 = await wmsGroup(p2)
-  chk('C1 test_inspector（M04 只读 26 条）看到仓储组', !!g2)
-  if (g2) {
-    await g2.locator('.nav-item.parent').first().click()
-    await p2.waitForTimeout(300)
-    const cnt = await g2.locator('.nav-item.sub').count()
-    chk('C2 同样 10 项可见', cnt === 10, `实际 ${cnt}`)
+  const okInsp = await login(p2, process.env.E2E_INSP || 'test_inspector',
+                             process.env.E2E_INSP_PWD || 'test123456')
+  if (!okInsp) {
+    skip('C 段（有权限的非 admin 也能看见）',
+         `账号 ${process.env.E2E_INSP || 'test_inspector'} 登不进去 —— 本环境无该账号/密码，非缺陷`)
+  } else {
+    const g2 = await wmsGroup(p2)
+    chk('C1 有 M04 只读权限的非 admin 看到仓储组', !!g2)
+    if (g2) {
+      await g2.locator('.nav-item.parent').first().click()
+      await p2.waitForTimeout(300)
+      const cnt = await g2.locator('.nav-item.sub').count()
+      chk('C2 同样 10 项可见', cnt === 10, `实际 ${cnt}`)
+    }
   }
   await p2.close()
 
   // ══ D. 无权限者不该看见（负向）══
   const p3 = await browser.newPage({ viewport: { width: 1440, height: 960 } })
-  await login(p3, process.env.E2E_NOPERM || 'test_key_user', process.env.E2E_NOPERM_PWD || 'test123456')
-  const g3 = await wmsGroup(p3)
-  chk('D1 test_key_user（M04 = 0 条）看不到仓储组', g3 === null,
-    g3 ? '居然看见了 —— 菜单权限没生效' : '')
+  const okNo = await login(p3, process.env.E2E_NOPERM || 'test_key_user',
+                           process.env.E2E_NOPERM_PWD || 'test123456')
+  if (!okNo) {
+    skip('D 段（无 M04 权限者看不到）',
+         `账号 ${process.env.E2E_NOPERM || 'test_key_user'} 登不进去 —— 本环境无该账号/密码，非缺陷`)
+  } else {
+    const g3 = await wmsGroup(p3)
+    chk('D1 无 M04 权限者看不到仓储组', g3 === null,
+      g3 ? '居然看见了 —— 菜单权限没生效' : '')
+  }
   await p3.close()
 
   await browser.close()
-  console.log(`\n通 ${passed} / 断 ${fails.length}`)
+  console.log(`\n通 ${passed} / 断 ${fails.length} / 跳过 ${skips.length}`)
+  if (skips.length) { console.log('跳过项：'); skips.forEach((s) => console.log('  - ' + s)) }
   if (fails.length) { console.log('失败项：'); fails.forEach((f) => console.log('  - ' + f)) }
-  process.exit(0)
+  process.exit(fails.length ? 1 : 0)
 })()

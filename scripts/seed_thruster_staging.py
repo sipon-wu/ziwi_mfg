@@ -341,8 +341,17 @@ ROLE_FALLBACK = {
 ROLE_PERMS = {
     "operator": ["M01:work_order:read", "M01:work_report:*", "M03:inspection_order:read",
                  "M00:operation:read", "M00:route:read"],
-    "warehouse": ["M07:*", "M02:*:read", "M01:work_order:read"],
-    "maintainer": ["M08:*", "M09:*", "M00:*:read"],
+    # ★ 2026-11-09 修正：原写 `M07:*`，但 **M07 是「齐套与领料」，仓储是 M04**
+    #   （见 `backend/app/constants/modules.py::MODULE_NAMES` 与
+    #   `ROUTER_MODULE_MAP["wms"] = "M04"`）。后果是仓管员 `ah_wh1` 的 M04 权限
+    #   实测 0 条 —— 仓储那 15 个页面一个都进不去，B-29 补了菜单他也看不见。
+    #   **授权码写错模块不会报错**：`M07:*` 本身是合法码，只是这个角色不该有。
+    "warehouse": ["M04:*", "M02:*:read", "M01:work_order:read"],
+    # ★ 2026-11-09 修正：原写 `M08:*` / `M09:*`，而 **M08 与 M09 在模块表里不存在**
+    #   （模块只有 M00-M07 / M10 / M11 / M12 / M15 / M16 / M30 / PLAT）。
+    #   维修实际走 M06（设备管理 TPM：保养任务 / 保养计划 / 设备档案）。
+    #   实测证据：`ah_eq1` 总权限只有 8 条，全部来自 `M00:*:read`，M08/M09 颗粒无收。
+    "maintainer": ["M06:*", "M00:*:read"],
 }
 
 
