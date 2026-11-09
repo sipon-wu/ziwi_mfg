@@ -213,3 +213,57 @@ class TestSeedMatchesSpec:
         assert not self._has(wrong, "final", "TC"), (
             "判定器把 TK 认成了 TC —— 上面那条闸是空跑的")
         assert self._has(wrong, "final", "TK")
+
+
+class TestSeedIsPgPortable:
+    """种子迁移必须在 PG 上跑得通 —— **本地 SQLite 绿不代表 staging 绿**。
+
+    `cursor.lastrowid` 是 SQLite 方言：asyncpg 的 cursor 上根本没这个属性，报
+    `AttributeError: 'AsyncAdapt_asyncpg_cursor' object has no attribute
+    'lastrowid'`。
+
+    这条最阴的地方是**只在 PG 上炸**：本地 pytest 全绿、`--tenant MFG1` 全绿，
+    要等真去 staging 灌数据才发现（2026-11-09 就是这么栽的：本地验完就以为完事，
+    上了 staging 直接 traceback）。所以用静态闸把它钉在 CI 里，不靠人记得。
+    """
+
+    SRC = TestSeedMatchesSpec.SRC
+
+    @staticmethod
+    def _strip_comments(src: str) -> str:
+        """去掉 `#` 注释行再判定。
+
+        为什么必须去：迁移的注释里**特意写了** `lastrowid`（说明它为什么不能用），
+        不去注释就等于"注释里提到这个词就判失败" —— 一道只会误报的闸，
+        最后的下场是被人加 `noqa` 关掉，等于没有。
+        """
+        return "\n".join(
+            line for line in src.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+
+    @classmethod
+    def _uses_lastrowid(cls, src: str) -> bool:
+        return "lastrowid" in cls._strip_comments(src)
+
+    def test_detector_is_not_vacuous(self):
+        """负向自证：判定器对**代码里**含 `lastrowid` 的样本必须命中，
+        对只在注释里提到的必须不命中。
+
+        否则下面那条 `assert not ...` 在一个永远返回 False 的判定器上恒真。
+        """
+        assert self._uses_lastrowid("    dict_id = r.lastrowid\n")
+        assert not self._uses_lastrowid("    dict_id = int(r.scalar())\n")
+        assert not self._uses_lastrowid("    # 别用 r.lastrowid\n")
+
+    def test_seed_never_uses_lastrowid(self):
+        src = self.SRC.read_text(encoding="utf-8")
+        assert not self._uses_lastrowid(src), (
+            "种子迁移用了 lastrowid —— asyncpg 不支持，本地 SQLite 绿、staging 必炸。"
+            "改成 `INSERT ... RETURNING id` + `int(r.scalar())`")
+
+    def test_seed_reads_the_generated_id_via_returning(self):
+        """正向：新建字典后必须能拿到 id，否则后面三项全落不进去。"""
+        src = self.SRC.read_text(encoding="utf-8")
+        assert "RETURNING id" in src, (
+            "INSERT dictionaries 没带 RETURNING id —— 拿不到 dict_id，三项前缀都写不进去")

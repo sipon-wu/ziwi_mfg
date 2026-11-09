@@ -107,13 +107,17 @@ async def apply(tenant: str, dry_run: bool, overwrite: bool) -> dict:
             print(f"[new ] 建字典 {DICT_CODE}（{DICT_NAME}）")
             stat["dict_created"] = 1
             if not dry_run:
+                # ★ 必须 RETURNING id：asyncpg 的 cursor 没有 lastrowid
+                #   （AttributeError: 'AsyncAdapt_asyncpg_cursor' object has no
+                #   attribute 'lastrowid'）。本地 SQLite 能过、PG 上必炸 —— 只在
+                #   staging 复现，所以第一次必须真跑一遍 staging 才算验过。
                 r = await conn.execute(
                     text("INSERT INTO dictionaries"
                          " (tenant_id, dict_code, dict_name, description)"
-                         " VALUES (:t, :c, :n, :desc)"),
+                         " VALUES (:t, :c, :n, :desc) RETURNING id"),
                     {"t": tid, "c": DICT_CODE, "n": DICT_NAME, "desc": DICT_DESC},
                 )
-                dict_id = r.lastrowid
+                dict_id = int(r.scalar())
             else:
                 dict_id = -1
 
