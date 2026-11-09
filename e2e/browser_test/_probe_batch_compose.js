@@ -73,13 +73,28 @@ async function btnDisabled(page, sel) {
   }
   console.log(`  工单 ${wo.wo_no} (id=${wo.id})`)
 
+  // ── 0. 入口：工单详情页的「合装组套」按钮必须存在且能跳过来 ──
+  // 这一条是**入口验证**：页面做得再好，现场从工单里点不进去就等于没有（B-14 的教训）。
+  // 按钮带 `v-perm="M04:wms_batch:execute"`，所以这也是在验当前账号真有这个权限码。
+  await page.goto(`${BASE}/#/work-orders/${wo.id}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(2500)
+  const entry = await page.$('[data-action="compose"]')
+  chk('0 工单详情页有「合装组套」入口按钮', !!entry)
+  if (entry) {
+    const label = (await entry.textContent()) || ''
+    chk('0b 按钮文案是「合装组套」', label.includes('合装组套'), `label=${label.trim()}`)
+    await entry.click()
+    await page.waitForTimeout(1500)
+    chk('0c 点按钮能跳到组套页并带上工单', page.url().includes('/wms/batches/compose?wo='),
+        page.url())
+  }
+
   // ── 进页面（带工单 query，模拟从工单详情点「合装组套」）──
   await page.goto(`${BASE}/#/wms/batches/compose?wo=${wo.id}&wo_no=${encodeURIComponent(wo.wo_no)}`, {
     waitUntil: 'domcontentloaded',
   })
   await page.waitForSelector('.bc-page', { timeout: 20000 })
   await page.waitForTimeout(500)
-
   // ── 1. 页头 ──
   const title = await page.textContent('.bc-head__title')
   chk('1 页头标题是「合装组套」', (title || '').trim() === '合装组套', `title=${(title || '').trim()}`)
