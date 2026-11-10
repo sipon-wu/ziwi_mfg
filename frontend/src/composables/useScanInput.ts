@@ -4,7 +4,7 @@
  * ## 三通道
  * 1. **物理扫描键（硬键）**：扫码枪本质是键盘，会在极短时间内"逐字符键入 + Enter"。
  *    因此判定条件是**连续字符 + Enter**：相邻字符间隔 ≤ {@link DEFAULT_MAX_INTERVAL}ms
- *    且长度 ≥ {@link DEFAULT_MIN_LENGTH}，收到 Enter 即一次性吐出整串。
+ *    且长度 ≥ {@link SCAN_MIN_LENGTH}，收到 Enter 即一次性吐出整串。
  * 2. **软扫**：页面内相机/系统扫码头把结果 `set` 进来，走 `handleInput`。
  * 3. **粘贴兜底**：用户从别处复制编码粘贴，走 `handlePaste`（粘贴的间隔为 0，
  *    天然满足"连续字符"，但可能没有 Enter，所以粘贴直接成码）。
@@ -37,8 +37,19 @@ import { onBeforeUnmount, readonly, ref, type Ref } from 'vue'
 /** 相邻字符最大间隔（ms）。超过即认为是人在打字，重置缓冲 */
 export const DEFAULT_MAX_INTERVAL = 120
 
-/** 一次有效扫码的最小长度。太短无法区分"手输两三个字符"与"扫码" */
-export const DEFAULT_MIN_LENGTH = 4
+/**
+ * 一次有效扫码的**最小长度**。太短无法区分"手输两三个字符"与"扫码"。
+ *
+ * ★ **单一真源**：`ZiwiScanField` 的回车判定与「扫码」按钮兜底都取它，
+ *   不要再在组件里手写 `3` / 或依赖 composable 的另一份默认值 —— 此前是
+ *   组件传 3、composable 默认 4，两处取值并存，改一处另一处不变。
+ *
+ * 为什么是 3 而不是更长：真实业务码（批次码最短 9 位、工单号最短 10 位）
+ * 都远长于它，这个阈值只负责**挡住误触回车/两三个字的手输**，不是业务校验。
+ * 取 3 是与现网行为一致的最小改动；真要做业务级长度校验，应该在具体页面的
+ * `@scan` 处理里对着真实码规则校验，而不是把这个全局阈值调大。
+ */
+export const SCAN_MIN_LENGTH = 3
 
 /** 软扫/粘贴的收口防抖时长（ms） */
 export const DEFAULT_DEBOUNCE_MS = 160
@@ -49,7 +60,7 @@ export interface UseScanInputOptions {
    * 返回 `false` 表示"这次不算"，不会清空输入框（用于业务校验失败时保留原码）。
    */
   onScan: (code: string) => void | boolean | Promise<void | boolean>
-  /** 最小长度，默认 4 */
+  /** 最小长度，默认 {@link SCAN_MIN_LENGTH}；页面有更严的码规则时在 `@scan` 里校验 */
   minLength?: number
   /** 相邻字符最大间隔，默认 120ms */
   maxInterval?: number
@@ -91,7 +102,7 @@ export type ScanSource = 'keyboard' | 'paste' | 'input'
  * @param options 见 {@link UseScanInputOptions}
  */
 export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
-  const minLength = options.minLength ?? DEFAULT_MIN_LENGTH
+  const minLength = options.minLength ?? SCAN_MIN_LENGTH
   const maxInterval = options.maxInterval ?? DEFAULT_MAX_INTERVAL
   const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS
   const clearOnScan = options.clearOnScan !== false

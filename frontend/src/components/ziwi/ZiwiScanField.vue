@@ -17,7 +17,7 @@
  * 依据：UE §2.5、§6.1、UE-15；架构 §5.2。
  */
 import { computed, ref } from 'vue'
-import { useScanInput } from '@/composables/useScanInput'
+import { SCAN_MIN_LENGTH, useScanInput } from '@/composables/useScanInput'
 import { txt } from '@/config/uiText'
 
 interface Props {
@@ -69,7 +69,8 @@ const { isScanning, handleKeydown, handlePaste } = useScanInput({
     }
     return true
   },
-  minLength: 3,
+  // ★ 不在这里传 minLength：用 composable 的 SCAN_MIN_LENGTH（单一真源）。
+  //   此前这里写死 3、composable 默认 4，两处并存，改一处另一处不变。
 })
 
 /** 扫码提示：识别中给出明确反馈（A2：操作已生效） */
@@ -93,7 +94,7 @@ function onKeydown(event: KeyboardEvent): void {
 /** 手输兜底：值够长时把当前值当成一次扫码结果 */
 function onConfirm(): void {
   const code = innerValue.value.trim()
-  if (code.length < 3) {
+  if (code.length < SCAN_MIN_LENGTH) {
     emit('scan', '')
     return
   }

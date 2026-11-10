@@ -170,6 +170,20 @@ async function freshPage(page) {
     chk('D1', stillThere, `半截码「${half}」回车后输入框 = ${JSON.stringify(shown)}（不该被悄悄清掉）`)
     const wrongSubmitted = /不存在|查无|未找到/.test(body)
     chk('D2', !wrongSubmitted, wrongSubmitted ? '把半截码当完整码提交了（查无此码）' : '没有把半截码当成品提交')
+
+    // D3 阈值就是 3：3 个字符按设计**要提交**（会报查无此码）。
+    //    若有人把 SCAN_MIN_LENGTH 改成 4，这条立刻红 —— 它钉的是常量值，
+    //    不是"能不能查到"。真实业务码最短 9 位，所以 3 字符必然查无此码。
+    await freshPage(page)
+    const box3 = inputOf(page)
+    const three = code.slice(-3)
+    await typeChars(box3, three, 150)
+    await box3.press('Enter')
+    await page.waitForTimeout(1500)
+    const errText = await page.evaluate(() => (document.querySelector('.bc-error')?.innerText || '').trim())
+    chk('D3', errText.length > 0,
+      errText ? `3 字符已提交（说明阈值=3）：${errText.slice(0, 40)}`
+        : '3 字符按设计应提交并报查无此码，实际没提交（SCAN_MIN_LENGTH 被改大了？）')
   }
 
   // ── E 中途停顿 + Enter（负向：不能提交后缀）──────────────────

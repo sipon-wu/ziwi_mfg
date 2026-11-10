@@ -68,6 +68,15 @@ DOCUMENTED = {
         "P-E2E", "MAT-TC4-123456",
     ],
     "process_routes": ["RTE-P-GE-12-V2", "RT-TS-123456"],
+    "batches": [
+        "E2E-DEC-ST-949439",        # 返修拆解探针（C-102）
+        "E2E-BC-RT-NO-1110001319",  # 组套探针的部件码
+        "E2E-LBL-ST-241668",        # 批次标签探针（C-101）
+        "QD-1109142457",            # 质检闭环探针：<前缀>-<10位时间戳>
+        "B-D3-1109142334",          # 质量边界探针
+        "DS1B-1109142256",          # 试产探针
+        "B-1109142249",             # 仓储探针
+    ],
     "users": ["tmpu1105115407", "rouser1107003308", "inspector_1107003246"],
 }
 
@@ -104,6 +113,20 @@ class TestNoFalsePositives:
         assert not _matches("work_orders", "WO-E2E")          # 前缀不完整
         assert not _matches("products", "E2E")                # 无分隔符
 
+    def test_production_trace_codes_are_not_probe(self):
+        """`TC-` / `TD-` / `TZ-` 是**生产真实编码**，探针也会造，形状分不出来。
+
+        所以批次规则里刻意不收这三族。谁要是图省事把 `^T[CZD]-` 加进
+        `ROOT_PATTERNS["batches"]`，这条就红 —— 那等于把成品码/部件码当垃圾删。
+        """
+        for code in ("TC-20261110-0001", "TD-20261110-0001", "TZ-20261110-0001"):
+            assert not _matches("batches", code), f"{code} 是生产编码，不该被当探针垃圾"
+
+    def test_seed_batch_codes_are_not_probe(self):
+        # 种子批次编码形态：无分隔符日期、带字母后缀的工单码、月度采购批
+        for code in ("B20260701", "WO-AH-261026-UN", "WO-AH-260615-ST", "PUR-202606-04"):
+            assert not _matches("batches", code), f"{code} 是种子数据，不该被当探针垃圾"
+
     def test_real_accounts_are_not_probe(self):
         assert not _matches("users", "mfg_admin")
         assert not _matches("users", "ah_admin")
@@ -115,6 +138,17 @@ class TestStructure:
         roots = {r[0] for r in pa.ROOTS}
         orphans = set(pa.ROOT_PATTERNS) - roots
         assert not orphans, f"ROOT_PATTERNS 里有不存在的根表：{sorted(orphans)}"
+
+    def test_batches_is_a_root_table(self):
+        """`batches` 曾经不是根表 → 探针批次码永远没人回收，而工具每次都说干净。
+
+        这条闸钉住它：从 `ROOTS` 里被拿掉就红。
+        """
+        assert "batches" in {r[0] for r in pa.ROOTS}
+        # 库存按 `batch_id` 挂，删批次必须连带删库存，否则留下看不见的悬空行
+        refs = {(t, c, r) for t, c, r, _k in pa.REFS}
+        assert ("inventory", "batch_id", "batches") in refs
+        assert ("inventory_transactions", "batch_id", "batches") in refs
 
     def test_default_pattern_still_locked_to_10_digits(self):
         """`{10,}` 这条硬约束不能放宽 —— 放宽就会把 8 位日期的种子编码算成垃圾。"""

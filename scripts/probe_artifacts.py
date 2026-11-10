@@ -111,6 +111,13 @@ DEFAULT_PATTERN = r"[-_][0-9]{10}$"
 # (表名, 编码列, 人类可读名, id 列)
 ROOTS = [
     ("work_orders",    "wo_no", "工单",  "id"),
+    # ★ 2026-11-10 补（C-103）：`batches` 以前**不在这张表里**，于是探针造的批次码
+    #   没人回收 —— 跑完一轮回归，`probe_artifacts` 打印「没有命中，库里是干净的」，
+    #   而 staging 上批次一行行在涨（实测累积 65 条，跨 11-05～11-08 四个批次）。
+    #   它以前只作为 `materials` 的子表被连带删（靠 `material_id`），所以凡是
+    #   **挂在种子物料上**的探针批次（质检/仓储探针就爱复用种子物料）全都漏网。
+    #   放在 `materials` 前面：批次引用物料，必须先删批次再删物料。
+    ("batches",        "batch_no", "批次码", "id"),
     ("process_routes", "code",  "工艺路线", "id"),
     ("products",       "code",  "产品",  "id"),
     ("operations",     "code",  "工序",  "id"),
@@ -169,12 +176,30 @@ ROOT_PATTERNS = {
         r"^RTE-P-GE-[0-9]+-V[0-9]+$",   # 路线编辑探针的版本拷贝
         r"^RT-TS-[0-9]{6}$",            # trial 探针
     ],
+    "batches": [
+        # 整类前缀就是探针的：`E2E-DEC-ST-*` / `E2E-BC-RT-NO-*` / `E2E-LBL-*`
+        r"^E2E[-_]",
+        # 探针批次码一律 `<前缀>-<10位时间戳>`：
+        #   质检闭环 `QD-1109142457`、质量边界 `B-D3-1109142334`、
+        #   试产 `DS1B-1109142256`、仓储 `B-1109142249` / `BR-...` / `FR-...`
+        # 种子编码不匹配这条：`B20260701`（无分隔符）、`WO-AH-261026-UN`、`PUR-202606-04`。
+        r"[-_][0-9]{10}$",
+        # ★ 这三族**故意不收**，别照着"看起来像探针"补进来：
+        #   `TC-20261110-0001`（成品码）、`TD-20261110-0001` / `TZ-...`（部件码）
+        #   是**生产真实编码**，探针也会造——形状完全一样，靠编码分不出来。
+        #   要精确回收只能靠 `batches.source_report_id → work_reports → work_order_id`
+        #   这条链（探针工单出的码），属后续增强，不做形状通配。
+    ],
 }
 
 
 #: 这些表的专用规则**取代**默认规则，不与之合并（账号就是这样：只认前缀白名单，
 #: 不给"结尾 10 位数字"任何机会）。其余表是"默认规则 + 补充规则"取并集。
-ROOT_EXCLUSIVE = {"users"}
+#:
+#: `batches` 也进这个集合：它的两条规则里已经**显式**写了默认形态，同时明确
+#: 不碰 `TC-` / `TD-` / `TZ-` 这三族生产编码。列成 exclusive 是为了让后来人
+#: 一眼看出"这里不是漏了默认规则，是刻意列全了"。
+ROOT_EXCLUSIVE = {"users", "batches"}
 
 #: `--suffix` 模式（人工指定精确后缀）下专用规则全部退场，只按给定后缀匹配 ——
 #: 否则"只清这一批"会被白名单规则扩大成"清掉所有探针账号"。
@@ -227,6 +252,11 @@ REFS = [
     ("ppap_submissions",        "product_id",     "products",       "id"),
     ("fmea_documents",          "product_id",     "products",       "id"),
     ("fmea_hierarchies",        "operation_id",   "operations",     "id"),
+    # ★ `batch_id` 两条（C-103）：批次的库存余额/流水都按 `batch_id` 挂。
+    #   只删批次不删它们 → 库存行指向一个不存在的批次，**账面完全看不出来**
+    #   （本库无外键，删父行不报错）。2026-11-10 手工清 staging 时就踩过。
+    ("inventory",               "batch_id",       "batches",        "id"),
+    ("inventory_transactions",  "batch_id",       "batches",        "id"),
     ("inventory",               "material_id",    "materials",      "id"),
     ("inventory_transactions",  "material_id",    "materials",      "id"),
     ("inventory_items",         "material_code",  "materials",      "code"),
@@ -439,6 +469,35 @@ async def main(argv):
                 return 0
 
             # ---- 删除前快照「必须保留的行」，删完逐条回读 ----
+            #
+            # ★ keep 的计算口径（2026-11-10 修）：不能只看"本表编码像不像探针码"。
+            #   同一张根表的行，可能因为**另一张根表是探针数据**而被级联删掉：
+            #   例如批次 `TC-20261110-0001` 自己的编码不像探针码（TC- 是生产编码），
+            #   但它的物料是探针物料 → `REFS` 里 `batches.material_id → materials`
+            #   会把它一起删掉。这是**正确行为**（物料都造假了，批次当然是假的），
+            #   而旧口径把它算成"误伤"，删完报一条假 FAIL。
+            #
+            #   正确口径：keep = 本表全部行 − 本表被规则命中 − 本表被 REFS 级联命中。
+            #   为此先算出"哪些根表行会因别处是探针而被删"，再从 keep 里扣掉。
+            cascade: dict[str, set] = defaultdict(set)
+            for tbl, col, root, root_key in REFS:
+                if root not in hits or tbl not in hits:
+                    continue          # 只关心"根表自己会不会被级联删"
+                if not await _table_exists(conn, tbl, is_pg):
+                    continue
+                if not await _column_exists(conn, tbl, col, is_pg):
+                    continue
+                vals = ([r[0] for r in hits[root]] if root_key == "id"
+                        else [r[1] for r in hits[root]])
+                if not vals:
+                    continue
+                names = [f"c{i}" for i in range(len(vals))]
+                ph = ", ".join(f":{n}" for n in names)
+                rs = await conn.execute(
+                    text(f'select id from "{tbl}" where "{col}" in ({ph})'),
+                    dict(zip(names, vals)))
+                cascade[tbl] |= {r[0] for r in rs.fetchall()}
+
             keep = {}
             for tbl, code_col, _label, id_col in ROOTS:
                 where, params = "", {}
@@ -448,7 +507,7 @@ async def main(argv):
                 rs = await conn.execute(
                     text(f'select "{id_col}", "{code_col}" from "{tbl}"{where}'), params)
                 keep[tbl] = {r[0] for r in rs.fetchall()
-                             if not (r[1] and rxx.search(str(r[1])))}
+                             if not (r[1] and rxx.search(str(r[1])))} - cascade.get(tbl, set())
 
             print()
             print("[3/4] 执行删除（单事务）")
