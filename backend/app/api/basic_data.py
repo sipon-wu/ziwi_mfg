@@ -228,6 +228,28 @@ async def create_work_center(
         raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
 
 
+@router.get("/work-centers/capacity")
+async def preview_work_center_capacity(
+    route_id: Optional[int] = Query(None, ge=1,
+                                    description="只算这条工艺路线；不传则汇总所有已发布路线"),
+    repo: WorkCenterRepository = Depends(get_tenant_repo(WorkCenterRepository, require_auth=True)),
+):
+    """产能试算（只读）：算出每个工位**应该**填多少 `capacity_per_shift`。
+
+    ★ 路径注册顺序：必须在 `GET /work-centers/{wc_id}` **之前**。`{wc_id}` 声明
+      成 int，FastAPI 按声明顺序匹配 —— 排在后面的话 `capacity` 会被拿去转 int，
+      直接 422（`/work-orders/steps` 与 `/work-orders/merge` 上各吃过一次）。
+    ★ 权限码由路径末段推导：`capacity` 不是动作词，所以推出
+      `M00:work_center:read`（与工位列表共用），不需要新迁移去授权
+      —— `test_capacity_preview.py` 里有一条哨兵钉住它。
+    ★ 为什么只读不动库：字段值可能是有意手工调的（留余量），端点替租户决定
+      就成了"系统偷偷改我的数据"。
+    """
+    svc = WorkCenterService(repo)
+    data = await svc.capacity_preview(route_id)
+    return {"code": 0, "message": "success", "data": data}
+
+
 @router.get("/work-centers/{wc_id}")
 async def get_work_center(
     wc_id: int,

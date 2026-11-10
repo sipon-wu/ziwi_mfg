@@ -2,6 +2,13 @@
 from typing import Optional, Dict, List
 
 from datetime import date, datetime
+
+from app.core.capacity import (
+    piece_occupancy,
+    shift_minutes_from_config,
+    slowest_occupancy,
+    station_capacity,
+)
 from app.repositories.basic_data_repo import (
     OperationRepository, WorkCenterRepository,
     RouteRepository, RouteStepRepository,
@@ -133,6 +140,96 @@ class WorkCenterService:
     async def delete(self, id: int) -> dict:
         affected = await self.repo.delete_wc(id)
         return {"affected": affected}
+
+    async def capacity_preview(self, route_id: Optional[int] = None) -> dict:
+        """产能试算（只读）：给定路线，算出每个工位**应该**填多少 `capacity_per_shift`。
+
+        这件事以前只在两个脚本里做得到（种子脚本写数、产能闸比对），租户自己
+        改完工序时长**没有任何地方能看见产能应该变成多少**。端点化之后，
+        "换一个租户 / 换一种工艺"才不需要我们跑脚本给他算。
+
+        口径严格按 `app/core/capacity.py`：
+          - 每件占机 = `(unit_time + setup_time) / batch_size`（同装量摊掉）
+          - 工位产能 = `floor(该工位班时 ÷ 最慢那道占机)`
+          - **班时取该工位自己的 `shift_config`**，解析不出才退 12h 兜底，
+            并在返回里用 `shift_declared=false` 明说这是兜底（把兜底当事实报出去，
+            比不报更误导 —— 本地 dev 库全是 NULL 时会满屏假告警）
+
+        ★ **不乘 `equipment_count`**：口径 A 的语义是"这个工位被最慢那道工序卡住时
+          单台/单治具每班出几件"，字段填的就是它。并行台数是月产能 / 排产阶段才
+          乘的东西（口径 B），在这里乘进去等于把两个口径混成一个 —— 那正是
+          2026-11-07 花了半天才掰开的那团乱麻。`equipment_count` 一起返回，
+          让调用方知道乘的时候该乘几。
+        ★ **不判对错，只报差异**：`matches=false` 是提示不是拒绝。字段值可能是
+          上一版工艺留下的，也可能是有意手工调的（比如留余量），端点不该替租户决定。
+        """
+        rows = await self.repo.capacity_inputs(route_id)
+
+        stations: Dict[int, dict] = {}
+        for r in rows:
+            wc_id = int(r["wc_id"])
+            st = stations.setdefault(wc_id, {
+                "wc_id": wc_id,
+                "wc_code": r.get("wc_code"),
+                "wc_name": r.get("wc_name"),
+                # 参与排产的可用台数（备用不计）；0/未填按 1 台
+                "equipment_count": int(r.get("equipment_count") or 0) or 1,
+                "shift_config": r.get("shift_config"),
+                "capacity_field": (None if r.get("capacity_per_shift") is None
+                                   else float(r["capacity_per_shift"])),
+                "steps": [],
+            })
+            unit = float(r.get("unit_time") or 0)
+            setup = float(r.get("setup_time") or 0)
+            batch = max(1, int(r.get("batch_size") or 1))
+            occ = piece_occupancy(unit, setup, batch)
+            st["steps"].append({
+                "step_seq": r.get("step_seq"),
+                "step_name": r.get("step_name"),
+                "operation_code": r.get("operation_code"),
+                "operation_name": r.get("operation_name"),
+                "unit_time": unit,
+                "setup_time": setup,
+                "batch_size": batch,
+                "occupancy": round(occ, 4),
+                # 一炉多件时把摊算过程写出来（"120分÷4=30分"）—— 只看 30 分
+                # 是看不出它来自一炉 4 件的，而这正是最容易被误填成 120 的地方
+                "occupancy_text": (f"{unit + setup:g}分÷{batch}={occ:g}分"
+                                   if batch > 1 else None),
+            })
+
+        out: List[dict] = []
+        for st in stations.values():
+            st["steps"].sort(key=lambda s: (s.get("step_seq") or 0))
+            minutes, declared = shift_minutes_from_config(st.get("shift_config"))
+            st["shift_minutes"] = minutes
+            st["shift_declared"] = declared
+            slowest = slowest_occupancy([s["occupancy"] for s in st["steps"]])
+            st["slowest_occupancy"] = slowest
+            cap = station_capacity(slowest, minutes)
+            st["capacity_per_shift"] = cap
+            field = st["capacity_field"]
+            # 整数产能之间只比整数；字段存的是 REAL，用 0.5 的中间值判等，
+            # 避免 30 与 30.0 之间那点浮点噪音被当成"填错了"
+            st["matches"] = (None if (cap is None or field is None)
+                             else abs(field - cap) < 0.5)
+            st["diff"] = None if (cap is None or field is None) else round(field - cap, 4)
+            out.append(st)
+
+        out.sort(key=lambda s: (s.get("wc_code") or "", s["wc_id"]))
+        scanned = len(rows)
+        return {
+            "route_id": route_id,
+            "scanned_steps": scanned,
+            "stations": out,
+            "summary": {
+                "stations": len(out),
+                "mismatched": sum(1 for s in out if s["matches"] is False),
+                "missing_field": sum(1 for s in out if s["capacity_field"] is None),
+                "uncapacitable": sum(1 for s in out if s["capacity_per_shift"] is None),
+                "no_shift_config": sum(1 for s in out if not s["shift_declared"]),
+            },
+        }
 
 
 class RouteService:

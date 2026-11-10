@@ -372,6 +372,52 @@ class WorkCenterRepository(MultiTenantRepository):
             "SELECT id FROM work_centers WHERE code = :code", {"code": code}
         )
 
+    async def capacity_inputs(self, route_id: Optional[int] = None) -> List[Dict]:
+        """产能试算的原料：**已发布**路线上，每个工位每道工序的占机参数。
+
+        为什么要有这个方法（2026-11-11）：`capacity_per_shift` 在此之前只有
+        CRUD 读写，**没有任何业务逻辑消费它**，租户改了自己的工序时长也看不见
+        产能应该变成多少 —— 只能由我们跑脚本重算。这是"换一个租户 / 换一种
+        工艺就用不了"最主要的一处断点。
+
+        三个口径要点（每一条都对应一次事故或拍板）：
+
+        1. **`*_override` 优先**：路线上可以对某道工序改工时
+           （`route_steps.unit_time_override` / `setup_time_override`），改了就是
+           这条路线的事实。只看 `operations.unit_time` 会给出"按工序主数据算"的数，
+           与排产实际不符 —— 而这个偏差**不会报错**，只让人对着两套数互相怀疑。
+        2. **只认 `status = 'published'`**：草稿路线的工时还没定，算进去会让同一
+           工位在两处得出不同的数（产能闸的 SQL 也是这个口径）。
+        3. **`wc_id IS NULL` 不计入**：没有工位归属的工序不产生产能通道，与产能闸
+           一致。（真实工艺里这是"漏挂工位"的脏数据，回到上面第 1 条：漏挂会让
+           整机线凭空少算负荷，2026-11-07 的 MA035 就是。）
+
+        ★ 租户条件由基类注入，取最外层 FROM（`route_steps`）→ `rs.tenant_id`。
+          `route_steps` 不在 `ORG_SCOPED_TABLES` 里，所以不会按部门再切一刀 ——
+          这是对的：工艺路线是工艺事实，不是某个部门的私有数据。
+        """
+        sql = (
+            "SELECT rs.route_id, rs.step_seq, rs.step_name, rs.wc_id, rs.operation_id,"
+            "       COALESCE(rs.unit_time_override,  o.unit_time,  0) AS unit_time,"
+            "       COALESCE(rs.setup_time_override, o.setup_time, 0) AS setup_time,"
+            "       COALESCE(o.batch_size, 1) AS batch_size,"
+            "       o.code AS operation_code, o.name AS operation_name,"
+            "       wc.code AS wc_code, wc.name AS wc_name,"
+            "       wc.equipment_count, wc.capacity_per_shift, wc.shift_config,"
+            "       r.code AS route_code, r.version AS route_version"
+            "  FROM route_steps rs"
+            "  JOIN operations    o  ON o.id  = rs.operation_id"
+            "  JOIN work_centers  wc ON wc.id = rs.wc_id"
+            "  JOIN process_routes r ON r.id  = rs.route_id"
+            " WHERE rs.wc_id IS NOT NULL AND r.status = 'published'"
+        )
+        params: Dict = {}
+        if route_id is not None:
+            sql += " AND rs.route_id = :route_id"
+            params["route_id"] = route_id
+        sql += " ORDER BY rs.route_id, rs.step_seq"
+        return await self.query(sql, params)
+
 
 class RouteRepository(MultiTenantRepository):
     """工艺路线主表 CRUD"""

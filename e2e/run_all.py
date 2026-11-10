@@ -198,6 +198,12 @@ DEFAULT_PROBES = [
     # total_output 与 total_wip_output 恒等，双口径静默退化成单口径。
     # 本探针走到建单回填那一格，不只验四个端点能通。
     "product_route_e2e",
+    # 产能试算 `GET /work-centers/capacity`（C-109）：守四件事 —— ①口径真在算
+    #   （不信返回值，用返回的 steps 自己重算 floor(班时÷最慢一道)）；②班时按工位
+    #   各自解析（换班制/换租户的核心）；③与 capacity_per_shift 字段交叉对账
+    #   （两条独立路径给同一个数才叫口径收敛）；④新端点没把 /work-centers/{id} 遮蔽。
+    # ★ 它只读、不造数：租户没有 published 路线时 P2~P4 如实 SKIP，不硬凑。
+    "capacity_preview_e2e",
     # 生产报表明细下探：日报/月报 rows 每行带 work_order_id，且能一路
     # 穿透到工单详情与报工流水。判据自带负向自证（空数组不许空真）。
     "report_drilldown_e2e",
