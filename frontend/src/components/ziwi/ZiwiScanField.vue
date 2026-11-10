@@ -84,7 +84,10 @@ function onInput(value: string): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  handleKeydown(event)
+  // ★ 把输入框当前值一起交过去：回车以"框里现在是什么"为准。
+  //   不传的话就是老行为 —— 慢速手输时内部缓冲被重置成最后一个字符，
+  //   回车判定"太短"，然后静默清空，界面上什么都不发生（2026-11-10 实测）。
+  handleKeydown(event, innerValue.value)
 }
 
 /** 手输兜底：值够长时把当前值当成一次扫码结果 */

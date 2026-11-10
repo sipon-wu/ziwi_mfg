@@ -17,6 +17,20 @@
  * ## 防抖
  * 软扫通道（`handleInput`）没有 Enter 事件，只能靠防抖收口：最后一次输入后
  * 静置 `debounceMs` 即视为一次完整扫描。
+ *
+ * ## ★ Enter 以「输入框当前值」为准，不以内部缓冲为准（2026-11-10 修）
+ * 扫码枪本质是键盘 —— **扫码和手工录入在浏览器里是同一件事**，区别只是敲得快。
+ * 所以回车时该提交的是"框里现在是什么"，而不是"我猜这是不是一次扫描"。
+ *
+ * 此前 `Enter` 只看内部缓冲：慢速手输时相邻字符间隔 > `maxInterval`，
+ * 缓冲被重置成最后一个字符，回车时长度不够 → 静默清空、**什么都不发生**。
+ * 而扫码枪（30ms/字符）能过 → 现场表现成"扫码能查、手输查不了，必须多点一次按钮"。
+ * 更糟的是中等速度会留下 `003749` 这种**后缀**：长度够了就当完整码提交，
+ * 查出来的是另一个码或直接查无此码，而界面上看不出发生过替换。
+ *
+ * 现在缓冲只负责两件事：`isScanning` 的"正在识别…"视觉、以及页面级全局监听
+ * （`global: true`，此时没有输入框可读）。**成码内容一律以调用方给的
+ * `currentValue` 为准**，没给才退回缓冲。
  */
 import { onBeforeUnmount, readonly, ref, type Ref } from 'vue'
 
@@ -55,7 +69,7 @@ export interface UseScanInputReturn {
   /** 上一次成功成码的来源（硬键 / 粘贴 / 软扫），可用于埋点或差异化提示 */
   lastSource: Readonly<Ref<ScanSource>>
   /** 键盘事件处理器，绑到输入框或 document */
-  handleKeydown: (event: KeyboardEvent) => void
+  handleKeydown: (event: KeyboardEvent, currentValue?: string) => void
   /** 粘贴处理器 */
   handlePaste: (event: ClipboardEvent) => void
   /** 软扫 / 手输兜底：把当前输入框的值交给它 */
@@ -112,11 +126,12 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
    * 把缓冲提交出去。
    *
    * @param source 来源标记（硬键 / 粘贴 / 软扫），仅用于日志与埋点
+   * @param rawValue 成码内容。**给了就用它**（输入框当前值），不给才退回内部缓冲
    * @returns 是否成功吐出一码
    */
-  async function flush(source: ScanSource = 'keyboard'): Promise<boolean> {
+  async function flush(source: ScanSource = 'keyboard', rawValue?: string): Promise<boolean> {
     clearDebounce()
-    const code = buffer.value.trim()
+    const code = (rawValue ?? buffer.value).trim()
     if (code.length < minLength) {
       // 达不到扫码特征：当成普通输入，不清空（用户可能只是手输了几个字）
       isScanning.value = false
@@ -142,16 +157,25 @@ export function useScanInput(options: UseScanInputOptions): UseScanInputReturn {
     return accepted !== false
   }
 
-  function handleKeydown(event: KeyboardEvent): void {
+  /**
+   * @param event 键盘事件
+   * @param currentValue **输入框当前值**。有输入框的场景必须传 —— 回车以它为准，
+   *   否则慢速手输会被内部缓冲的"重置"逻辑吞掉（见文件头注释）
+   */
+  function handleKeydown(event: KeyboardEvent, currentValue?: string): void {
     // 只处理可打印键与 Enter；忽略组合键（Ctrl+V 走 paste 通道）
     if (event.ctrlKey || event.metaKey || event.altKey) return
 
     if (event.key === 'Enter') {
-      if (buffer.value.length >= minLength) {
+      // ★ 先看框里有什么，再看缓冲。扫码枪和真人手输走同一条判定，
+      //   唯一区别是扫码枪能让缓冲也满 —— 但那只是"识别中"的视觉，不是成码依据。
+      const code = (currentValue ?? buffer.value).trim()
+      if (code.length >= minLength) {
         // 阻止 Enter 触发外层表单提交
         event.preventDefault()
-        void flush('keyboard')
+        void flush('keyboard', code)
       } else {
+        // 太短：不提交、也不动输入框里的内容，让人接着打或点扫码按钮
         reset()
       }
       return
