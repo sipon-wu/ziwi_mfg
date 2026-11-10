@@ -142,6 +142,10 @@ class UserRepository(MultiTenantRepository):
         ), {"tenant_id": self._tenant_id, "uid": id})
         roles = [row[0] for row in result.fetchall()]
         user["roles"] = roles if roles else []
+        # 工位绑定：详情页要回填「我负责哪几个工位」的多选框。
+        # 空列表 = 不限工位（与 `resolve_user_work_center_ids` 的 None 语义对齐，
+        # 前端拿到 [] 就直接显示"未绑定＝不限"）。
+        user["work_center_ids"] = await self.work_center_ids_of(id)
         return user
 
     async def get_by_cloud_uuid(self, cloud_uuid: str) -> Optional[Dict]:
@@ -242,6 +246,46 @@ class UserRepository(MultiTenantRepository):
                 "VALUES (:uid, :rid, :tid)",
                 {"uid": user_id, "rid": rid, "tid": scope_tenant})
         return {"role_ids": target, "synced": len(target)}
+
+    async def sync_user_work_centers(self, user_id: int,
+                                     wc_ids: Optional[List[int]]) -> dict:
+        """全量同步账号绑定的工作中心（车间"我负责哪几个工位"）。
+
+        ## 语义
+
+        - ``wc_ids is None`` → **不动**（调用方没提这件事，不是"清空"）
+        - ``wc_ids == []``   → 解绑全部 → 该账号回到"不限工位"
+        - ``[3, 5]``         → 只保留这两个
+
+        传 `None` 与传 `[]` 必须分开处理。合成一个"空就是清空"会让
+        "改个手机号"顺手把工位绑定抹掉，而绑定没了等于**权限面扩大**
+        （从"只看两个工位"变成"看全厂"），且不会有任何提示。
+
+        ## 为什么先删后插
+
+        与 `sync_user_roles` 一致：全量覆盖比 diff 更难写错。diff 漏算一侧
+        就静默少一条，而少一条的后果是这个人看不见自己工位的活 ——
+        看起来像"系统没派活给我"，查起来极费时间。
+        """
+        if wc_ids is None:
+            return {"work_center_ids": None, "synced": None}
+        scope_tenant = self._tenant_id or "default"
+        target = list(dict.fromkeys(int(w) for w in wc_ids if w is not None))
+        await self.execute(
+            "DELETE FROM user_work_centers WHERE user_id = :uid AND tenant_id = :tid",
+            {"uid": user_id, "tid": scope_tenant})
+        for wc_id in target:
+            await self.execute(
+                "INSERT INTO user_work_centers (tenant_id, user_id, wc_id) "
+                "VALUES (:tid, :uid, :wid)",
+                {"tid": scope_tenant, "uid": user_id, "wid": wc_id})
+        return {"work_center_ids": target, "synced": len(target)}
+
+    async def work_center_ids_of(self, user_id: int) -> List[int]:
+        rows = await self.query(
+            "SELECT wc_id FROM user_work_centers WHERE user_id = :uid ORDER BY wc_id",
+            {"uid": user_id})
+        return [int(r["wc_id"]) for r in rows if r.get("wc_id") is not None]
 
     async def _insert_user(self, tenant_id: str, data: dict, email: Optional[str],
                            primary_org_id: Optional[int]) -> int:

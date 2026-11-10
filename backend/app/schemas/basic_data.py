@@ -100,6 +100,32 @@ class OperationUpdate(BaseModel):
     is_critical: Optional[bool] = None
 
 
+# ── 报工小组（工序分组）─────────────────────────────────────────
+
+
+class OperationGroupCreate(BaseModel):
+    code: str
+    name: str
+    remark: Optional[str] = None
+    is_active: bool = True
+    # 建组时一次带上成员：界面上是「填名字 + 勾工序」一步保存。
+    # 分两步（先建空组、再进详情勾）会让中间态在列表里显示成
+    # 「0 道工序的小组」，看起来像建失败了。
+    operation_ids: List[int] = []
+
+
+class OperationGroupUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    remark: Optional[str] = None
+    is_active: Optional[bool] = None
+    # ★ ``None`` 与 ``[]`` 是两件事：``None``（未传）= 只改名字，成员不动；
+    #   ``[]`` = 把工序全部移出这个组。用 `operation_ids: List[int] = []`
+    #   做默认值会让"改个组名"顺手清空成员，而且不会有任何报错 ——
+    #   所以这里必须是 Optional 且默认 None。
+    operation_ids: Optional[List[int]] = None
+
+
 class OperationResponse(BaseModel):
     id: int
     tenant_id: str

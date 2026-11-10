@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
-from app.core.dependencies import get_current_user, get_tenant_repo
+from typing import Optional
+from app.core.dependencies import (
+    get_current_user, get_tenant_repo, get_user_work_center_ids,
+)
 from app.repositories.production_repo import ProductionRepository
 from app.services.production_service import ProductionService
 from app.services.doc_no import assert_doc_no_available, guard_duplicate
@@ -44,8 +47,9 @@ async def list_work_steps(
                        description="open=待作业(pending+in_progress) / completed=已完工 / all=全部"),
     work_center_id: int = Query(None, description="按工作中心过滤（工位任务台的入口）"),
     work_order_id: int = Query(None),
+    group_id: int = Query(None, description="按报工小组过滤（前段组/总装组）"),
     keyword: str = Query(None, description="工序编码/名称、工单号、产品名"),
-    current_user: dict = Depends(get_current_user),
+    allowed_wc_ids: Optional[list] = Depends(get_user_work_center_ids),
     repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
 ):
     """工序任务列表（跨工单）—— 报工管理页的数据源。
@@ -57,10 +61,16 @@ async def list_work_steps(
       `M01:work_order:read`）—— 两者不同，前者需要显式授予，
       迁移 `20261110b_step_permissions.py` 负责把已有的
       `M01:work_order:read` 持有者同步过来。少了这一步，除通配 admin 外全员 403。
+
+    ★ `allowed_wc_ids` 是**数据范围**（账号绑定了哪几个工位），与权限码是两件事：
+      权限码回答"能不能进这个页面"，工位范围回答"进来能看见哪些活"。
+      没有绑定的账号拿到 `None`，行为与改造前完全一致。
     """
     svc = ProductionService(repo)
     data = await svc.list_work_steps(page, page_size, scope,
-                                     work_center_id, work_order_id, keyword)
+                                     work_center_id, work_order_id, keyword,
+                                     group_id=group_id,
+                                     allowed_wc_ids=allowed_wc_ids)
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -144,6 +154,7 @@ async def execute_step(
     step_seq: int = Path(..., ge=1, description="工序序号（route_steps.step_seq 的快照）"),
     req: StepReportRequest = None,
     current_user: dict = Depends(get_current_user),
+    allowed_wc_ids: Optional[list] = Depends(get_user_work_center_ids),
     repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
 ):
     """执行一道工序 = 报工（工序由路径决定，不用手输编码）。
@@ -154,12 +165,17 @@ async def execute_step(
       除通配 admin 外全员 403，而报错文案还指着一个页面上不存在的权限项。
       `execute` 已在集合里，资源名收敛回 `work_order_step`，
       动作收敛成 `execute`，与「检验执行 / 点检执行 / 出库执行」同一套词汇。
+
+    ★ 写入侧校验工位归属（`allowed_wc_ids`）：与列表用的是**同一个依赖**。
+      只做列表过滤的话，受限账号拿一条不属于自己工位的工序路径照样能报工，
+      于是"按工位可见"变成纯界面装饰。
     """
     svc = ProductionService(repo)
     payload = (req or StepReportRequest()).model_dump()
     payload["reporter_id"] = current_user["id"]
     result = await svc.report_step(order_id, step_seq, payload,
-                                   current_user.get("tenant_id", "default"))
+                                   current_user.get("tenant_id", "default"),
+                                   allowed_wc_ids=allowed_wc_ids)
     return {"code": 0, "message": result["message"], "data": result}
 
 

@@ -106,3 +106,48 @@ class UserOrganization(Base):
     user = relationship("User", back_populates="user_orgs", foreign_keys=[user_id])
     # 说明：暂不声明到 organizations 的 relationship —— 该表由任务 B3 新建，
     # 提前声明会让 SQLAlchemy mapper 在 B3 落地前直接抛 NoReferencedClassError。
+
+
+class UserWorkCenter(Base):
+    """账号 ↔ 工作中心绑定：车间"我负责哪几个工位"。
+
+    ## 为什么是账号级，不是角色级
+
+    "我站 3 号工位"是**人的属性**，不是岗位的属性。同一个「操作工」角色下有
+    20 个人，分在 6 个工位 —— 挂在角色上就得给每个工位建一个角色，
+    角色列表会变成 20 个「操作工·1号位」「操作工·2号位」…，权限配置彻底没法看。
+
+    ## 为什么是独立维度，不塞进 `roles.scope`
+
+    组织范围（`scope` = SELF/DEPT/DEPT_CHILD/ALL）回答的是"我能看哪几个**部门**的数据"，
+    工位范围回答的是"我能看哪几个**工位**的活"。两者正交：车间主任可以既看全车间
+    （DEPT_CHILD）又只管 3 个工位的排产。塞进同一个枚举就必须二选一，
+    而 `widest_scope` 取最宽会把更细的那一层静默吃掉 —— 配了却没生效，最坏的一种。
+
+    ## 语义：有绑定行就限，没有就不限
+
+    - 该用户在本租户下**有**绑定行 → 报工任务台只返回这些工位的工序/小组
+    - **没有**绑定行 → 不限（沿用当前行为）
+
+    这条看似 fail-open，但"有没有绑定"本身就是**显式配置动作**，
+    不是"解析失败退回全量"（那个坑已踩过：清库把 `user_organizations` 清了，
+    退回 `None` 让 `demo_ws1_leader` 看到与 admin 一样多的数据）。
+    如果改成"没绑定就什么都看不到"，升级当天所有存量账号的报工台会集体变空 ——
+    这是把越权风险换成了一次确定的生产事故。
+    """
+
+    __tablename__ = "user_work_centers"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "wc_id", name="uq_user_wc"),
+        Index("ix_user_wc_tenant_user", "tenant_id", "user_id"),
+    )
+
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(50), nullable=False, comment="租户ID")
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+                     comment="用户ID")
+    # 不建外键：本库仅 7 条外键，且删工作中心时不该连带把人的绑定静默删掉
+    # （绑定没了 = 该账号重新变成"不限"，是权限面的扩大）。由 `probe_artifacts`
+    # 的 REFS 登记负责回收孤儿行。
+    wc_id = Column(BigInteger, nullable=False, comment="工作中心ID（指向 work_centers.id）")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

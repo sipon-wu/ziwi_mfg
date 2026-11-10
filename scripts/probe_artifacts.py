@@ -120,6 +120,12 @@ ROOTS = [
     ("batches",        "batch_no", "批次码", "id"),
     ("process_routes", "code",  "工艺路线", "id"),
     ("products",       "code",  "产品",  "id"),
+    # ★ 2026-11-10 补（C-107）：报工小组也是探针造的根数据。它**不在**这张表里
+    #   的时候，`operation_group_members` 的引用登记形同虚设 —— 成员行是挂在
+    #   组上的，组不删就永远有父行，回收脚本只会打印"根表无匹配、库里是干净的"，
+    #   而 `operation_groups` 每跑一轮多两条（与 C-103 的 `batches` 同一形状）。
+    #   放在 `operations` 前面：成员同时引用组和工序，先删组再删工序。
+    ("operation_groups", "code", "报工小组", "id"),
     ("operations",     "code",  "工序",  "id"),
     ("materials",      "code",  "物料",  "id"),
     ("work_centers",   "code",  "工作中心", "id"),
@@ -239,6 +245,17 @@ REFS = [
     #   "看不见残留"等于"永远没人回收"。
     ("work_order_steps",        "work_order_id",  "work_orders",    "id"),
     ("work_order_steps",        "operation_id",   "operations",     "id"),
+    # ★ 报工小组（C-107）。成员关系不登记的话，删完工序会留下指向不存在工序的
+    #   成员行；`list_work_steps` 的展示走 JOIN operations，孤儿成员行不显示，
+    #   但 `operation_count` 照样把它算进去 —— 表现为"组里明明有 3 道工序，
+    #   打开只有 2 道"，而没有任何地方报错。
+    ("operation_group_members", "group_id",       "operation_groups", "id"),
+    ("operation_group_members", "operation_id",   "operations",     "id"),
+    # ★ 账号 ↔ 工位绑定（C-107）。删用户不删绑定的话，同一 user_id 被新账号
+    #   复用时，新账号会**继承**旧账号的工位范围 —— 这是权限面的事故，
+    #   比留残留行严重得多。
+    ("user_work_centers",       "user_id",        "users",          "id"),
+    ("user_work_centers",       "wc_id",          "work_centers",   "id"),
     ("work_reports",            "work_order_id",  "work_orders",    "id"),
     ("work_reports",            "operation_code", "operations",     "code"),
     ("issue_orders",            "work_order_id",  "work_orders",    "id"),

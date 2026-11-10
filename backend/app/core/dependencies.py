@@ -340,6 +340,62 @@ async def resolve_data_scope_org_ids(current_user: dict, db: AsyncSession) -> Op
         return []
 
 
+async def resolve_user_work_center_ids(current_user: dict,
+                                      db: AsyncSession) -> Optional[list]:
+    """当前账号绑定的工作中心 id（车间"我负责哪几个工位"）。
+
+    返回语义
+    --------
+    - ``None``     → **不限**（该账号在本租户下没有任何绑定行）
+    - ``[3, 5]``   → 只看这些工位的工序
+
+    ★ 与 ``resolve_data_scope_org_ids`` 的 fail-closed **刻意不同**，别统一：
+
+    - 那个函数解析的是"我能看哪几个**部门**"——算不出来时退回全量，
+      等于一次数据清理变成一次越权（2026-11-03 已发生过）。
+    - 这个函数回答的是"我负责哪几个**工位**"，而**「没有绑定」本身就是一个
+      合法的、由管理员显式做出的配置结果**，不是解析失败。若把它也当成
+      "算不出来"，退回空集，升级当天所有存量账号（staging 上 15 个 / 每个
+      租户 12 个角色）的报工台会集体变空 —— 把越权风险换成一次确定的生产事故。
+
+    所以这里**不 catch**：真出异常（比如迁移没跑、表不存在）就让它 500。
+    "算不出来"既不能当成"不限"（静默越权），也不该当成"全空"（生产事故），
+    唯一诚实的回答是报错 —— 界面立刻红，五分钟内会被发现并修掉。
+    """
+    user_id = current_user.get("id")
+    tenant_id = current_user.get("tenant_id")
+    if not user_id or not tenant_id:
+        # API Key 集成方走 key_id 而不是 id，其权限由 key 的 permissions 显式列举
+        # —— 不走用户维度的工位范围（与 resolve_data_scope_org_ids 同一处理）。
+        return None
+
+    from sqlalchemy import text as _text
+
+    res = await db.execute(
+        _text("SELECT wc_id FROM user_work_centers "
+              "WHERE tenant_id = :t AND user_id = :u"),
+        {"t": tenant_id, "u": int(user_id)},
+    )
+    rows = res.fetchall()
+    if not rows:
+        return None
+    # 去重 + 排序：列表稳定，也让探针能直接比数组。
+    return sorted({int(r[0]) for r in rows if r[0] is not None})
+
+
+async def get_user_work_center_ids(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[list]:
+    """FastAPI 依赖包装：给工序任务台的读/写两处共用。
+
+    ★ 读列表与写报工**必须用同一个依赖**：两处各自算一遍，
+      迟早在某一处漏掉（比如新加一个导出端点时想不起来），
+      于是"看不见但能报"。
+    """
+    return await resolve_user_work_center_ids(current_user or {}, db)
+
+
 def get_tenant_repo(repo_class: Type[T], require_auth: bool = True) -> Callable[[], T]:
     """统一的租户感知 Repo 依赖工厂。
 

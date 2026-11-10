@@ -299,11 +299,177 @@ function getOpTypeLabel(v: string): string {
 
 onMounted(() => {
   fetchData()
+  fetchGroups()
 })
+
+// ══════════════ 报工小组（C-107）══════════════
+//
+// 为什么挂在工序管理页里而不是独立菜单：小组是"把工序编成组"，
+// 和工序是同一件事的两面。分成两个菜单后，改完工序还得再找一个页面
+// 去勾组，而那个页面上又列一遍全部工序 —— 两处看到的工序池会不一致。
+//
+// ★ 勾选池直接用本页已加载的 `rawList`（page_size=100）。不单独再拉一份：
+//   两份列表在"刚新建完一道工序还没刷新"时会不一致，勾出来的组会缺工序。
+
+interface OperationGroup {
+  id: number
+  code: string
+  name: string
+  remark: string | null
+  is_active: boolean
+  operation_count: number
+}
+
+/** 0 = 工序 / 1 = 报工小组。用数字而不是字符串，与 van-tabs 的 v-model 口径一致。 */
+const tab = ref(0)
+const groups = ref<OperationGroup[]>([])
+const groupsLoading = ref(false)
+const groupKeyword = ref('')
+const showGroupSheet = ref(false)
+const groupIsEdit = ref(false)
+const groupSaving = ref(false)
+/** 正在编辑的组。字段一律用**非空**类型（`''` 表示没填），
+ *  因为 Vant 的 `van-field` 只收 `string | number | undefined`，
+ *  绑 `string | null | undefined` 直接 TS2322 —— 与本页 envForm 同一处理。 */
+interface GroupForm {
+  id: number
+  code: string
+  name: string
+  remark: string
+  is_active: boolean
+}
+/** `id === 0` 即新建。用 id 判而不是另开一个 boolean：两个状态源迟早对不上。 */
+const groupForm = ref<GroupForm>({ id: 0, code: '', name: '', remark: '', is_active: true })
+/** 勾选中的工序 id。**必须与 editingGroup 分开**：它只在保存时一次性提交，
+ *  中途取消不该污染列表里那一行的 operation_count。 */
+const groupOpIds = ref<number[]>([])
+
+const filteredGroups = computed<OperationGroup[]>(() => {
+  const kw = groupKeyword.value.trim().toLowerCase()
+  if (!kw) return groups.value
+  return groups.value.filter(
+    (g) =>
+      (g.code || '').toLowerCase().includes(kw) ||
+      (g.name || '').toLowerCase().includes(kw),
+  )
+})
+
+async function fetchGroups() {
+  groupsLoading.value = true
+  try {
+    const res = await get<{ items?: OperationGroup[] }>('/operation-groups', {
+      params: { page: 1, page_size: 100 },
+    })
+    groups.value = res.items || []
+  } catch (e: any) {
+    showToast(errorText(e, '获取报工小组失败'))
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+function openGroupCreate() {
+  groupIsEdit.value = false
+  groupForm.value = { id: 0, code: '', name: '', remark: '', is_active: true }
+  groupOpIds.value = []
+  showGroupSheet.value = true
+}
+
+async function openGroupEdit(g: OperationGroup) {
+  groupIsEdit.value = true
+  // ★ 列表行里没有 operation_ids（列表只带计数），必须读详情回填。
+  //   拿列表行直接开编辑框会让"保存"把成员覆盖成空 —— 界面看起来正常，
+  //   那几道工序的人从此看不见这批活。
+  try {
+    const d = await get<OperationGroup & { operation_ids?: number[] }>(
+      `/operation-groups/${g.id}`,
+    )
+    groupForm.value = {
+      id: d.id,
+      code: d.code || '',
+      name: d.name || '',
+      remark: d.remark || '',
+      is_active: d.is_active !== false,
+    }
+    groupOpIds.value = [...(d.operation_ids || [])]
+    showGroupSheet.value = true
+  } catch (e: any) {
+    showToast(errorText(e, '读取小组详情失败'))
+  }
+}
+
+async function saveGroup() {
+  const code = groupForm.value.code.trim()
+  const name = groupForm.value.name.trim()
+  if (!code || !name) {
+    showToast('小组编码与名称都要填')
+    return
+  }
+  groupSaving.value = true
+  try {
+    const payload: Record<string, any> = {
+      code,
+      name,
+      remark: groupForm.value.remark || null,
+      is_active: groupForm.value.is_active,
+      // ★ 显式带上（可能是 []）：这是"覆盖写入"。想只改名就传 undefined，
+      //   而本页没有"只改名"的场景，一律整体保存。
+      operation_ids: groupOpIds.value,
+    }
+    if (groupForm.value.id > 0) {
+      await put(`/operation-groups/${groupForm.value.id}`, payload)
+      showToast('已保存')
+    } else {
+      await post('/operation-groups', payload)
+      showToast('已创建')
+    }
+    showGroupSheet.value = false
+    fetchGroups()
+  } catch (e: any) {
+    showToast(errorText(e, '保存失败'))
+  } finally {
+    groupSaving.value = false
+  }
+}
+
+function removeGroup(g: OperationGroup) {
+  showDialog({
+    title: '确认删除',
+    message: `确定删除报工小组「${g.name}」？组内 ${g.operation_count} 道工序的归属会一起清除（工序本身不受影响）。`,
+    showCancelButton: true,
+  }).then(async (action) => {
+    // ★ 这里**不写** `(action: string)`：`showDialog().then` 的参数类型是
+    //   `DialogAction | undefined`，写窄成 `string` 就与回调签名不符（TS2345）。
+    //   本页上面两处旧代码就是那么写的，一直在错误清单里躺着 —— 新代码不再加一份。
+    if (action !== 'confirm') return
+    try {
+      await del(`/operation-groups/${g.id}`)
+      showToast('删除成功')
+      fetchGroups()
+    } catch (e: any) {
+      showToast(errorText(e, '删除失败'))
+    }
+  })
+}
+
+/** 勾选/取消一道工序。用数组而不是 Set：van-checkbox-group 要数组。 */
+function toggleGroupOp(id: number) {
+  const i = groupOpIds.value.indexOf(id)
+  if (i >= 0) groupOpIds.value.splice(i, 1)
+  else groupOpIds.value.push(id)
+}
 </script>
 
 <template>
   <div class="ziwi-page">
+    <!-- 两个 tab：工序本体 / 报工小组。小组是「把工序编成组」，
+         和工序是同一件事的两面，分成两个菜单会让两处各列一份工序池。 -->
+    <van-tabs v-model:active="tab" class="op-tabs">
+      <van-tab title="工序"></van-tab>
+      <van-tab title="报工小组"></van-tab>
+    </van-tabs>
+
+    <template v-if="tab === 0">
     <!-- 搜索栏：条件 → 输入 → 提交 → 清空 → 查询延伸 | 创建靠右 -->
     <ZiwiListToolbar
       v-model:keyword="keyword"
@@ -421,6 +587,47 @@ onMounted(() => {
         </tbody>
       </table>
     </div>
+    </template>
+
+    <!-- ══════════ 报工小组 ══════════ -->
+    <template v-else>
+      <div class="op-group-bar">
+        <van-search
+          v-model="groupKeyword"
+          placeholder="搜索小组编码/名称"
+          class="op-group-search"
+        />
+        <van-button type="success" size="small" @click="openGroupCreate">新增小组</van-button>
+      </div>
+
+      <ZiwiStateView v-if="groupsLoading" state="loading" skeleton="rows" :skeleton-count="3" />
+      <ZiwiStateView
+        v-else-if="filteredGroups.length === 0"
+        :state="groupKeyword ? 'empty-filtered' : 'empty-true'"
+        object-name="报工小组"
+        :conditions="groupKeyword ? [`关键词「${groupKeyword}」`] : []"
+        primary-text="新增小组"
+        @create="openGroupCreate"
+        @clear-filter="groupKeyword = ''"
+      />
+      <van-cell-group v-else inset>
+        <van-cell
+          v-for="g in filteredGroups"
+          :key="g.id"
+          :title="g.name"
+          :label="`${g.code} · ${g.operation_count} 道工序` + (g.is_active ? '' : ' · 已停用')"
+          is-link
+          @click="openGroupEdit(g)"
+        >
+          <template #right-icon>
+            <van-button
+              size="mini" plain type="danger"
+              @click.stop="removeGroup(g)"
+            >删除</van-button>
+          </template>
+        </van-cell>
+      </van-cell-group>
+    </template>
 
     <!-- 创建/编辑弹窗 -->
     <ZiwiFormSheet
@@ -494,6 +701,58 @@ onMounted(() => {
         <van-field v-model="editing.remark" label="备注" type="textarea" rows="2" placeholder="可选" />
       </div>
     </ZiwiFormSheet>
+
+    <!-- 报工小组 编辑弹窗 -->
+    <van-popup
+      v-model:show="showGroupSheet"
+      position="bottom"
+      round
+      class="op-group-popup"
+      teleport="body"
+    >
+      <div class="op-group-sheet">
+        <div class="op-group-sheet-head">
+          <span>{{ groupIsEdit ? '编辑报工小组' : '新增报工小组' }}</span>
+        </div>
+
+        <div class="op-group-sheet-body">
+          <van-field v-model="groupForm.code" label="小组编码" placeholder="如 G-FRONT" />
+          <van-field v-model="groupForm.name" label="小组名称" placeholder="如 前段组" />
+          <van-field v-model="groupForm.remark" label="备注" placeholder="选填" />
+          <van-cell title="启用" center>
+            <template #right-icon>
+              <van-switch v-model="groupForm.is_active" size="20" />
+            </template>
+          </van-cell>
+
+          <div class="op-group-pick-title">
+            组内工序（已选 {{ groupOpIds.length }} 道）
+          </div>
+          <!-- 勾选池直接用本页已加载的工序列表：另拉一份会出现
+               「刚建的工序还没刷新」，勾出来的组缺工序。 -->
+          <div class="op-group-pick">
+            <button
+              v-for="o in rawList"
+              :key="o.id"
+              type="button"
+              class="op-group-chip"
+              :class="{ on: groupOpIds.includes(o.id) }"
+              @click="toggleGroupOp(o.id)"
+            >{{ o.name }}</button>
+            <span v-if="rawList.length === 0" class="op-group-hint">
+              还没有工序，先到「工序」页签新建
+            </span>
+          </div>
+        </div>
+
+        <div class="op-group-sheet-foot">
+          <van-button block plain @click="showGroupSheet = false">取消</van-button>
+          <van-button block type="primary" :loading="groupSaving" @click="saveGroup">
+            保存
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
 
     <AdvancedSearchPanel
       v-model:show="showSearch"
@@ -657,5 +916,90 @@ onMounted(() => {
   .op-table tbody td {
     padding: 8px 10px;
   }
+}
+
+.op-tabs {
+  margin-bottom: 12px;
+}
+
+.op-group-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.op-group-search {
+  flex: 1;
+  padding: 0;
+}
+
+/* 弹层占屏 78%：留出顶部让用户还能看见底下的工序表，
+   确认自己改的是哪一条。高度写在 class 里而不是内联
+   —— UI 契约闸 A 项 ratchet 只许降不许升。 */
+.op-group-popup {
+  height: 78%;
+}
+
+.op-group-sheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.op-group-sheet-head {
+  padding: 14px 16px;
+  font-weight: 600;
+  font-size: 16px;
+  border-bottom: 1px solid var(--ziwi-border, #e5e7eb);
+}
+
+.op-group-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.op-group-pick-title {
+  padding: 12px 16px 6px;
+  font-size: 13px;
+  color: var(--ziwi-text-secondary, #64748b);
+}
+
+.op-group-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+/* 勾选片：热区 44 起步（车间手势操作），选中态靠背景+边框双写，
+   不只靠颜色 —— 产线屏色偏时只变颜色等于没变。 */
+.op-group-chip {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--ziwi-border, #e5e7eb);
+  background: var(--ziwi-bg-card, #fff);
+  color: var(--ziwi-text-primary, #1e293b);
+  font-size: 14px;
+}
+
+.op-group-chip.on {
+  border-color: var(--van-primary-color, #1989fa);
+  background: rgba(25, 137, 250, 0.1);
+  font-weight: 600;
+}
+
+.op-group-hint {
+  font-size: 13px;
+  color: var(--ziwi-text-secondary, #64748b);
+}
+
+.op-group-sheet-foot {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--ziwi-border, #e5e7eb);
 }
 </style>

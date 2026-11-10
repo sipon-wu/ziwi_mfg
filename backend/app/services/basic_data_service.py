@@ -43,6 +43,67 @@ class OperationService:
         return {"affected": affected}
 
 
+class OperationGroupService:
+    """报工小组的业务约束。
+
+    只在服务层做的两件事：**编码查重**与**删除前提醒**。
+    其它一律直通仓储层 —— 多加一层薄的转发不会更安全，只会多一个
+    "改了一处忘了另一处"的地方。
+    """
+
+    def __init__(self, repo):
+        self.repo = repo
+
+    async def list(self, page: int = 1, page_size: int = 20,
+                   keyword: str = None, is_active: bool = None) -> dict:
+        return await self.repo.list_groups(page, page_size, keyword, is_active)
+
+    async def get(self, id: int) -> Optional[Dict]:
+        return await self.repo.get_group(id)
+
+    async def create(self, data: dict) -> dict:
+        existing = await self.repo.get_group_by_code(data.get("code", ""))
+        if existing:
+            raise ValueError(f"小组编码已存在: {data.get('code')}")
+        group_id = await self.repo.create_group(data)
+        # 建组时一次带上成员：界面上是「填名字 + 勾工序」一步保存。
+        # 分两步（先建空组、再进详情勾）会让中间态在列表里显示成
+        # "0 道工序的小组"，看起来像建失败了。
+        n = await self.repo.set_members(
+            group_id, data.get("operation_ids") or [], data.get("tenant_id"))
+        return {"id": group_id, "operation_count": n}
+
+    async def update(self, id: int, data: dict,
+                     operation_ids: Optional[List[int]] = None) -> dict:
+        row = await self.repo.get_group(id)
+        if not row:
+            raise ValueError("报工小组不存在")
+        if "code" in data and data["code"] != row.get("code"):
+            existing = await self.repo.get_group_by_code(data["code"])
+            if existing and int(existing["id"]) != id:
+                raise ValueError(f"小组编码已被占用: {data['code']}")
+        affected = await self.repo.update_group(id, data)
+        n = None
+        # ★ 只有**显式传了** operation_ids 才覆盖成员。传 None（未传）与传 []
+        #   （清空）是两件事：前者是"只改名字"，后者是"把工序全移出这个组"。
+        #   都当成空列表处理，就会出现"改个组名，成员被清空"——
+        #   而且不会有任何报错。
+        if operation_ids is not None:
+            n = await self.repo.set_members(id, operation_ids, row.get("tenant_id"))
+        return {"affected": affected, "operation_count": n}
+
+    async def delete(self, id: int) -> dict:
+        row = await self.repo.get_group(id)
+        if not row:
+            raise ValueError("报工小组不存在")
+        # 不拦删除：成员关系跟着组一起删是符合直觉的（组没了，归属也就没了）。
+        # 与「工序被路线引用就不能删」不同 —— 那里删掉会让路线指向空工序，
+        # 这里是纯分类，删掉只是不再分组。
+        affected = await self.repo.delete_group(id)
+        return {"affected": affected,
+                "removed_members": len(row.get("operation_ids") or [])}
+
+
 class WorkCenterService:
     def __init__(self, repo: WorkCenterRepository):
         self.repo = repo

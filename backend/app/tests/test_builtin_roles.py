@@ -237,8 +237,33 @@ def test_work_order_step_codes_are_granted_to_m01_roles():
             f"检查 ROLE_GRANTS 是否缺少对应资源通配。")
 
 
-# ── preset_roles 行为（服务层）──────────────────────────────
+def test_operation_group_codes_are_derived_and_granted():
+    """报工小组四个码必须真被端点推导出来、且被内置角色覆盖。
 
+    ★ 这条不是"存在性检查"，是**资源名漂移哨兵**：一旦有人把路径改成
+      `/api/v1/operation-groups/{id}/xxx` 让末段落进 `EXECUTE_SUFFIXES`，
+      资源名会变成 `operation_group` 以外的东西（比如 `operation`），
+      这四个码就凭空消失 —— 而 `permissions` 表里旧的四个码还在、
+      角色也还拥有它们，直接表现为**新租户能配、老租户报 403**，
+      两边看同一份代码谁也说不清。
+    """
+    from app.core.permissions import all_permission_codes
+
+    codes = set(all_permission_codes())
+    covered: set = set()
+    for patterns in ROLE_GRANTS.values():
+        for pat in patterns:
+            covered |= resolve_pattern(pat, codes)
+
+    for action in ("read", "create", "update", "delete"):
+        need = f"M00:operation_group:{action}"
+        assert need in codes, f"{need} 没有被任何端点推导出来（路径/资源名漂移了）"
+        assert need in covered, (
+            f"{need} 没有任何内置角色拥有 —— 新租户开通后工序分组功能会 403。"
+            f"检查 ROLE_GRANTS 的 M00 通配是否覆盖 operation_group。")
+
+
+# ── preset_roles 行为（服务层）──────────────────────────────
 class FakeTenantRepo:
     def __init__(self, flags=None, exists=True):
         self.flags = flags or {}

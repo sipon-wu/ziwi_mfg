@@ -36,6 +36,34 @@ const loading = ref(false)
 const finished = ref(false)
 const keyword = ref('')
 
+/** 报工小组筛选。`null` = 不筛（"全部"）。
+ *
+ * ★ 为什么放在报工台上而不是只放配置页：车间的人按**组**找活
+ *  （"今天我们前段组要干哪几道"），不按工单号找。没有这一层，
+ *  前段组的人得在有 21 道工序的工单里翻自己那 5 道。 */
+const groupFilter = ref<number | null>(null)
+const groups = ref<{ id: number; name: string }[]>([])
+
+async function fetchGroups() {
+  try {
+    const res = await get<{ items?: { id: number; name: string; is_active?: boolean }[] }>(
+      '/operation-groups',
+      { params: { page: 1, page_size: 100, is_active: true } },
+    )
+    groups.value = (res.items || []).map((g) => ({ id: g.id, name: g.name }))
+  } catch (e) {
+    // 分组读不出来不该让整个任务台打不开 —— 它只是筛选器。
+    console.warn('[WorkReportList] 获取报工小组失败', e)
+    groups.value = []
+  }
+}
+
+function pickGroup(id: number | null) {
+  if (groupFilter.value === id) return
+  groupFilter.value = id
+  fetchPage(true)
+}
+
 /** 缺料标记：`material_check_status` 挂在工单上，`failed` 才是真缺料 */
 const isShortOfMaterial = (s: WorkStep) => s.material_check_status === 'failed'
 
@@ -52,6 +80,7 @@ async function fetchPage(reset = false) {
       page_size: PAGE_SIZE,
       scope: tab.value,
       keyword: keyword.value || undefined,
+      group_id: groupFilter.value ?? undefined,
     })
     const items = res.items || []
     steps.value = page.value === 1 ? items : [...steps.value, ...items]
@@ -74,7 +103,10 @@ function switchTab(name: string | number) {
   fetchPage(true)
 }
 
-onMounted(() => fetchPage(true))
+onMounted(() => {
+  fetchGroups()
+  fetchPage(true)
+})
 
 /** 点行进这道工序的报工页 —— 工单与工序都由参数带过去，现场不用选也不用填 */
 function openStep(s: WorkStep) {
@@ -98,6 +130,25 @@ function goWholeOrder() {
       <van-tab title="待作业" name="open" />
       <van-tab title="已完工" name="completed" />
     </van-tabs>
+
+    <!-- 小组筛选：车间按"我们组"找活，不按工单号找。
+         只有真配过分组时才显示整条筛选栏，否则多一行空白挤占首屏。 -->
+    <div v-if="groups.length" class="wrs-groups">
+      <button
+        type="button"
+        class="wrs-groups__chip"
+        :class="{ on: groupFilter === null }"
+        @click="pickGroup(null)"
+      >全部</button>
+      <button
+        v-for="g in groups"
+        :key="g.id"
+        type="button"
+        class="wrs-groups__chip"
+        :class="{ on: groupFilter === g.id }"
+        @click="pickGroup(g.id)"
+      >{{ g.name }}</button>
+    </div>
 
     <van-search
       v-model="keyword"
@@ -138,6 +189,12 @@ function goWholeOrder() {
         <div class="wrs-row__meta">
           工作中心：{{ s.wc_name || '未指定' }}
           <template v-if="s.operation_code"> · 工序码 {{ s.operation_code }}</template>
+        </div>
+
+        <div v-if="s.groups && s.groups.length" class="wrs-row__groups">
+          <span v-for="g in s.groups" :key="g.id" class="wrs-row__group-tag">
+            {{ g.name || g.code || '未命名小组' }}
+          </span>
         </div>
 
         <div class="wrs-row__qty">
@@ -293,5 +350,47 @@ function goWholeOrder() {
 
 html[data-hover='on'] .wrs-row:hover {
   background: var(--ziwi-bg-light);
+}
+
+/* 小组筛选条：横向滚动，热区 40（车间手势）。
+   选中态同时改背景与边框，不只改文字色 —— 产线屏色偏时只变色等于没变。 */
+.wrs-groups {
+  display: flex;
+  gap: var(--ziwi-gap-sm);
+  overflow-x: auto;
+  padding: var(--ziwi-gap-sm) var(--ziwi-gap-md) 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wrs-groups__chip {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  border: 1px solid var(--ziwi-border);
+  background: var(--ziwi-bg-white);
+  color: var(--ziwi-text-primary);
+  font-size: var(--ziwi-font-size-sm);
+}
+
+.wrs-groups__chip.on {
+  border-color: var(--van-primary-color, #1989fa);
+  background: rgba(25, 137, 250, 0.1);
+  font-weight: 600;
+}
+
+.wrs-row__groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.wrs-row__group-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--ziwi-bg-hover, #f1f5f9);
+  color: var(--ziwi-text-secondary);
+  font-size: 12px;
 }
 </style>

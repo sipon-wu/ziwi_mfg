@@ -108,6 +108,160 @@ class OperationRepository(MultiTenantRepository):
         return row["cnt"] if row else 0
 
 
+class OperationGroupRepository(MultiTenantRepository):
+    """报工小组（工序分组）。
+
+    ## 成员关系为什么在仓储层一次性读写整组，而不是逐条增删
+
+    "这个组管哪几道工序"在界面上是多选框 —— 用户点完保存，语义是**覆盖**，
+    不是"我刚才勾上的那几条"。逐条 diff（先比差异再补删）要处理两个方向的
+    增减，任何一边写漏都不会报错：组里少了一道工序，列表看起来照常，
+    只是那道工序的人从此看不见这批活。
+
+    ## `tenant_id` 必须显式写
+
+    `operation_group_members.tenant_id` 是冗余列，`default=` 不存在（也没有
+    ORM 层默认可用），裸 `text()` 的 INSERT 少写就是 NOT NULL 报错 ——
+    或者更糟：某天有人把它改成 nullable，于是跨租户行悄悄存在。
+    所以 `set_members` 每条都显式带 tenant_id。
+    """
+
+    async def list_groups(self, page: int = 1, page_size: int = 20,
+                          keyword: str = None, is_active: bool = None) -> dict:
+        # ★ 工序数用相关子查询算，不用 JOIN + GROUP BY：分页 SQL 外面会套一层
+        #   `SELECT COUNT(*) FROM (...)`，GROUP BY 在里面会让 total 变成
+        #   "组数"还是"成员关系数"说不清。子查询与分页无关，永远对得上。
+        sql = (
+            "SELECT g.*, "
+            "(SELECT COUNT(*) FROM operation_group_members m WHERE m.group_id = g.id)"
+            " AS operation_count "
+            "FROM operation_groups g WHERE 1=1"
+        )
+        params: dict = {}
+        if keyword:
+            sql += " AND (g.code LIKE :kw OR g.name LIKE :kw)"
+            params["kw"] = f"%{keyword}%"
+        if is_active is not None:
+            sql += " AND g.is_active = :act"
+            params["act"] = bool(is_active)
+        sql += " ORDER BY g.code ASC"
+        return await self.query_page(sql, params, page, page_size)
+
+    async def get_group(self, id: int) -> Optional[Dict]:
+        """取一组，附带 ``operation_ids``（界面回填勾选用）与 ``operations``。"""
+        row = await self.query_one(
+            "SELECT * FROM operation_groups WHERE id = :id", {"id": id})
+        if not row:
+            return None
+        members = await self.query(
+            "SELECT m.operation_id, o.code, o.name "
+            "FROM operation_group_members m "
+            "LEFT JOIN operations o ON o.id = m.operation_id AND o.tenant_id = m.tenant_id "
+            "WHERE m.group_id = :g ORDER BY o.code",
+            {"g": id},
+        )
+        row["operation_ids"] = [int(m["operation_id"]) for m in members]
+        # LEFT JOIN 到已删工序时 code/name 为空 —— 如实带出来，别假装它还在：
+        # 前端靠 code 为空显示「工序已删除」，管理员才知道要清理。
+        row["operations"] = [
+            {"id": int(m["operation_id"]), "code": m.get("code"),
+             "name": m.get("name")} for m in members
+        ]
+        return row
+
+    async def get_group_by_code(self, code: str) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT id, code FROM operation_groups WHERE code = :code", {"code": code})
+
+    async def create_group(self, data: dict) -> int:
+        # ★ 固定列 INSERT 少一个绑定参数就是运行时 500（本仓铁律）。
+        #   `remark` 可空但仍必须在参数里 —— 调用方没填时补 None；
+        #   `operation_ids` 不是 operation_groups 的列，必须剔掉，
+        #   否则它只是一个"多余的绑定参数"（不报错但会误导后来的人以为有这列）。
+        data = {k: v for k, v in data.items() if k != "operation_ids"}
+        data.setdefault("remark", None)
+        data.setdefault("is_active", True)
+        await self.execute(
+            "INSERT INTO operation_groups (tenant_id, code, name, remark, is_active) "
+            "VALUES (:tenant_id, :code, :name, :remark, :is_active)",
+            data,
+        )
+        # ★ 不取 `execute()` 的返回值（它是 RETURNING id 的第一行主键，
+        #   单行时恰好等于"成功"，多行时是另一个数）。回读一次拿真 id。
+        row = await self.query_one(
+            "SELECT id FROM operation_groups WHERE code = :code", {"code": data["code"]})
+        return int(row["id"]) if row else 0
+
+    async def update_group(self, id: int, data: dict) -> int:
+        if not data:
+            return 0
+        sets = self._build_set_clause(data)
+        return await self.execute(
+            f"UPDATE operation_groups SET {sets} WHERE id = :id", {**data, "id": id})
+
+    async def delete_group(self, id: int) -> int:
+        """删组，先删成员关系。
+
+        本库几乎无外键（123 表只 7 条），不先删成员就只留一堆孤儿行指向
+        不存在的组 —— 那些行不会报错，只会让"这道工序属于哪个组"多出一个
+        查不到名字的空组。
+        """
+        await self.execute(
+            "DELETE FROM operation_group_members WHERE group_id = :g", {"g": id})
+        return await self.execute(
+            "DELETE FROM operation_groups WHERE id = :id", {"id": id})
+
+    async def set_members(self, group_id: int, operation_ids: List[int],
+                          tenant_id: str) -> int:
+        """**覆盖**写入成员：先清空再插入。返回写入后的成员数。
+
+        ★ 先删后插在同一个请求里不是原子的两段 —— 但比"diff 增删"更安全：
+          diff 漏算一侧就静默少一条；覆盖写最坏是中途失败丢成员，
+          而丢成员比"多一条别人看不见的"更容易被发现（列表上一眼少一道）。
+          真要原子得包事务，这里的仓储层不加事务（全仓一致做法）。
+        """
+        await self.execute(
+            "DELETE FROM operation_group_members WHERE group_id = :g", {"g": group_id})
+        ids = sorted({int(x) for x in (operation_ids or []) if x})
+        if not ids:
+            return 0
+        for op_id in ids:
+            await self.execute(
+                "INSERT INTO operation_group_members (tenant_id, group_id, operation_id) "
+                "VALUES (:t, :g, :o)",
+                {"t": tenant_id, "g": group_id, "o": op_id},
+            )
+        row = await self.query_one(
+            "SELECT COUNT(*) AS n FROM operation_group_members WHERE group_id = :g",
+            {"g": group_id})
+        return int((row or {}).get("n") or 0)
+
+    async def groups_of_operations(self, operation_ids: List[int]) -> Dict[int, List[Dict]]:
+        """``{operation_id: [{id, code, name}, ...]}`` —— 每页一次批量取。
+
+        ★ 一次 IN 查完，不在主 SQL 里 JOIN 多对多：JOIN 会让"一道工序属两个组"
+          的工序行在列表里出现两次（同一批活在一页显示两遍，数量还与 total
+          对不上）。`EXISTS` 过滤只解决筛选场景，**展示必须走这个批量查询**。
+        """
+        out: Dict[int, List[Dict]] = {}
+        ids = sorted({int(x) for x in (operation_ids or []) if x})
+        if not ids:
+            return out
+        ph = ", ".join(f":o{i}" for i in range(len(ids)))
+        rows = await self.query(
+            f"SELECT m.operation_id, g.id, g.code, g.name "
+            f"FROM operation_group_members m "
+            f"JOIN operation_groups g ON g.id = m.group_id "
+            f"WHERE m.operation_id IN ({ph}) AND g.is_active = :act "
+            f"ORDER BY g.code",
+            {**{f"o{i}": v for i, v in enumerate(ids)}, "act": True},
+        )
+        for r in rows:
+            out.setdefault(int(r["operation_id"]), []).append(
+                {"id": int(r["id"]), "code": r.get("code"), "name": r.get("name")})
+        return out
+
+
 class WorkCenterRepository(MultiTenantRepository):
 
     async def list_wc(self, page: int = 1, page_size: int = 20,

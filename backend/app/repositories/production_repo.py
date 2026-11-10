@@ -235,7 +235,9 @@ class ProductionRepository(MultiTenantRepository):
     async def list_work_steps(self, page: int = 1, page_size: int = 20,
                               scope: str = "open", work_center_id: int = None,
                               work_order_id: int = None,
-                              keyword: str = None) -> dict:
+                              keyword: str = None,
+                              group_id: int = None,
+                              allowed_wc_ids: Optional[list] = None) -> dict:
         """工序任务列表（跨工单）—— 报工管理页的数据源。
 
         `scope` 三档，对应页面上「待作业 / 已完工」两个 tab（默认待作业）：
@@ -251,6 +253,23 @@ class ProductionRepository(MultiTenantRepository):
         ★ 缺料与阻塞**取工单级的**，不是工序级：`material_check_status` 与
           `andon_call` 现在都挂在工单上。这里如实带出来并标明来源，
           不假装它们是工序级的（那需要新表，属下一步）。
+
+        ## `group_id` —— 按报工小组过滤
+
+        走 ``EXISTS`` 而不是 JOIN 成员表。JOIN 多对多会让"一道工序同时属于
+        前段组和总装组"的工序行在结果里出现两次：同一批活在一页显示两遍，
+        而且 ``total`` 是成员关系数不是工序数 —— 分页页码会跟着跳。
+
+        ## `allowed_wc_ids` —— 按账号绑定的工位收窄可见范围
+
+        ``None`` = 不限（该账号没有工位绑定，或是不走用户数据范围的 API Key）。
+        给了列表就**严格**只返回这些工位的工序，**不包含 ``wc_id IS NULL``**。
+
+        为什么不做"无工位归属的活谁都能看"：那看起来很人性，实际结果是
+        「配了绑定却还是全都看得见」—— `route_steps.wc_id` 在多数存量路线里
+        是空的，于是这个过滤在真实数据上等于没生效，而界面上还会显示
+        "已按工位过滤"。功能假生效比没这个功能更坏。
+        无归属工位的活由**不限工位**的账号（班组长 / 调度）兜住，不是彻底消失。
         """
         sql = """SELECT s.id, s.tenant_id, s.work_order_id, s.step_seq,
                  s.operation_id, s.operation_code, s.operation_name,
@@ -279,6 +298,19 @@ class ProductionRepository(MultiTenantRepository):
         if work_order_id:
             sql += " AND s.work_order_id = :wo"
             params["wo"] = work_order_id
+        if group_id:
+            sql += (" AND EXISTS (SELECT 1 FROM operation_group_members m"
+                    " WHERE m.operation_id = s.operation_id AND m.group_id = :grp)")
+            params["grp"] = int(group_id)
+        if allowed_wc_ids is not None:
+            if not allowed_wc_ids:
+                # 有绑定行但解析成空集在语义上不该出现（有行就至少一个 id）；
+                # 真出现时按"什么都看不到"处理，不给全量。
+                sql += " AND 1 = 0"
+            else:
+                ph = ", ".join(f":aw{i}" for i in range(len(allowed_wc_ids)))
+                sql += f" AND s.wc_id IN ({ph})"
+                params.update({f"aw{i}": int(v) for i, v in enumerate(allowed_wc_ids)})
         if keyword:
             sql += (" AND (s.operation_code LIKE :kw OR s.operation_name LIKE :kw"
                     " OR wo.wo_no LIKE :kw OR wo.product_name LIKE :kw)")
@@ -306,6 +338,20 @@ class ProductionRepository(MultiTenantRepository):
             blocked = {int(r["work_order_id"]) for r in rows}
         for r in data["items"]:
             r["blocked"] = int(r["work_order_id"]) in blocked
+
+        # 报工小组（展示用）：同样一次 IN 批量取，理由同上。
+        # 函数内 import：`basic_data_repo` 与生产仓储无依赖关系，
+        # 放模块级会让"改基础数据"有机会影响"生产模块"的导入链。
+        from app.repositories.basic_data_repo import OperationGroupRepository
+
+        grp_repo = OperationGroupRepository(self._session)
+        if self._tenant_id:
+            grp_repo.set_tenant_id(self._tenant_id)
+        op_ids = sorted({int(r["operation_id"]) for r in data["items"]
+                         if r.get("operation_id")})
+        by_op = await grp_repo.groups_of_operations(op_ids)
+        for r in data["items"]:
+            r["groups"] = by_op.get(int(r["operation_id"]), []) if r.get("operation_id") else []
         return data
 
     async def apply_report_to_step(self, step_id: int, input_qty: int = 0,

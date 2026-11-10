@@ -920,22 +920,33 @@ class ProductionService:
     # 阻塞 / 缺料），点进去是这道工序的报工页，确保每道工序都能报。
     async def list_work_steps(self, page: int = 1, page_size: int = 20,
                               scope: str = "open", work_center_id: int = None,
-                              work_order_id: int = None, keyword: str = None) -> dict:
+                              work_order_id: int = None, keyword: str = None,
+                              group_id: int = None,
+                              allowed_wc_ids: Optional[list] = None) -> dict:
         return await self.repo.list_work_steps(page, page_size, scope,
-                                                work_center_id, work_order_id, keyword)
+                                                work_center_id, work_order_id, keyword,
+                                                group_id=group_id,
+                                                allowed_wc_ids=allowed_wc_ids)
 
     async def steps_of_order(self, order_id: int) -> list:
         await self._require_order(order_id)
         return await self.repo.steps_of_order(order_id)
 
     async def report_step(self, order_id: int, step_seq: int, data: dict,
-                          tenant_id: str) -> dict:
+                          tenant_id: str, allowed_wc_ids: Optional[list] = None) -> dict:
         """按工序报工：**工序由路径决定，不让用户填编码**。
 
         改造前的表单里「工序编码」「工序名称」是手输文本框 —— 现场要背编码，
         打错了不会报错，只会把产量记到另一道工序上（或者对不上任何工序，
         静默变成"报整单"）。这条路走通之后，工序来自用户点的那一行，
         编码只是结果，不是输入。
+
+        ## `allowed_wc_ids` 是**写入侧的归属校验**，不是列表过滤的重复
+
+        列表过滤（`list_work_steps`）只解决"看不见"。不在这里再校验一次的话，
+        受限账号拿到一条不属于自己工位的工序路径（同事的截图、浏览历史、
+        或者干脆自己拼 URL）就能照样报工 —— 可见性变成了纯界面装饰。
+        这与本仓「读过滤必须配写归属」是同一条纪律。
         """
         step = await self.repo.get_step(order_id, step_seq)
         if not step:
@@ -943,6 +954,15 @@ class ProductionService:
                 "code": "404-0000",
                 "message": (f"工单 {order_id} 没有第 {step_seq} 道工序；"
                             "该工单可能未挂工艺路线（老单按整单报工）"),
+            })
+        # 403 而不是 404：这一步的语义是"这条活不归你"，不是"这条活不存在"。
+        # 回 404 会让车间以为是数据丢了，然后跑去问调度要单子。
+        if allowed_wc_ids is not None and int(step.get("wc_id") or 0) not in set(allowed_wc_ids):
+            raise HTTPException(status_code=403, detail={
+                "code": "403-0000",
+                "message": ("第 %d 道工序（%s）不归你绑定的工位，无法报工；"
+                            "如需接手请让管理员在账号上绑定该工作中心"
+                            % (step_seq, step.get("operation_name") or step.get("operation_code") or "-")),
             })
         payload = dict(data)
         payload["work_order_id"] = order_id

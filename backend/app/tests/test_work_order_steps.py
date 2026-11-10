@@ -27,13 +27,18 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.models.andon import AndonCall
-from app.models.basic_data import Operation, RouteStep, WorkCenter
+from app.models.basic_data import (
+    Operation, OperationGroup, OperationGroupMember, RouteStep, WorkCenter,
+)
 from app.models.production import WorkOrder, WorkOrderStep
 from app.repositories.production_repo import ProductionRepository
 
 TABLES = [
     WorkOrder.__table__, WorkOrderStep.__table__,
     RouteStep.__table__, Operation.__table__, WorkCenter.__table__,
+    # 报工小组两张表：`list_work_steps` 每页都会读成员关系来显示组名，
+    # 缺表时列表接口直接 500 —— 不是"少一列显示"那么轻。
+    OperationGroup.__table__, OperationGroupMember.__table__,
     AndonCall.__table__,
 ]
 
@@ -54,6 +59,14 @@ SEED = [
     " planned_qty, wo_status, route_id) VALUES "
     "(1, 't', 'WO-1', 'P-1', '整机', 10, 'released', 100), "
     "(2, 't', 'WO-2', 'P-2', '老单', 5, 'released', NULL)",
+    # 报工小组：工序 1（车削）**同时属于两个组** —— 这是真实形态（两个组的人
+    # 都得能看见这批活），也是 `EXISTS` 过滤与批量展示两条路径的关键用例。
+    # 工序 2（铣削）只属总装组。
+    "INSERT INTO operation_groups (id, tenant_id, code, name, is_active) VALUES "
+    "(200, 't', 'G-FRONT', '前段组', true), "
+    "(201, 't', 'G-FINAL', '总装组', true)",
+    "INSERT INTO operation_group_members (tenant_id, group_id, operation_id) VALUES "
+    "('t', 200, 1), ('t', 201, 1), ('t', 201, 2)",
 ]
 
 
@@ -225,4 +238,79 @@ class TestListWorkSteps:
     async def test_no_steps_returns_empty(self, repo):
         """没下达/没路线时返回空列表，不是报错。"""
         data = await repo.list_work_steps(scope="open")
+        assert data["total"] == 0 and data["items"] == []
+
+
+class TestGroupingAndWorkCenterScope:
+    """报工小组过滤 + 按账号绑定的工位收窄 —— 两个都只能"错得很安静"。
+
+    - 分组过滤写成 JOIN：一道工序属两个组时同一批活在一页出现两次，
+      `total` 也变成成员关系数，页码跟着跳。
+    - 工位范围写松（放开 `wc_id IS NULL`）：真实数据里多数路线没填工位，
+      于是配了绑定跟没配一样，而界面还显示"已按工位过滤"。
+    """
+
+    async def _prepare(self, repo):
+        await repo.expand_steps_from_route(await repo.get_work_order(1))
+
+    async def test_groups_are_attached_per_operation(self, repo):
+        await self._prepare(repo)
+        rows = (await repo.list_work_steps(scope="all"))["items"]
+        by_code = {r["operation_code"]: r for r in rows}
+        # 工序 1 属两个组，名称按编码排序（G-FINAL < G-FRONT）
+        assert [g["code"] for g in by_code["CW010"]["groups"]] == ["G-FINAL", "G-FRONT"]
+        assert [g["code"] for g in by_code["CW020"]["groups"]] == ["G-FINAL"]
+
+    async def test_group_filter_does_not_duplicate_rows(self, repo):
+        """按组过滤不能把"属两个组"的工序显示两遍。"""
+        await self._prepare(repo)
+        data = await repo.list_work_steps(scope="all", group_id=200)
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["operation_code"] == "CW010"
+
+    async def test_group_filter_selects_the_right_group(self, repo):
+        await self._prepare(repo)
+        data = await repo.list_work_steps(scope="all", group_id=201)
+        assert data["total"] == 2
+        assert {r["operation_code"] for r in data["items"]} == {"CW010", "CW020"}
+
+    async def test_no_group_means_full_list(self, repo):
+        """不传 group_id 时不过滤 —— 默认视图必须是全量，不能变成空。"""
+        await self._prepare(repo)
+        assert (await repo.list_work_steps(scope="all"))["total"] == 2
+
+    async def test_allowed_wc_ids_restricts_to_bound_centers(self, repo):
+        await self._prepare(repo)
+        data = await repo.list_work_steps(scope="all", allowed_wc_ids=[10])
+        assert data["total"] == 1
+        assert data["items"][0]["wc_id"] == 10
+
+    async def test_allowed_wc_ids_none_means_unrestricted(self, repo):
+        """没有绑定（None）= 不限。这是升级后存量账号的默认状态。"""
+        await self._prepare(repo)
+        assert (await repo.list_work_steps(scope="all", allowed_wc_ids=None))["total"] == 2
+
+    async def test_allowed_wc_ids_strictly_excludes_null_wc(self, repo):
+        """无工位归属的工序对受限账号**不可见**。
+
+        反过来放开 NULL 会让"配了绑定却还是全都看得见"成为常态 ——
+        `route_steps.wc_id` 在多数存量路线里是空的，过滤等于没生效，
+        而界面会显示"已按工位过滤"。功能假生效比没这个功能更坏。
+        """
+        await self._prepare(repo)
+        # 造一道没有工位的工序（无路线的老单按整单报工，等价形态）
+        await repo.execute(
+            "INSERT INTO work_order_steps (tenant_id, work_order_id, step_seq,"
+            " operation_code, operation_name, planned_qty, status, wc_id) VALUES"
+            " ('t', 1, 9, 'CW999', '无工位工序', 10, 'pending', NULL)")
+        assert (await repo.list_work_steps(scope="all"))["total"] == 3
+        data = await repo.list_work_steps(scope="all", allowed_wc_ids=[10, 11])
+        assert data["total"] == 2, "无工位的那道不该出现在受限视图里"
+        assert all(r["wc_id"] in (10, 11) for r in data["items"])
+
+    async def test_allowed_wc_ids_empty_set_sees_nothing(self, repo):
+        """空集 = 恒假。异常路径下宁可"看不到"，也不能静默变成全量。"""
+        await self._prepare(repo)
+        data = await repo.list_work_steps(scope="all", allowed_wc_ids=[])
         assert data["total"] == 0 and data["items"] == []

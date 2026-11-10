@@ -128,3 +128,58 @@ class TestReportStep:
             out = await svc.report_step(9, 3, {"output_qty": 5}, tenant_id="t")
 
         assert out["step_id"] == 77
+
+
+class TestWorkCenterOwnership:
+    """写入侧校验：不归你绑定的工位就报不了工。
+
+    只做列表过滤的话，"按工位可见"纯粹是界面装饰 —— 受限账号拿到一条
+    不属于自己工位的工序路径（同事的截图、浏览历史、自己拼 URL）照样能报工，
+    产量记到别人的活上，而列表上还看不见那一行。
+    """
+
+    async def test_step_outside_bound_centers_is_403(self):
+        svc = _svc()  # STEP 的 wc_id = 12
+        with patch.object(ProductionService, "create_report",
+                          new_callable=AsyncMock) as create:
+            with pytest.raises(HTTPException) as ei:
+                await svc.report_step(9, 3, {"output_qty": 1},
+                                      tenant_id="t", allowed_wc_ids=[10, 11])
+
+        assert ei.value.status_code == 403, "不归你的活要回 403，不是 404"
+        msg = ei.value.detail["message"]
+        assert "工位" in msg and "车削" in msg, f"文案没说清是哪道活：{msg}"
+        create.assert_not_awaited()
+
+    async def test_step_within_bound_centers_passes(self):
+        svc = _svc()
+        with patch.object(ProductionService, "create_report",
+                          new_callable=AsyncMock) as create:
+            create.return_value = {"id": 1, "step_id": 77}
+            await svc.report_step(9, 3, {"output_qty": 1},
+                                  tenant_id="t", allowed_wc_ids=[12, 13])
+        create.assert_awaited_once()
+
+    async def test_no_binding_means_no_check(self):
+        """`None` = 该账号没有工位绑定 → 与改造前完全一致，不做任何拦截。"""
+        svc = _svc()
+        with patch.object(ProductionService, "create_report",
+                          new_callable=AsyncMock) as create:
+            create.return_value = {"id": 1, "step_id": 77}
+            await svc.report_step(9, 3, {"output_qty": 1},
+                                  tenant_id="t", allowed_wc_ids=None)
+        create.assert_awaited_once()
+
+    async def test_step_without_work_center_is_403_for_bound_user(self):
+        """无工位归属的工序，受限账号同样报不了（严格口径，与列表过滤对齐）。
+
+        放松这一条（"没归属的活谁都能报"）会立刻产生一个不对称：
+        列表里看不见、却能报 —— 那是最难解释的一种状态。
+        这类活由不限工位的账号（班组长/调度）兜住。
+        """
+        step = {**STEP, "wc_id": None}
+        svc = _svc(step=step)
+        with pytest.raises(HTTPException) as ei:
+            await svc.report_step(9, 3, {"output_qty": 1},
+                                  tenant_id="t", allowed_wc_ids=[12])
+        assert ei.value.status_code == 403

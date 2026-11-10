@@ -37,6 +37,7 @@ import type {
   RoleUser,
 } from '@/api/roles'
 import { errMessage } from '@/utils/error'
+import { get, put } from '@/api/client'
 import ZiwiStateView from '@/components/ziwi/ZiwiStateView.vue'
 
 const auth = useAuthStore()
@@ -49,6 +50,10 @@ const canAddMember = computed(() => auth.hasPerm('PLAT:role_user:create'))
 const canCreate = computed(() => auth.hasPerm('PLAT:role:create'))
 const canUpdate = computed(() => auth.hasPerm('PLAT:role:update'))
 const canDelete = computed(() => auth.hasPerm('PLAT:role:delete'))
+/* 工位绑定改的是 users 的资源（`PUT /users/{id}` → `PLAT:user:update`），
+   不是角色资源 —— 用角色权限码去门控会得出"能配角色的人才能配工位"，
+   而后端实际判的是用户权限，两边对不上就会出现"按钮能点、一点 403"。 */
+const canBindWc = computed(() => auth.hasPerm('PLAT:user:update'))
 
 /* ── 状态 ── */
 const roles = ref<RoleItem[]>([])
@@ -404,6 +409,70 @@ async function onDeleteRole() {
   }
 }
 
+/* ────────────── 账号 ↔ 工作中心绑定（C-107）────────────── */
+//
+// 为什么放在「角色成员」列表里：这里已经按角色列出了人，班组长要配的就是
+// 「我们组这几个人各站哪个工位」。另开一个「用户管理」页要多一次跳转，
+// 而且那个页面目前并不存在（用户只在角色成员里出现）。
+//
+// ★ 绑定语义（与后端一致）：**有绑定就限，没有就不限**。所以界面上
+//   「一个都没勾」不叫"什么都看不到"，叫"不限工位"——文案必须这么写，
+//   否则管理员会以为必须勾。
+const showWcPicker = ref(false)
+const wcTarget = ref<RoleUser | null>(null)
+const wcOptions = ref<{ id: number; code?: string; name: string }[]>([])
+const wcSelected = ref<number[]>([])
+const wcLoading = ref(false)
+const wcSaving = ref(false)
+
+async function openWcPicker(u: RoleUser) {
+  wcTarget.value = u
+  showWcPicker.value = true
+  wcLoading.value = true
+  wcSelected.value = []
+  try {
+    // ★ 必须读一次详情：成员列表里没有 work_center_ids，
+    //   拿列表数据直接开弹窗会把「保存」变成清空绑定 ——
+    //   而清空绑定等于**放开**到全厂可见，是权限面的事故。
+    const [detail, wcs] = await Promise.all([
+      get<{ work_center_ids?: number[] }>(`/users/${u.id}`),
+      get<{ items?: { id: number; code?: string; name: string }[] }>('/work-centers', {
+        params: { page: 1, page_size: 200 },
+      }),
+    ])
+    wcSelected.value = [...(detail.work_center_ids || [])]
+    wcOptions.value = wcs.items || []
+  } catch (e: any) {
+    showToast(errMessage(e, '读取工位绑定失败'))
+  } finally {
+    wcLoading.value = false
+  }
+}
+
+function toggleWc(id: number) {
+  const i = wcSelected.value.indexOf(id)
+  if (i >= 0) wcSelected.value.splice(i, 1)
+  else wcSelected.value.push(id)
+}
+
+async function saveWc() {
+  if (!wcTarget.value) return
+  wcSaving.value = true
+  try {
+    await put(`/users/${wcTarget.value.id}`, { work_center_ids: wcSelected.value })
+    showToast(
+      wcSelected.value.length
+        ? `已绑定 ${wcSelected.value.length} 个工位`
+        : '已解绑全部工位（该账号将不限工位）',
+    )
+    showWcPicker.value = false
+  } catch (e: any) {
+    showToast(errMessage(e, '保存工位绑定失败'))
+  } finally {
+    wcSaving.value = false
+  }
+}
+
 /* ────────────── 添加角色成员 ────────────── */
 const showMemberPicker = ref(false)
 const userKeyword = ref('')
@@ -633,13 +702,22 @@ loadAll()
                     <template v-if="u.org_name"> · {{ u.org_name }}</template>
                   </div>
                 </div>
-                <button
-                  v-if="canManageMember"
-                  class="rp-btn rp-btn--danger"
-                  @click="onRemoveMember(u)"
-                >
-                  移出
-                </button>
+                <div class="rp-member__ops">
+                  <button
+                    v-if="canBindWc"
+                    class="rp-btn rp-btn--ghost"
+                    @click="openWcPicker(u)"
+                  >
+                    工位
+                  </button>
+                  <button
+                    v-if="canManageMember"
+                    class="rp-btn rp-btn--danger"
+                    @click="onRemoveMember(u)"
+                  >
+                    移出
+                  </button>
+                </div>
               </div>
             </div>
             <div v-else class="rp-muted" style="padding: 8px 0">该角色暂无成员</div>
@@ -748,6 +826,39 @@ loadAll()
       </div>
       <div class="rp-popup__ft">
         <button class="rp-btn rp-btn--ghost" @click="showMemberPicker = false">关闭</button>
+      </div>
+    </van-popup>
+
+    <!-- 工位绑定（C-107）：账号负责哪几个工作中心 = 报工台能看见哪些活 -->
+    <van-popup v-model:show="showWcPicker" position="center" round class="rp-popup">
+      <div class="rp-popup__hd">
+        工位范围 · {{ wcTarget?.real_name || wcTarget?.username }}
+      </div>
+      <div class="rp-popup__bd">
+        <p class="rp-muted rp-wc-hint">
+          勾选后该账号在报工台<b>只看见这些工位</b>的工序；
+          <b>一个都不勾 = 不限工位</b>（沿用改造前的行为，不是看不见）。
+        </p>
+        <van-loading v-if="wcLoading" class="rp-wc-pad" />
+        <div v-else-if="!wcOptions.length" class="rp-muted rp-wc-pad">
+          该租户还没有工作中心，先到「工作中心」页新建
+        </div>
+        <div v-else class="rp-wc-list">
+          <button
+            v-for="w in wcOptions"
+            :key="w.id"
+            type="button"
+            class="rp-wc-chip"
+            :class="{ on: wcSelected.includes(w.id) }"
+            @click="toggleWc(w.id)"
+          >{{ w.name }}</button>
+        </div>
+      </div>
+      <div class="rp-popup__ft">
+        <button class="rp-btn rp-btn--ghost" @click="showWcPicker = false">取消</button>
+        <button class="rp-btn rp-btn--primary" :disabled="wcSaving" @click="saveWc">
+          {{ wcSaving ? '保存中…' : '保存' }}
+        </button>
       </div>
     </van-popup>
   </div>
@@ -1266,5 +1377,48 @@ loadAll()
   gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid var(--ziwi-border-light, #f1f5f9);
+}
+
+/* 成员行右侧操作：工位 / 移出 并排，间距 8 —— 两个按钮都不该贴着边缘。 */
+.rp-member__ops {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 工位弹窗的说明与占位：内联样式写成 class，
+   UI 契约闸 A 项 ratchet 只许降不许升。 */
+.rp-wc-hint {
+  margin: 0 0 10px;
+}
+
+.rp-wc-pad {
+  padding: 12px 0;
+}
+
+.rp-wc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+/* 工位勾选片：热区 44（这套系统要能在车间触屏上用），
+   选中态靠背景+边框双写，不只改文字色。 */
+.rp-wc-chip {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--ziwi-border, #e5e7eb);
+  background: var(--ziwi-bg-white, #fff);
+  color: var(--ziwi-text-primary, #1e293b);
+  font-size: 14px;
+}
+
+.rp-wc-chip.on {
+  border-color: var(--van-primary-color, #1989fa);
+  background: rgba(25, 137, 250, 0.1);
+  font-weight: 600;
 }
 </style>

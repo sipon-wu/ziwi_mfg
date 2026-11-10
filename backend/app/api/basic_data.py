@@ -4,12 +4,12 @@
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from app.core.dependencies import get_current_user, get_tenant_repo
 from app.repositories.basic_data_repo import (
-    OperationRepository, WorkCenterRepository,
+    OperationRepository, OperationGroupRepository, WorkCenterRepository,
     RouteRepository, RouteStepRepository,
     ProductRepository, CalendarRepository,
 )
 from app.services.basic_data_service import (
-    OperationService, WorkCenterService, RouteService,
+    OperationService, OperationGroupService, WorkCenterService, RouteService,
     ProductService, CalendarService,
 )
 from app.repositories.supplier_repo import SupplierRepository
@@ -17,6 +17,7 @@ from app.repositories.product_route_repo import ProductRouteRepository
 from app.services.product_route_service import ProductRouteService
 from app.schemas.basic_data import (
     OperationCreate, OperationUpdate,
+    OperationGroupCreate, OperationGroupUpdate,
     WorkCenterCreate, WorkCenterUpdate,
     ProcessRouteCreate, ProcessRouteUpdate,
     RouteStepCreate, RouteStepUpdate,
@@ -105,6 +106,92 @@ async def delete_operation(
     try:
         result = await svc.delete(op_id)
         return {"code": 0, "message": "工序删除成功", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
+
+
+# ==================== M04b 报工小组（工序分组）====================
+#
+# 权限码由路径自动推导：`M00:operation_group:{read,create,update,delete}`。
+# ★ 模块是 **M00** 不是 M01 —— `basic_data` 整个文件映射到 M00（工序定义
+#   一直在 M00 下）。推导出来是 `operation_group` 而不是 `operation`：
+#   两者是不同的资源，混在一起会让"能改工序主数据的人"顺带获得分组写权，
+#   而分组决定谁在报工台上看得见哪些活。
+
+
+@router.get("/operation-groups")
+async def list_operation_groups(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    keyword: Optional[str] = Query(None, description="搜索关键词(编码/名称)"),
+    is_active: Optional[bool] = Query(None),
+    repo: OperationGroupRepository = Depends(
+        get_tenant_repo(OperationGroupRepository, require_auth=True)),
+):
+    svc = OperationGroupService(repo)
+    data = await svc.list(page, page_size, keyword, is_active)
+    return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/operation-groups")
+async def create_operation_group(
+    req: OperationGroupCreate,
+    current_user: dict = Depends(get_current_user),
+    repo: OperationGroupRepository = Depends(get_tenant_repo(OperationGroupRepository)),
+):
+    data = req.model_dump()
+    data["tenant_id"] = current_user.get("tenant_id", "default")
+    svc = OperationGroupService(repo)
+    try:
+        return {"code": 0, "message": "报工小组创建成功", "data": await svc.create(data)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
+
+
+@router.get("/operation-groups/{gid}")
+async def get_operation_group(
+    gid: int = Path(..., ge=1),
+    repo: OperationGroupRepository = Depends(
+        get_tenant_repo(OperationGroupRepository, require_auth=True)),
+):
+    svc = OperationGroupService(repo)
+    row = await svc.get(gid)
+    if not row:
+        raise HTTPException(404, detail={"code": "404-0000", "message": "报工小组不存在"})
+    return {"code": 0, "message": "success", "data": row}
+
+
+@router.put("/operation-groups/{gid}")
+async def update_operation_group(
+    req: OperationGroupUpdate,
+    gid: int = Path(..., ge=1),
+    repo: OperationGroupRepository = Depends(
+        get_tenant_repo(OperationGroupRepository, require_auth=True)),
+):
+    svc = OperationGroupService(repo)
+    payload = req.model_dump(exclude_unset=True)
+    # ★ 先把成员列表拿出来再传：留在 payload 里会被 `_build_set_clause`
+    #   当成 `operation_groups.operation_ids` 这一列去 UPDATE，
+    #   而那一列不存在 —— PG 报错、SQLite 也报错，但错在"列名"上，
+    #   排查时会一路怀疑是迁移没跑。
+    op_ids = payload.pop("operation_ids", None)
+    try:
+        result = await svc.update(gid, payload, op_ids)
+        return {"code": 0, "message": "报工小组更新成功", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
+
+
+@router.delete("/operation-groups/{gid}")
+async def delete_operation_group(
+    gid: int = Path(..., ge=1),
+    repo: OperationGroupRepository = Depends(
+        get_tenant_repo(OperationGroupRepository, require_auth=True)),
+):
+    svc = OperationGroupService(repo)
+    try:
+        result = await svc.delete(gid)
+        return {"code": 0, "message": "报工小组删除成功", "data": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail={"code": "400-0000", "message": str(e)})
 

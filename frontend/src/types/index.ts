@@ -294,6 +294,15 @@ export interface WorkStep {
   completed_qty?: number
   material_check_status?: string
   blocked?: boolean
+  /** 所属报工小组（展示用，由后端按页批量带出）。
+   *
+   *  ★ 是**数组**而不是单个 id：一道工序可以同时属于「前段组」和「总装组」
+   *  （两个组的人都得能看见这批活）。做成单值会让其中一个组的人静默看不见 ——
+   *  而界面上不会有任何异常。
+   *  ★ 也**不是**快照字段：工序行上没有 `group_id` 列，分组归属按
+   *  `operation_id` 实时关联。理由是分组是"今天这批人怎么分队"，
+   *  不是下达那一刻的工艺事实（与 `wc_id` 的口径刻意不同）。 */
+  groups?: { id: number; code?: string | null; name?: string | null }[]
   /** 仅 `GET /work-orders/{id}/steps` 在无工序行时给，用于区分"未挂路线/未下达" */
   hint?: string
 }

@@ -72,6 +72,9 @@ class UserService:
         org_ids = data.pop("org_ids", None)
         # D-B2: 角色变更同样走同步（不进 users 表 SET）
         role_ids = data.pop("role_ids", None)
+        # 工位绑定同理：`user_work_centers` 是独立表，塞进 users 的通用 SET
+        # 会变成 `UPDATE users SET work_center_ids = ...` —— 那一列不存在。
+        wc_ids = data.pop("work_center_ids", None)
         if "password" in data:
             data["password_hash"] = hash_password(data.pop("password"))
 
@@ -121,6 +124,8 @@ class UserService:
             result["org"] = sync
         if role_ids is not None:
             result["roles"] = await self.user_repo.sync_user_roles(id, role_ids)
+        if wc_ids is not None:
+            result["work_centers"] = await self.user_repo.sync_user_work_centers(id, wc_ids)
         return result
 
     async def delete(self, id: int, force: bool = False) -> dict:

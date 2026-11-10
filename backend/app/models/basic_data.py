@@ -2,7 +2,7 @@
 # M01 产品管理 | M04 工序定义 | M05 工作中心 | M03 工艺路线 | M06 工厂日历
 
 from sqlalchemy import (Column, BigInteger, String, Integer, Float, DateTime, Text, Date,
-                       Boolean, UniqueConstraint, text)
+                       Boolean, UniqueConstraint, Index, text)
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
 
@@ -67,6 +67,79 @@ class Operation(Base):
     # 库级约束是唯一能挡住它的地方：应用层查重总有并发窗口。
     __table_args__ = (
         UniqueConstraint("tenant_id", "code", name="uq_operations_tenant_code"),
+    )
+
+
+# ── M04b 报工小组（工序分组）──────────────────────────────────────
+
+class OperationGroup(Base):
+    """报工小组：把邻近 / 同质的工序并成一组，一组统一报工、统一看活。
+
+    ## 为什么是 tenant 级，不挂在工艺路线版本上
+
+    同一道「装配」工序在 A 线属于"前段组"、在 B 线可能属于"后段组"——
+    那确实是路线的事。但路线级分组要求分组数据跟着 ``process_routes`` 一起
+    版本化（每次路线升版都得复制一遍分组关系），复杂度高一个量级，
+    而这个产品线的现场反馈是"我们车间就这么几个组，人不换组就不改"。
+    所以先做 tenant 级；将来真需要路线级，再加一层 ``route_id`` 可空列收敛。
+
+    ## 为什么一道工序可以属于多个组
+
+    唯一键是 ``(group_id, operation_id)`` 而不是 ``operation_id`` 单列。
+    现场真实形态就是这样：装配工序既在"前段组"的看板上，也在"总装组"的
+    看板上——两个组的人都得能看见这批活。做成单属会把第二个组的人静默挡在门外，
+    而**没有任何界面会报错**，只是活不见了。
+
+    ## 与 ``work_order_steps.wc_id`` 的口径差异（刻意不同，别统一）
+
+    ``wc_id`` 是**下达那一刻的工艺事实**，必须快照（路线改版不能改写历史）。
+    分组的归属则是**今天这批人怎么分队**——把它快照进工序行会立刻产生
+    "一道工序属两个组、快照列只能存一个"的信息丢失，而分组本来就是
+    会被人反复重切的东西（换班、换线、赶工）。所以工序行上**没有** ``group_id`` 列，
+    一律按 ``operation_id`` 实时关联。
+    """
+
+    __tablename__ = "operation_groups"
+
+    id         = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id  = Column(String(50), nullable=False, comment="租户ID")
+    code       = Column(String(100), nullable=False, comment="小组编码")
+    name       = Column(String(200), nullable=False, comment="小组名称（车间看板上显示的就是它）")
+    remark     = Column(Text, comment="备注")
+    is_active  = Column(Boolean, default=True, comment="启用状态")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_op_group_tenant_code"),
+    )
+
+
+class OperationGroupMember(Base):
+    """小组 ↔ 工序 的成员关系（多对多）。
+
+    ★ ``tenant_id`` 是**冗余**的（group_id 已经决定了租户），保留它是为了让
+      仓储层按该表作主表查询时租户注入能生效——注入层是拿 FROM 表名去
+      找 ``tenant_id`` 列的，靠 join 过滤一旦有人写漏 WHERE 就是跨租户读。
+      代价是 INSERT 必须**显式**写 tenant_id（本仓铁律：INSERT 的 tenant_id
+      由应用层写，不靠 default）。
+    """
+
+    __tablename__ = "operation_group_members"
+
+    id           = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id    = Column(String(50), nullable=False, comment="租户ID（冗余，供租户注入）")
+    group_id     = Column(BigInteger, nullable=False, comment="小组ID（operation_groups.id）")
+    operation_id = Column(BigInteger, nullable=False, comment="工序ID（operations.id）")
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # 一组成员关系只能有一条。没有这条约束时重复保存会把同一道工序
+        # 在同一组里插两遍，列表上看起来一样、`COUNT(*)` 却是两倍。
+        UniqueConstraint("group_id", "operation_id", name="uq_op_group_member"),
+        # 报工任务台按工序反查它属于哪些组 —— 每页 20 行各查一次，
+        # 没索引就是 20 次全表扫。
+        Index("ix_op_group_member_op", "tenant_id", "operation_id"),
     )
 
 
