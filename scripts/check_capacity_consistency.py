@@ -113,7 +113,20 @@ else:
 from sqlalchemy import text                              # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine    # noqa: E402
 
+from app.core.capacity import (                          # noqa: E402
+    DEFAULT_PARALLEL,
+    DEFAULT_SHIFT_HOURS,
+    DEFAULT_SHIFTS,
+    capacity_per_shift_for,
+    piece_occupancy,
+    resolve_shift,
+    station_capacity,
+)
 from app.core.config import get_settings                  # noqa: E402
+
+#: 兼容旧名。班时兜底值现在只有一个真源（`app/core/capacity.py`），
+#: 这里只是别名 —— 改数字请改那边，别在这里重新定义一遍。
+FALLBACK_SHIFT_HOURS = DEFAULT_SHIFT_HOURS
 
 #: 默认靶场租户**编码**（不是 tenant_id）。命令行位置参数可覆盖。
 DEFAULT_TENANT = os.environ.get("TENANT_CODE", "AH-THR")
@@ -141,9 +154,10 @@ WORKDAYS = 22
 #:      这是把兜底值当成事实报出去，比不报更误导（本地 dev 库全是 NULL，
 #:      每轮都刷这三条假告警）。
 #:   现在：没配 → 单班 12h，并在文案里明说"没配，按单班兜底"。
-DEFAULT_SHIFTS = 1
-#: 每班小时数兜底值（shift_config 认不出来时用）。
-FALLBACK_SHIFT_HOURS = 12.0
+#: ★ 2026-11-11：`DEFAULT_SHIFTS` / `FALLBACK_SHIFT_HOURS` 的定义搬到了
+#:   `backend/app/core/capacity.py`（见文件顶部 import）。这里不再重复定义 ——
+#:   上面这段注释保留，是因为它解释的是**兜底语义**（别把兜底当事实报出去），
+#:   不是数字本身。
 #: 字段值与口径 A 相差多少算"填错"。**2%**（只给浮点误差留余量）。
 #:
 #: ★ 2026-11-07 从 20% 收到 2%。口径 A 是 `floor(720 ÷ 最慢一道)`，一个**精确**
@@ -175,42 +189,12 @@ def design_verdict(closed_monthly: float, design: float = DESIGN_MONTHLY,
     return diff >= -tol, diff
 
 
-def station_capacity(max_occupancy: float, shift_minutes: float) -> int | None:
-    """口径 A：单班分钟数 ÷ 该工位**最慢一道**工序占机，按整件取整。
-
-    ★ 这是 `capacity_per_shift` 该填什么**唯一的算式**。种子脚本
-      `scripts/seed_thruster_supplement.py::capacity_per_shift_for()` 与它必须
-      对同一组占机给出同一结果 —— `backend/app/tests/test_capacity_formula.py`
-      拿同一批样例对跑两边。两处任何一处改了班时（720/480）或取整方式
-      （floor/round），那个测试立刻红。
-    """
-    if not max_occupancy or max_occupancy <= 0:
-        return None
-    return math.floor(shift_minutes / max_occupancy)
-
-
-#: 没填 `equipment_count` 的工位按几台并行算。0 = 没填 → 单工位单治具。
-#: ★ `equipment_count` 记的是**参与排产的可用台数**，不是资产台数 ——
-#:   备用台架不产生产能，不能算进来（2026-11-07 EL030 实物 3 台含 1 台备用，
-#:   这里填 2，备注写在 work_centers.description 里）。
-DEFAULT_PARALLEL = 1
-
-
-def piece_occupancy(unit_time, setup_time, batch_size) -> float:
-    """每件占用设备的分钟数 = (unit_time + setup_time) / batch_size。
-
-    `unit_time` / `setup_time` 记的都是**每批**的时长（一炉 120 分、装炉一次 5 分），
-    `batch_size`（`operations.batch_size`，同装量）是这一批同时处理几件。
-    `batch_size = 1` 时退化成 `unit_time + setup_time`，**存量数据语义不变**。
-
-    ★ 为什么 setup 也一起摊：准备动作（装炉/换治具）本来就是每批一次。产能闸
-      原先的注释写着"准备时间本是每批一次，这里按批量为 1 摊到每件"—— 那是在
-      没有这一列时的将就；有了 `batch_size` 就该真摊，否则一炉 4 件要背 4 次准备。
-    ★ 为什么不在这里对结果取整：占机是分钟数，取整留给"每班几件"那一步
-      （`station_capacity` 的 floor）。中间取整会放大误差。
-    """
-    batch = max(1, int(batch_size or 0))
-    return (float(unit_time or 0) + float(setup_time or 0)) / batch
+# ★ 2026-11-11：`station_capacity()` / `piece_occupancy()` / `DEFAULT_PARALLEL`
+#   三个定义搬到了 `backend/app/core/capacity.py`，本文件从顶部 import 拿。
+#   原因写在那个模块的 docstring 里：原来算式在两处各写一遍（种子脚本 + 本闸），
+#   靠单测对跑锁死 —— 那能防"算法不一致"，防不住**算法一致但班时来源不一致**
+#   （种子写死 12h，本闸按 shift_config 解析；AH-THR 恰好都是 12h 才蒙对）。
+#   合并之后改口径只改一处，且两个调用方被迫用同一个班时解析入口。
 
 
 def _op_brief(s) -> str:
@@ -658,42 +642,11 @@ def _gate(findings: dict) -> int:
     return 0
 
 
-def _parse_shift(cfg):
-    """从 shift_config 数班数与单班时长。认不出来返回 (None, None)。
-
-    实际存的是中文自由文本（`白班 08:00-20:00；夜班 20:00-08:00`），不是 JSON ——
-    按"出现几个 HH:MM-HH:MM"数班次，按首尾时间差算时长（跨零点 +24h）。
-    """
-    if not cfg:
-        return None, None
-    raw = cfg
-    try:
-        data = json.loads(cfg)
-        if isinstance(data, list):
-            raw = "；".join(f"{d.get('shift_name','')} {d.get('start_time','')}-{d.get('end_time','')}"
-                            for d in data)
-    except Exception:
-        pass
-    spans = re.findall(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", raw)
-    if not spans:
-        return None, None
-    h1, m1, h2, m2 = (int(x) for x in spans[0])
-    hours = (h2 * 60 + m2 - (h1 * 60 + m1)) / 60
-    if hours <= 0:
-        hours += 24
-    return len(spans), hours
-
-
-def resolve_shift(cfg) -> tuple[int, float, bool]:
-    """班次解析 + 兜底。返回 `(班数, 单班小时, 库里是否真的配了)`。
-
-    第三个返回值是给**文案**用的：没配班次时不能报「shift_config 写的是 2 班」，
-    那等于把兜底值当事实 —— 库里一个字都没有。
-    """
-    shifts, hours = _parse_shift(cfg)
-    if shifts is None:
-        return DEFAULT_SHIFTS, FALLBACK_SHIFT_HOURS, False
-    return shifts, hours, True
+# ★ 2026-11-11：`_parse_shift()` / `resolve_shift()` 搬到了
+#   `backend/app/core/capacity.py`（本文件顶部 import 的是 `resolve_shift`）。
+#   为什么必须搬：班时解析是**产能算法的输入**，它和算式分开就会出本文开头那种
+#   「种子写死 12h、闸按配置解析，恰好都对」的假象。现在两边同一个入口，
+#   谁要把班时改回硬编码，`test_capacity_formula.py` 的班时同源断言立刻红。
 
 
 if __name__ == "__main__":

@@ -23,8 +23,12 @@ staging 上 33 个工位里 11 个因此对不上（`CW010` 填 160 应为 90、
    只改其中一个（比如把班时改成 8h 却还写着 08:00-20:00），月产能会变成
    单班×2 而字段仍按 12h 算，两边永远对不齐。
 """
+import ast
 import importlib.util
+import json
 from pathlib import Path
+
+from app.core import capacity as core
 
 BACKEND = Path(__file__).resolve().parents[2]
 SCRIPTS = BACKEND.parent / "scripts"
@@ -122,11 +126,12 @@ class TestTwoSourcesAgree:
         assert gate.station_capacity(None, 720) is None
 
     def test_shift_minutes_matches_gate_fallback(self):
-        """种子脚本的班时 = 产能闸认不出 shift_config 时的兜底班时。"""
+        """种子脚本的班时 = 产能闸认不出 shift_config 时的兜底班时 = core 的常量。"""
         assert seed.SHIFT_MINUTES == gate.FALLBACK_SHIFT_HOURS * 60 == 720.0
+        assert core.DEFAULT_SHIFT_MINUTES == 720.0
 
     def test_written_shift_config_parses_back_to_same_shift_minutes(self):
-        """★ 关键：种子脚本**写进库**的 shift_config，被产能闸解析回来必须等于
+        """★ 关键：种子脚本**写进库**的 shift_config，被解析回来必须等于
         它算产能用的班时。只改一边（比如班时改 8h 但文案还是 08:00-20:00），
         月产能会按解析值算而字段按另一值算，两边永远差 1.5 倍。
 
@@ -135,9 +140,129 @@ class TestTwoSourcesAgree:
         却把「白班 + 夜班」两班写进库，于是产能闸每轮都报
         「按配置算 88 台/月，两班配置与实际不符」。现在统一为单班。
         """
-        shifts, hours = gate._parse_shift(seed.SHIFT_CONFIG)
+        shifts, hours = core.parse_shift(seed.SHIFT_CONFIG)
         assert shifts == 1, "单班口径：文案里只能有 1 档班"
         assert hours * 60 == seed.SHIFT_MINUTES
+
+    def test_shift_minutes_is_derived_not_hardcoded(self):
+        """★★ 2026-11-11：班时必须**由写进库的那段文本推出来**，不能是手写常量。
+
+        原来 `SHIFT_MINUTES = 12 * 60` 与 `SHIFT_CONFIG` 的一致只靠注释保证。
+        AH-THR 恰好配 12h 单班，所以种子（按常量算）与产能闸（按配置解析）一直
+        对得上 —— 这两条路"同源"是**数据凑出来的，不是代码保证的**。换成一个
+        两班 16h / 24h 连续生产的租户，写进库的 `capacity_per_shift` 立刻是错的，
+        而产能闸只会报「字段填错了」，把口径分歧伪装成录入错误。
+
+        这条断言钉的是**推导关系**：`SHIFT_MINUTES` 必须等于解析出来的分钟数。
+        另外配一条源码级断言（下面 `TestSingleSource` 之外）防止有人把手写常量
+        加回去 —— 光靠数值相等挡不住"常量恰好等于 720"的那种回退。
+        """
+        _shifts, hours, declared = core.resolve_shift(seed.SHIFT_CONFIG)
+        assert declared is True, "SHIFT_CONFIG 必须能被解析出班时，否则产能口径没依据"
+        assert seed.SHIFT_MINUTES == hours * 60
+
+    def test_seed_source_has_no_hardcoded_shift_constant(self):
+        """源码级闸：`SHIFT_MINUTES` 必须是**算出来的**，不能是字面量。
+
+        上面那条数值断言挡不住它 —— 有人写 `SHIFT_MINUTES = 720` 照样相等，
+        但那个 720 与 `SHIFT_CONFIG` 之间又变成"靠注释对齐"了，这正是本轮要根治的。
+
+        ★ 这条闸自己踩过一次：第一版用字符串 `in src` 判断，结果被**注释里那句
+          「原来这里是 `SHIFT_MINUTES = 12 * 60`」**绊倒，报了一个假红。
+          文本匹配分不清代码和注释 —— 所以改成 AST：只认模块级赋值语句的
+          右值形态。注释写成什么都不会影响判定。
+        """
+        tree = ast.parse((SCRIPTS / "seed_thruster_supplement.py").read_text(encoding="utf-8"))
+        assigns = {
+            target.id: node.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        assert "SHIFT_MINUTES" in assigns, "种子脚本里必须有一个模块级 SHIFT_MINUTES 赋值"
+        node = assigns["SHIFT_MINUTES"]
+        assert isinstance(node, ast.Call), (
+            "SHIFT_MINUTES 必须是算出来的（int(round(SHIFT_HOURS * 60))），"
+            f"不能是字面量或常量表达式；实际是 {ast.dump(node)[:120]}"
+        )
+        assert getattr(node.func, "id", "") == "int"
+        # 右值的实参里必须引用 SHIFT_HOURS —— 也就是它真的来自 resolve_shift
+        names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        assert "SHIFT_HOURS" in names, f"SHIFT_MINUTES 没有从 SHIFT_HOURS 推导：{sorted(names)}"
+
+
+class TestSingleSource:
+    """2026-11-11：算式只有一份，三个入口必须是**同一个函数对象**。
+
+    以前是两处实现 + 单测对跑。对跑能防"两边算法不一致"，防不住更隐蔽的那种：
+    **算法一致、班时来源不一致** —— 种子脚本手写 `12*60`，产能闸按 `shift_config`
+    解析，AH-THR 恰好都是 12h 所以永远绿。这就是本轮把算式搬进
+    `app/core/capacity.py` 的直接原因。
+
+    合并之后改用 identity 断言：谁再在某个脚本里复制一份贴着改，这里立刻红。
+    """
+
+    def test_seed_and_gate_share_the_same_function(self):
+        assert seed.capacity_per_shift_for is core.capacity_per_shift_for
+        assert gate.station_capacity is core.station_capacity
+        assert gate.piece_occupancy is core.piece_occupancy
+        assert gate.resolve_shift is core.resolve_shift
+
+    def test_gate_constants_are_aliases_not_copies(self):
+        """闸里的兜底常量必须是别名（`is`），不是自己重新写一遍的值。"""
+        assert gate.FALLBACK_SHIFT_HOURS is core.DEFAULT_SHIFT_HOURS
+        assert gate.DEFAULT_SHIFTS == core.DEFAULT_SHIFTS
+        assert gate.DEFAULT_PARALLEL == core.DEFAULT_PARALLEL
+
+
+class TestShiftParsing:
+    """班时解析的边界 —— 换租户最常踩的就是"夜班跨零点"和"JSON vs 自由文本"。
+
+    一条产能口径能不能用在别的工艺上，先看它的**输入**能不能正确读出来。
+    """
+
+    def test_day_shift(self):
+        assert core.parse_shift("白班 08:00-20:00") == (1, 12.0)
+
+    def test_two_shifts(self):
+        assert core.parse_shift("白班 08:00-20:00；夜班 20:00-08:00") == (2, 12.0)
+
+    def test_cross_midnight(self):
+        """20:00-08:00 不能算成 -12h，要 +24。"""
+        assert core.parse_shift("夜班 20:00-08:00") == (1, 12.0)
+
+    def test_json_form(self):
+        """模型注释描述的是 JSON 形态，历史数据是自由文本 —— 两种都得认。
+
+        只认自由文本的话，新租户按文档配 JSON，班时解析不出来 → 静默退回 12h 兜底，
+        产能凭空多算一倍也没人报错。
+        """
+        cfg = json.dumps(
+            [{"shift_name": "白班", "start_time": "08:00", "end_time": "20:00"}],
+            ensure_ascii=False,
+        )
+        assert core.parse_shift(cfg) == (1, 12.0)
+
+    def test_three_shift_24h_tenant(self):
+        """24 小时连续生产的租户：班时必须是 1440，不能还是 720。"""
+        minutes, declared = core.shift_minutes_from_config("一班 00:00-24:00")
+        assert declared is True
+        assert minutes == 1440.0
+        # 同一组占机，1440 分的产能正好是 720 分的两倍 —— 这就是"换租户后
+        # 用错班时会翻倍"的具体形状
+        assert core.station_capacity(20.0, minutes) == 72
+        assert core.station_capacity(20.0, 720.0) == 36
+
+    def test_unparsable_falls_back_and_says_so(self):
+        """认不出来时必须回退到兜底，并把 `declared=False` 交出去。
+
+        第三个返回值是给文案用的：没配班次时不能报「配的是 2 班」——
+        那等于把兜底值当事实（本地 dev 库全 NULL 时每轮刷假告警）。
+        """
+        assert core.parse_shift("两班倒") == (None, None)
+        assert core.resolve_shift(None) == (1, 12.0, False)
+        assert core.shift_minutes_from_config("两班倒") == (720.0, False)
 
 
 class TestRecalcCoversOldValues:

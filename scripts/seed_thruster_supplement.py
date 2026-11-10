@@ -23,12 +23,26 @@
 """
 from __future__ import annotations
 
-import math
 import os
 import sys
 
 
 import httpx
+
+# 让 `import app.*` 能生效（与 `check_capacity_consistency.py` 顶部同一段逻辑）：
+#   仓库里脚本在 `code/scripts/`，包在 `code/backend/app/`；
+#   容器里脚本被 `docker cp` 到 `/app/scripts/`，包在 `/app/app/`。
+# ⚠️ `python script.py` 只把**脚本所在目录**放进 sys.path，cwd 不进。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _cand in (os.path.dirname(_HERE), os.path.join(os.path.dirname(_HERE), "backend")):
+    if os.path.isfile(os.path.join(_cand, "app", "core", "capacity.py")):
+        sys.path.insert(0, _cand)
+        break
+
+from app.core.capacity import (                    # noqa: E402
+    capacity_per_shift_for,
+    resolve_shift,
+)
 
 API = os.environ.get("API_BASE", "https://mfg1.ziwi.cn/api/v1")
 TENANT_CODE = "AH-THR"
@@ -90,13 +104,9 @@ def paged(c: httpx.Client, path: str, params: dict | None = None) -> list[dict]:
 
 # ────────────────────────── S1 工作中心产能与班次 ──────────────────────────
 
-#: 单班分钟数 = 12h。必须与 `shift_config`（白班 08:00-20:00）和产能闸
-#: `check_capacity_consistency.py` 的 `FALLBACK_SHIFT_HOURS` 是同一个数。
-SHIFT_MINUTES = 12 * 60
-
-#: 写进 `work_centers.shift_config` 的班次配置。产能闸从这里解析班数/班时
-#: （`_parse_shift`），所以它和 `SHIFT_MINUTES` **必须互相能对上** ——
-#: 只改其中一个，闸算出来的月产能=单班×2，而字段按 12h 算，两边永远对不齐。
+#: 写进 `work_centers.shift_config` 的班次配置。产能闸从这里解析班数/班时，
+#: 所以它和 `SHIFT_MINUTES` **必须互相能对上** —— 只改其中一个，闸算出来的
+#: 月产能=单班×2，而字段按 12h 算，两边永远对不齐。
 #:
 #: ★★ 2026-11-07 修正：这里原本写的是「白班 + 夜班」两班，而 `SHIFT_MINUTES`
 #:   是 12h **单班**、设计纲领 45 台/月也是单班口径。于是每轮产能闸都会打
@@ -104,6 +114,23 @@ SHIFT_MINUTES = 12 * 60
 #:   同一个脚本里一个按单班算、一个按两班写，跟当年「480÷均值」是同一类错：
 #:   **写进去的值和算出来的值不是同一套口径**。现在统一为单班。
 SHIFT_CONFIG = "白班 08:00-20:00"
+
+#: 单班分钟数。★★ 2026-11-11 起**不再手写**，由上面那段文本解析得出。
+#:
+#: 原来这里是 `SHIFT_MINUTES = 12 * 60`（手写常量），和 `SHIFT_CONFIG` 的一致
+#: 只靠注释保证。AH-THR 恰好配的是 12h 单班，所以产能闸（按 shift_config 解析）
+#: 与这里（按常量算）一直对得上，**看起来天衣无缝**。换成一个两班 16h / 24h
+#: 连续生产的租户，写进库的 `capacity_per_shift` 立刻是错的，而产能闸只会报
+#: 「字段填错了」—— 把口径分歧伪装成录入错误，人去查也查不出所以然。
+#:
+#: 现在文本是唯一输入，班时从它推出来，两者在物理上不可能分叉。
+SHIFT_SHIFTS, SHIFT_HOURS, _SHIFT_DECLARED = resolve_shift(SHIFT_CONFIG)
+assert _SHIFT_DECLARED, (
+    f"SHIFT_CONFIG={SHIFT_CONFIG!r} 解析不出班时。写进库的班次文本与算产能用的"
+    "班时必须是同一套口径，这里宁可 import 期就失败，也不要把错值写进库"
+)
+#: 取整保留 int 语义（文案里要打印「720 分」，不能变成 720.0）。
+SHIFT_MINUTES = int(round(SHIFT_HOURS * 60))
 
 #: 与口径不符到多少才覆盖已有值。**0 = 差一点就覆盖**。
 #:
@@ -127,28 +154,11 @@ def needs_write(cur_cap, target_cap, cur_shift, target_shift=SHIFT_CONFIG) -> tu
     return (not cap_ok) or (not shift_ok), cap_ok
 
 
-def capacity_per_shift_for(occupancies: list[float]) -> int | None:
-    """口径 A：单班分钟数 ÷ 该工位**最慢那道**工序的占机，按整件取整。
-
-    `occupancies` 是该工位各道工序的占机（单件加工 + 准备，准备按批量 1 摊到每件）。
-
-    ★ 2026-11-07 Kane 拍板：**按最慢那道，不是最快那道，也不是合计**。
-      - 最慢那道 = 这个工位被它卡住时的单工序产能下限 → 这就是
-        `capacity_per_shift` 字段该填的数（粗排产 / 工位负荷看板的输入）
-      - 合计 = 一件产品要依次过完该工位每道工序的物理吞吐 → 那是月产能与瓶颈的算法，
-        由产能闸单独算，**不写进这个字段**
-    ★ 与产能闸 `check_capacity_consistency.py::station_capacity()` 必须给出同一结果，
-      `backend/app/tests/test_capacity_formula.py` 拿同一组样例对跑两边锁住。
-    ★ 历史教训：改之前这里是 `round(480 / statistics.mean(uts), 1)` ——
-      8 小时 ÷ **均值**。三个错叠在一起：班时少算（480 而非 720）、除的是均值
-      而不是最慢一道、还带小数。staging 上 33 个工位里 11 个因此对不上。
-    """
-    if not occupancies:
-        return None
-    slowest = max(occupancies)
-    if slowest <= 0:
-        return None
-    return math.floor(SHIFT_MINUTES / slowest)
+# ★ 2026-11-11：`capacity_per_shift_for()` 的实现搬到了
+#   `backend/app/core/capacity.py`（本文件顶部 import 的是它）。
+#   原实现里的两条拍板理由（2026-11-07 Kane：按**最慢那道**，不是最快、不是合计；
+#   以及「480÷均值」那次三个错叠加的事故）已随函数一起迁到那个模块的 docstring，
+#   这里不再复述 —— 一份说明放两处，迟早会出现「注释说 A、代码做 B」。
 
 
 def s1_work_centers(c: httpx.Client) -> None:
@@ -178,7 +188,7 @@ def s1_work_centers(c: httpx.Client) -> None:
     labor_by_type = {"production_line": 4, "work_cell": 2, "workstation": 1}
     touched = written = kept = 0
     for wc in paged(c, "/work-centers"):
-        cap = capacity_per_shift_for(occ_by_wc.get(wc["id"], []))
+        cap = capacity_per_shift_for(occ_by_wc.get(wc["id"], []), SHIFT_MINUTES)
         if cap is None:
             # 没挂任何已发布路线的工位：不动它的原值（可能是人手填的）
             skip(f"工作中心 {wc['code']} 产能", "无已发布工序，保留原值")
