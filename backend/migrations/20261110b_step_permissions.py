@@ -26,11 +26,23 @@
 判据是"谁已经能读工单，谁就该能读工序；谁能执行工单动作，谁就该能执行工序"——
 语义上等价，行为上不扩大。
 
-## 方言
+## 方言（★ 这一节是踩过之后补的）
 
-- 两条 INSERT 都用 `WHERE NOT EXISTS` 做幂等，不用 `ON CONFLICT`（SQLite 3.24+ 才有）。
-- `role_permissions` 的 INSERT 用 `INSERT ... SELECT` 一次完成，不需要回读 id
-  （`lastrowid` 在 asyncpg 上根本不存在，本仓已踩过）。
+两个坑都在 PG 上，**本地 SQLite 一条都测不出来**：
+
+1. **同一个命名参数在一个语句里被推断成两种类型** ——
+   ``SELECT :c ... WHERE code = :c`` 里，SELECT 列表处 asyncpg 推成 ``text``，
+   ``WHERE code = :c`` 处推成 ``character varying``，于是直接
+   ``AmbiguousParameterError: inconsistent types deduced for parameter $1``。
+   整个 ``engine.begin()`` 事务回滚，连后面的 GRANT 都不会跑 ——
+   现象是「权限码建出来了（另有启动期自检补齐），但一个角色都没授」，
+   除通配 admin 外全员 403，而报错埋在 deploy 日志的一堆 traceback 里。
+   ✅ 修法：**每一处都显式 CAST**，让两侧类型一致。
+   ★ SQLite 不做参数类型推断，所以这条缺陷在本地跑一百次都是绿的。
+
+2. 两条 INSERT 都用 ``WHERE NOT EXISTS`` 做幂等，不用 ``ON CONFLICT``
+   （SQLite 3.24+ 才有）。``role_permissions`` 的 INSERT 用 ``INSERT ... SELECT``
+   一次完成，不需要回读 id（``lastrowid`` 在 asyncpg 上根本不存在）。
 
 用法
 ----
@@ -60,10 +72,12 @@ NEW_PERMS = [
      "execute", ("M01:work_order:execute",)),
 ]
 
+# ★ 每个 `:param` 都套 `CAST(... AS VARCHAR)`，理由见上面「方言」第 1 条。
 INSERT_PERM = """
 INSERT INTO permissions (code, name, module, resource_type, action)
-SELECT :c, :n, 'M01', :r, :a
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = :c)
+SELECT CAST(:c AS VARCHAR), CAST(:n AS VARCHAR), 'M01',
+       CAST(:r AS VARCHAR), CAST(:a AS VARCHAR)
+WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = CAST(:c AS VARCHAR))
 """
 
 # ★ 只授给"已经有参照码"的角色：语义上等价（能看工单就能看工序），
@@ -72,8 +86,9 @@ GRANT = """
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT rp.role_id, np.id
 FROM role_permissions rp
-JOIN permissions op ON op.id = rp.permission_id AND op.code = :ref
-JOIN permissions np ON np.code = :c
+JOIN permissions op ON op.id = rp.permission_id
+                   AND op.code = CAST(:ref AS VARCHAR)
+JOIN permissions np ON np.code = CAST(:c AS VARCHAR)
 WHERE NOT EXISTS (
     SELECT 1 FROM role_permissions x
     WHERE x.role_id = rp.role_id AND x.permission_id = np.id
