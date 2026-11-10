@@ -44,7 +44,7 @@ export const menuPermissions: MenuPermission[] = [
     perm: 'M01:work_order:read',
     children: [
       { childId: 'work_orders', perm: 'M01:work_order:read' },
-      { childId: 'work_reports', perm: 'M01:work_report:read' },
+      { childId: 'work_reports', perm: 'M01:work_order_step:read' },
       { childId: 'reports', perm: 'M01:report_daily:read' },
       { childId: 'schedule', perm: 'M01:work_order:read' },
       { childId: 'boms', perm: 'M02:bom:read' },

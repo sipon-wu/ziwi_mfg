@@ -47,8 +47,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'work-orders', name: 'WorkOrders', component: () => import('@/pages/production/WorkOrderList.vue'), meta: { perm: 'M01:work_order:read' } },
       { path: 'work-orders/create', name: 'CreateWorkOrder', component: () => import('@/pages/production/CreateWorkOrder.vue'), meta: { perm: 'M01:work_order:read' } },
       { path: 'work-orders/:id', name: 'WorkOrderDetail', component: () => import('@/pages/production/WorkOrderDetail.vue'), meta: { perm: 'M01:work_order:read' } },
-      { path: 'work-reports', name: 'WorkReports', component: () => import('@/pages/production/WorkReportList.vue'), meta: { perm: 'M01:work_order:read' } },
-      { path: 'work-reports/create', name: 'CreateReport', component: () => import('@/pages/production/WorkReportForm.vue'), meta: { perm: 'M01:work_order:read' } },
+      // ★ 报工管理（工序任务台）的权限码是 `M01:work_order_step:read`，
+      //   与后端三个端点的推导结果一致。写成 `M01:work_order:read` 的话，
+      //   菜单看不见/路由拦不住，而后端照样 403 —— 前端闸形同虚设，
+      //   现场只看到"点进去一片空白"，没人能从这个现象想到权限码对不上。
+      //   迁移 `20261110b_step_permissions.py` 负责把两个既有入口的
+      //   持有者（work_order:read / work_report:read）同步到新码。
+      { path: 'work-reports', name: 'WorkReports', component: () => import('@/pages/production/WorkReportList.vue'), meta: { perm: 'M01:work_order_step:read' } },
+      { path: 'work-reports/create', name: 'CreateReport', component: () => import('@/pages/production/WorkReportForm.vue'), meta: { perm: 'M01:work_order_step:read' } },
       { path: 'reports', name: 'Reports', component: () => import('@/pages/production/ReportView.vue'), meta: { perm: 'M01:work_order:read' } },
       { path: 'schedule', name: 'Schedule', component: () => import('@/pages/production/ScheduleGantt.vue'), meta: { title: '生产排产', perm: 'M01:work_order:read' } },
       // M02 - BOM管理

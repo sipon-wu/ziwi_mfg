@@ -1,13 +1,36 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { get, post } from '@/api/client'
 import { showToast, showDialog } from 'vant'
 import ZiwiSelect from '@/components/ziwi/ZiwiSelect.vue'
 import dayjs from 'dayjs'
-import type { WorkOrder, PaginatedResponse } from '@/types'
+import type { WorkOrder, WorkStep, PaginatedResponse } from '@/types'
 
+const route = useRoute()
 const router = useRouter()
+
+/* ------------------------------------------------------------------ *
+ * 工序模式 vs 整单模式
+ *
+ * 从工序任务台点进来时带 `?order_id=&step_seq=`，此时**工序由路径决定**：
+ * 表单上「工序编码 / 工序名称」变成只读展示，提交走
+ * `POST /work-orders/{id}/steps/{seq}/execute`。
+ *
+ * 改造前这两个字段是手输文本框 —— 现场要背编码，打错了不报错，
+ * 只会把产量记到另一道工序上，或者对不上任何工序、静默变成"报整单"。
+ *
+ * 不带参数时保持整单模式（没挂工艺路线的老单走这条路，是合法形态）。
+ * ------------------------------------------------------------------ */
+const stepCtx = computed(() => {
+  const orderId = Number(route.query.order_id)
+  const stepSeq = Number(route.query.step_seq)
+  return orderId && stepSeq ? { orderId, stepSeq } : null
+})
+const isStepMode = computed(() => stepCtx.value !== null)
+const stepInfo = ref<WorkStep | null>(null)
+/** 工序模式下拉工单时的只读文案（工序行里带了 wo_no / product_name，但没有时兜底） */
+const lockedOrderText = ref('')
 
 const DEFECT_REASONS = ['尺寸超差', '表面缺陷', '装配不良', '材料问题', '设备异常', '其他']
 const REPORT_MODES = [
@@ -15,6 +38,7 @@ const REPORT_MODES = [
   { value: 'team', label: '小组报工' },
   { value: 'equipment', label: '设备报工' },
 ]
+
 
 const form = ref({
   report_mode: 'personal',
@@ -52,14 +76,51 @@ const total_price = computed(() => {
 })
 
 onMounted(async () => {
-  try {
-    const r = await get<PaginatedResponse<WorkOrder>>('/work-orders', { page_size: 100 })
-    orders.value = r.items || []
-  } catch (e) {
-    console.warn('[WorkReportForm] 获取工单列表失败', e)
+  if (isStepMode.value) {
+    await loadStep()
+  } else {
+    try {
+      const r = await get<PaginatedResponse<WorkOrder>>('/work-orders', { page_size: 100 })
+      orders.value = r.items || []
+    } catch (e) {
+      console.warn('[WorkReportForm] 获取工单列表失败', e)
+    }
   }
   observeSections()
 })
+
+/**
+ * 工序模式：按路径参数把工单与工序灌进表单。
+ *
+ * 工序字段从接口拿而不是让用户填：这是整个改造的落点。拿不到就明确报错
+ * （404 的文案后端已经点出"可能未挂工艺路线"），**不静默降级成手输** ——
+ * 一降级，编码打错的问题就原样回来了，而且是在用户不知道的情况下。
+ */
+async function loadStep() {
+  const ctx = stepCtx.value
+  if (!ctx) return
+  try {
+    const r = await get<{ items: WorkStep[]; total: number; hint?: string | null }>(
+      `/work-orders/${ctx.orderId}/steps`,
+    )
+    const hit = (r.items || []).find((s) => Number(s.step_seq) === ctx.stepSeq)
+    if (!hit) {
+      showToast(r.hint || `工单 ${ctx.orderId} 没有第 ${ctx.stepSeq} 道工序`)
+      return
+    }
+    stepInfo.value = hit
+    form.value.work_order_id = ctx.orderId
+    form.value.operation_code = hit.operation_code || ''
+    form.value.operation_name = hit.operation_name || ''
+    lockedOrderText.value = `${hit.wo_no || `#${ctx.orderId}`} - ${hit.product_name || '—'}`
+    // 投入默认带出计划量、合格默认 0：现场改成实际数即可，不用从零敲
+    form.value.input_qty = Number(hit.planned_qty) || 0
+  } catch (e: any) {
+    const d = e?.response?.data?.detail
+    showToast(typeof d === 'object' && d?.message ? d.message : '加载工序失败')
+  }
+}
+
 
 /* ------------------------------------------------------------------ *
  * 单页分组 + 锚点跳转（UE §3.2：14 个字段不分步，靠分区导航缩短感知长度）
@@ -134,6 +195,13 @@ function observeSections(): void {
 onBeforeUnmount(() => observer?.disconnect())
 
 async function handleSubmit() {
+  // 工序模式但工序没加载出来（接口失败 / 工单没这道工序）→ 不许提交。
+  // 这里返回的空表单带着 order_id，直接提交会把产量记到"整单"上，
+  // 而界面上看起来一切正常。
+  if (isStepMode.value && !stepInfo.value) {
+    showToast('工序信息未加载，请返回列表重进')
+    return
+  }
   // 缺必填时直接把用户滚到那一段：只弹一句「请先选择工单」，
   // 在小屏上他仍要自己翻回去找，等于把定位成本推给了现场
   const miss = firstMissing.value
@@ -150,11 +218,13 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
-    const res = await post<{
-      warnings?: string[]
-      assigned_codes?: { batch_id: number; batch_no: string }[]
-      code_rule?: string | null
-    }>('/work-reports', payload)
+    const res = isStepMode.value
+      ? await submitStep(payload)
+      : await post<{
+          warnings?: string[]
+          assigned_codes?: { batch_id: number; batch_no: string }[]
+          code_rule?: string | null
+        }>('/work-reports', payload)
     // ── B-30：赋码节点到了会**当场出部件码**（方案书 §2.1：工序1 出定子码、
     // 工序7 出转子码）。这串码必须当场给现场看：码是要贴到实物上的，
     // 不显示就得有人去批次台账里翻，等于没出。
@@ -188,11 +258,38 @@ async function handleSubmit() {
     submitting.value = false
   }
 }
+
+/**
+ * 工序模式的提交：**只发 `StepReportRequest` 认识的字段**。
+ *
+ * pydantic 默认忽略未知字段 —— 多发的 `report_mode` / `unit_price` /
+ * `start_time` / `end_time` 不会报错，也不会落库。留着它们不报错地发出去，
+ * 就会变成"界面上填了、库里没有、谁也不知道"的静默丢字段。
+ * 所以这里就地白名单，前端发什么 = 后端收什么。
+ */
+async function submitStep(payload: Record<string, any>) {
+  const ctx = stepCtx.value!
+  const body = {
+    report_date: payload.report_date || null,
+    input_qty: Number(payload.input_qty) || 0,
+    output_qty: Number(payload.output_qty) || 0,
+    scrap_qty: Number(payload.scrap_qty) || 0,
+    defect_reason: payload.defect_reason || null,
+    labor_hours: Number(payload.labor_hours) || 0,
+    machine_hours: Number(payload.machine_hours) || 0,
+  }
+  return await post<{
+    warnings?: string[]
+    assigned_codes?: { batch_id: number; batch_no: string }[]
+    step_id?: number | null
+  }>(`/work-orders/${ctx.orderId}/steps/${ctx.stepSeq}/execute`, body)
+}
+
 </script>
 
 <template>
   <div>
-    <van-nav-bar title="报工录入" left-arrow @click-left="router.back()" />
+    <van-nav-bar :title="isStepMode ? '工序报工' : '整单报工'" left-arrow @click-left="router.back()" />
 
     <!-- 分区导航：吸顶。14 个字段一页到底时，靠它把"还要填多少"变成可见的 4 段 -->
     <nav class="wrf-nav" aria-label="报工表单分区">
@@ -227,20 +324,36 @@ async function handleSubmit() {
             </van-radio-group>
           </template>
         </van-field>
-        <!-- R1：选择器不进表单流，改浮层（原 van-picker 内联进 #input，滚轮在触屏上极易误触） -->
-        <ZiwiSelect
-          v-model="form.work_order_id"
-          field-name="work_order_id"
-          label="工单"
-          required
-          :clearable="false"
-          :options="orderOptions"
-          object-name="工单"
-          placeholder="选择工单"
-        />
+        <!-- 工序模式：工单与工序都是**只读**的 —— 它们是用户点的那一行带过来的，
+             不该在这里还能改。手输工序编码正是打错就记错账的源头。 -->
+        <template v-if="isStepMode">
+          <van-cell title="工单" :value="lockedOrderText || stepInfo?.wo_no || `#${stepCtx?.orderId}`" />
+          <van-cell
+            title="工序"
+            :value="stepInfo ? `第 ${stepInfo.step_seq} 道 · ${stepInfo.operation_name || stepInfo.operation_code}` : '加载中…'"
+          />
+          <van-cell title="工作中心" :value="stepInfo?.wc_name || '未指定'" />
+          <van-cell title="计划量" :value="String(stepInfo?.planned_qty ?? '—')" />
+        </template>
+        <!-- 整单模式（兜底）：没挂工艺路线的老单按整单报工，工序仍可填 -->
+        <template v-else>
+          <!-- R1：选择器不进表单流，改浮层（原 van-picker 内联进 #input，滚轮在触屏上极易误触） -->
+          <ZiwiSelect
+            v-model="form.work_order_id"
+            field-name="work_order_id"
+            label="工单"
+            required
+            :clearable="false"
+            :options="orderOptions"
+            object-name="工单"
+            placeholder="选择工单"
+          />
+        </template>
         <van-field v-model="form.report_date" label="报工日期" type="date" :rules="[{required:true}]" />
-        <van-field v-model="form.operation_code" label="工序编码" />
-        <van-field v-model="form.operation_name" label="工序名称" />
+        <template v-if="!isStepMode">
+          <van-field v-model="form.operation_code" label="工序编码" />
+          <van-field v-model="form.operation_name" label="工序名称" />
+        </template>
       </van-cell-group>
 
       <!-- ② 数量与不良 -->

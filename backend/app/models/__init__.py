@@ -3,7 +3,7 @@ from app.models.organization import Organization
 from app.models.user import User, UserRole, UserOrganization
 from app.models.role import Role, Permission, RolePermission
 from app.models.excel_import import ExcelImportTask, ImportTemplate
-from app.models.production import WorkOrder, WorkOrderStatusLog, WorkReport, ProductBom, BomSnapshot
+from app.models.production import WorkOrder, WorkOrderStatusLog, WorkReport, ProductBom, BomSnapshot, WorkOrderStep
 from app.models.spc import SpcControlLimit, SpcDataPoint, SpcAlert
 from app.models.ppap import PpapLevel, PpapElementTemplate, PpapSubmission, PpapSubmissionItem
 from app.models.fmea import FmeaDocument, FmeaHierarchy, FmeaItem, FmeaAction, ControlPlan
@@ -55,7 +55,7 @@ from app.models.print import PrintArtifact
 __all__ = [
     "Tenant", "Organization", "User", "UserRole", "UserOrganization", "Role", "Permission", "RolePermission",
     "ExcelImportTask", "ImportTemplate",
-    "WorkOrder", "WorkOrderStatusLog", "WorkReport", "ProductBom", "BomSnapshot",
+    "WorkOrder", "WorkOrderStatusLog", "WorkReport", "ProductBom", "BomSnapshot", "WorkOrderStep",
     "SpcControlLimit", "SpcDataPoint", "SpcAlert",
     "PpapLevel", "PpapElementTemplate", "PpapSubmission", "PpapSubmissionItem",
     "FmeaDocument", "FmeaHierarchy", "FmeaItem", "FmeaAction", "ControlPlan",

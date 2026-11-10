@@ -92,6 +92,18 @@ class FakeRepo:
         self.reports.append(dict(data))
         return len(self.reports)
 
+    async def get_step(self, work_order_id, step_seq):
+        """工序任务台（C-106）：本文件不关心工序推进，一律"没有工序行"。
+
+        显式返回 None 而不是删掉这个方法：`create_report` 现在会顺手推进
+        工序状态，桩缺方法就是 AttributeError，而报错位置在服务层中间，
+        看上去像"报工逻辑坏了"，其实是测试桩没跟上接口。
+        """
+        return None
+
+    async def find_step_by_code(self, work_order_id, operation_code):
+        return None
+
 
 def make_order(**overrides):
     base = {

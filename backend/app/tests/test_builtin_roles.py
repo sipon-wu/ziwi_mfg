@@ -167,6 +167,76 @@ def test_every_role_grants_are_nonempty_after_resolution():
         assert got, f"角色 {role} 展开后权限为空"
 
 
+def test_work_order_step_endpoints_derive_expected_codes():
+    """锁定工序任务台三个端点的权限码 —— 从**实际路由表**取路径，再推导。
+
+    ## 为什么不写"每个码至少被一个角色拥有"
+
+    那条看着更普适，实测是**空真**：`ROLE_GRANTS["admin"]` 有 `*`，
+    多数业务角色有 `M01:*`，于是任何 `M01:` 开头的码都算"被覆盖"。
+    把端点末段从 `execute` 改成 `report`（推出 `M01:work_order_step_report:create`
+    这种没有任何角色真正拥有的码），那条闸照样全绿 —— 一个都拦不住。
+    一条抓不到它要抓的东西的闸，比没有更糟：它让人以为已经有人守着。
+
+    ## 为什么必须从 `app.routes` 取路径而不是写死字符串
+
+    第一版就是把路径写成字面量去调 `derive_permission_code`，结果**测的根本不是
+    端点**：改 `production.py` 里的路由尾段，测试纹丝不动照样绿。这种"只验了
+    推导函数是个纯函数"的写法，等于把闸建在隔壁房间。
+    现在从真实注册的路由取 `path` + 方法 + `endpoint.__module__`，
+    端点一改，这里才会跟着红。
+    """
+    from app.core.permissions import derive_permission_code
+    from app.main import app
+
+    cases = [
+        # (路由尾段匹配, 方法, 期望权限码, 说明)
+        ("/work-orders/steps", "GET", "M01:work_order_step:read", "工序任务列表"),
+        ("{order_id}/steps", "GET", "M01:work_order_step:read", "单张工单的工序快照"),
+        ("{step_seq}/execute", "POST", "M01:work_order_step:execute", "按工序报工"),
+    ]
+    checked = 0
+    for suffix, method, expected, desc in cases:
+        hit = [
+            r for r in app.routes
+            if getattr(r, "path", "").endswith(suffix)
+            and method in (getattr(r, "methods", None) or set())
+        ]
+        assert len(hit) == 1, f"{desc}：找到 {len(hit)} 条匹配 {suffix} 的 {method} 路由"
+        route = hit[0]
+        got = derive_permission_code(route.path, method, route.endpoint.__module__)
+        assert got == expected, (
+            f"{desc} {method} {route.path}\n"
+            f"  期望 {expected}，实际 {got}\n"
+            f"  → 若末段是动作词，必须登记进 core/permissions.py::EXECUTE_SUFFIXES，"
+            f"否则资源名会被推成 `<资源>_<动作>`，"
+            f"得到一个没有任何角色拥有的码（除通配 admin 外全员 403）。"
+        )
+        checked += 1
+    assert checked == len(cases), "有用例没跑到"
+
+
+def test_work_order_step_codes_are_granted_to_m01_roles():
+    """工序任务两个码必须已被内置角色覆盖，否则新租户开通后报工页直接 403。
+
+    这条刻意只查"有没有角色拥有"，不查具体是哪些 —— 授权范围由
+    `ROLE_GRANTS` 的模块通配决定，逐个写死会在调整角色时天天改测试。
+    """
+    from app.core.permissions import all_permission_codes
+
+    codes = set(all_permission_codes())
+    covered: set = set()
+    for patterns in ROLE_GRANTS.values():
+        for pat in patterns:
+            covered |= resolve_pattern(pat, codes)
+
+    for need in ("M01:work_order_step:read", "M01:work_order_step:execute"):
+        assert need in codes, f"{need} 没有被任何端点推导出来（端点登记异常）"
+        assert need in covered, (
+            f"{need} 没有任何内置角色拥有 —— 新租户开通后报工管理页会 403。"
+            f"检查 ROLE_GRANTS 是否缺少对应资源通配。")
+
+
 # ── preset_roles 行为（服务层）──────────────────────────────
 
 class FakeTenantRepo:

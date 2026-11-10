@@ -849,6 +849,20 @@ class ProductionService:
         )
         result["status_change"] = {"from": change["from_status"], "to": change["to_status"]}
 
+        # 4. 展开工序快照（报工任务台的地基）
+        #    ★ 放在状态变更**之后**：工序行的存在意味着"这张单已经下达"，先建行
+        #      再改状态的话，一旦状态迁移被状态机拒掉，就会留下一批属于草稿单的
+        #      工序行 —— 而草稿单在任务台上是不该出现的。
+        #    ★ 失败**不阻断**下达：活已经可以干了，展开不出来是主数据问题
+        #      （路线没配 / 步骤重复），不该把一张能开工的单卡死在这里。
+        #      与"赋码失败不阻断报工"同一口径。
+        try:
+            n = await self.repo.expand_steps_from_route(order)
+            result["steps"] = {"created": n,
+                               "note": None if n else "工单未挂工艺路线，未展开工序"}
+        except Exception as e:  # noqa: BLE001
+            result["steps"] = {"created": 0, "error": str(e)}
+
         return result
 
     async def get_status_logs(self, id: int) -> list:
@@ -899,6 +913,47 @@ class ProductionService:
             raise HTTPException(status_code=404, detail={"code": "404-0000", "message": "报工记录不存在"})
         return report
 
+    # ==================== 工序任务台 ====================
+    #
+    # 2026-11-10 起，报工管理的行对象从「报工记录」换成「工单 × 工序」。
+    # 用户口径：**列表就是全部工序**，每行带生产状态（数量 / 是否在工作 /
+    # 阻塞 / 缺料），点进去是这道工序的报工页，确保每道工序都能报。
+    async def list_work_steps(self, page: int = 1, page_size: int = 20,
+                              scope: str = "open", work_center_id: int = None,
+                              work_order_id: int = None, keyword: str = None) -> dict:
+        return await self.repo.list_work_steps(page, page_size, scope,
+                                                work_center_id, work_order_id, keyword)
+
+    async def steps_of_order(self, order_id: int) -> list:
+        await self._require_order(order_id)
+        return await self.repo.steps_of_order(order_id)
+
+    async def report_step(self, order_id: int, step_seq: int, data: dict,
+                          tenant_id: str) -> dict:
+        """按工序报工：**工序由路径决定，不让用户填编码**。
+
+        改造前的表单里「工序编码」「工序名称」是手输文本框 —— 现场要背编码，
+        打错了不会报错，只会把产量记到另一道工序上（或者对不上任何工序，
+        静默变成"报整单"）。这条路走通之后，工序来自用户点的那一行，
+        编码只是结果，不是输入。
+        """
+        step = await self.repo.get_step(order_id, step_seq)
+        if not step:
+            raise HTTPException(status_code=404, detail={
+                "code": "404-0000",
+                "message": (f"工单 {order_id} 没有第 {step_seq} 道工序；"
+                            "该工单可能未挂工艺路线（老单按整单报工）"),
+            })
+        payload = dict(data)
+        payload["work_order_id"] = order_id
+        payload["operation_code"] = step.get("operation_code")
+        payload["operation_name"] = step.get("operation_name")
+        # 补录只传 report_date 时用业务日兜底（禁 date.today()：容器 UTC、
+        # 业务 CST，UTC 16:00–24:00 会算成前一天）
+        if not payload.get("report_date"):
+            payload["report_date"] = business_today()
+        return await self.create_report(payload, tenant_id, step_seq=step_seq)
+
     async def _last_operation_code(self, order: dict) -> Optional[str]:
         """工单所挂在工艺路线上**末道工序**的编码；解析不到返回 ``None``。
 
@@ -935,7 +990,8 @@ class ProductionService:
         )
         return int((row or {}).get("q") or 0)
 
-    async def create_report(self, data: dict, tenant_id: str) -> dict:
+    async def create_report(self, data: dict, tenant_id: str,
+                            step_seq: int = None) -> dict:
         """报工并联动工单产出/不良。
 
         改造前这里只做两件事：插入报工行、把 ``output_qty``/``scrap_qty``
@@ -981,6 +1037,28 @@ class ProductionService:
         data["tenant_id"] = tenant_id
         report_id = await self.repo.create_report(data)
 
+        # ★ 报工推到工序行上（2026-11-10 工序任务台）
+        #   `step_seq` 优先（新页面按工序点进来，精确定位）；
+        #   只有工序编码时按编码找（同一路线里同码出现两次时取序号最小的那条，
+        #   见 `find_step_by_code`）；两样都没有 = "报整单"，**不动任何工序行**。
+        #   这一步绝不能猜：产量记错行不报错，事后对不上任何数。
+        reported_op = (data.get("operation_code") or "").strip() or None
+        step_id = None
+        step = None
+        if step_seq:
+            step = await self.repo.get_step(order_id, int(step_seq))
+        if step is None and reported_op:
+            step = await self.repo.find_step_by_code(order_id, reported_op)
+        if step is not None:
+            await self.repo.apply_report_to_step(
+                step["id"],
+                input_qty=data.get("input_qty") or 0,
+                output_qty=output_qty,
+                scrap_qty=scrap_qty,
+                reported_at=data.get("reported_at"),
+            )
+            step_id = step["id"]
+
         # 已下达但未开工 → 首次报工即视为开工（现场不会先点开工再报工）
         started = False
         if wo_status == "released":
@@ -1009,7 +1087,6 @@ class ProductionService:
         # 报废数（``scrap_qty``）**不**受此影响：报废是逐件发生的损失，
         # 每件只可能报废一次，跨工序累加不会重复计数。
         finish_code = await self._last_operation_code(order)
-        reported_op = (data.get("operation_code") or "").strip() or None
         is_finish_report = (
             finish_code is None or reported_op is None or reported_op == finish_code
         )
@@ -1123,6 +1200,10 @@ class ProductionService:
             # 现场可以照着打印/贴标；没赋码就是空列表，不必再查一次批次台账。
             "assigned_codes": assign.get("codes") or [],
             "code_rule": assign.get("rule"),
+            # 工序任务台：本次报工落到哪一行工序上。``None`` 表示没对上
+            # （报整单 / 无路线），前端据此提示"这条报工没有推进任何工序"，
+            # 而不是让用户以为工序已完成。
+            "step_id": step_id,
         }
 
     async def _raise_production_receipt(self, order: dict) -> dict:

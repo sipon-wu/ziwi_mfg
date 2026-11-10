@@ -110,6 +110,35 @@ class CreateWorkReportRequest(BaseModel):
     reported_at: Optional[datetime] = None
 
 
+class StepReportRequest(BaseModel):
+    """按工序报工（`POST /work-orders/{id}/steps/{seq}/execute`）。
+
+    ## 为什么比 `CreateWorkReportRequest` 少两个字段
+
+    `work_order_id` 与工序都来自**路径**，body 里不许重复 —— 让调用方能在
+    body 里再填一次工单，就会出现"路径写工单 A、body 写工单 B"这种必须靠
+    代码兜的歧义（而兜法一定是"信路径"，那 body 那个字段就是纯陷阱）。
+
+    改造前的表单里「工序编码」「工序名称」是**手输文本框**，现场要背编码；
+    这里工序来自用户点的那一行，编码只是结果，不是输入。
+
+    `report_date` 可空：不填按**业务日**兜底（`business_today()`，
+    禁 `date.today()` —— 容器 UTC、业务 CST，UTC 16:00–24:00 会算成前一天）。
+    """
+
+    report_date: Optional[date] = None
+    input_qty: int = 0
+    output_qty: int = 0
+    scrap_qty: int = 0
+    defect_reason: Optional[str] = None
+    labor_hours: float = 0
+    machine_hours: float = 0
+    # 补录时**只传 report_date，别传 reported_at**：`reported_at` 是"实时的报工
+    # 时刻"，补录昨天的产量填一个昨天的时刻会被"早于开工"校验拦掉，
+    # 而填 now() 又会让时序分析失真。留空表示"这条是事后补的"。
+    reported_at: Optional[datetime] = None
+
+
 class DailyReportRow(BaseModel):
     report_date: date
     wo_no: str

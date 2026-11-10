@@ -233,6 +233,12 @@ REFS = [
     ("product_bom",             "material_code",  "materials",      "code"),
     ("bom_snapshots",           "work_order_id",  "work_orders",    "id"),
     ("work_order_status_logs",  "work_order_id",  "work_orders",    "id"),
+    # ★ 工序任务台（C-106）的工序快照。不登记的话，删完工单会留下一批
+    #   `work_order_steps` 行指向不存在的工单 —— 本库无外键，删父行不报错，
+    #   而任务台的列表是 JOIN work_orders 的，这些孤儿行不显示，于是
+    #   "看不见残留"等于"永远没人回收"。
+    ("work_order_steps",        "work_order_id",  "work_orders",    "id"),
+    ("work_order_steps",        "operation_id",   "operations",     "id"),
     ("work_reports",            "work_order_id",  "work_orders",    "id"),
     ("work_reports",            "operation_code", "operations",     "code"),
     ("issue_orders",            "work_order_id",  "work_orders",    "id"),

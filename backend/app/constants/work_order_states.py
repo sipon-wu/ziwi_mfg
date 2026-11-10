@@ -58,6 +58,17 @@ WORK_ORDER_TRANSITIONS: Dict[str, FrozenSet[str]] = {
     "cancelled": frozenset(),
 }
 
+# ── 工序实例状态（`work_order_steps.status`）──────────────────────────────
+# **只有三个**。刻意没有 blocked / paused：
+# 缺料与安灯阻塞是从**工单侧**（`material_check_status` / `andon_call`）
+# 在查询时推出来的动态标记，不是工序自身的状态。一旦把它做成状态列，
+# 就得有人在安灯解除时负责把它改回去 —— 没有归属人的状态字段，
+# 迟早会长期卡在 blocked，现场看到几次假的之后就不再信这个标记了。
+STEP_STATUSES: Tuple[str, ...] = ("pending", "in_progress", "completed")
+
+# 报工任务台「待作业」档的取值（列表默认档，见 production_repo.list_work_steps）
+STEP_OPEN_STATUSES: Tuple[str, ...] = ("pending", "in_progress")
+
 TERMINAL_STATUSES: FrozenSet[str] = frozenset({"closed", "cancelled"})
 
 # 不允许再报工的状态：

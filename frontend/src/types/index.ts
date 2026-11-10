@@ -256,6 +256,48 @@ export interface CreateWorkReportRequest {
   labor_hours?: number
 }
 
+/**
+ * 工序任务（工单 × 工序的一道活）—— 报工管理的行对象。
+ *
+ * ★ 为什么不是 `WorkReport`：`WorkReport` 是"已经发生的事"（流水台账），
+ *   而车间要的是"我今天该干什么"。行对象换成工序之后，同一张工单上
+ *   没干完的道次才看得见，也才点得进去。
+ *
+ * `blocked` / `material_check_status` 取自**工单**，不是工序 —— 后端如实
+ * 带出来并标明来源，这里不做"看起来是工序级"的包装。
+ */
+export interface WorkStep {
+  id: number
+  tenant_id: string
+  work_order_id: number
+  step_seq: number
+  operation_id?: number
+  operation_code?: string
+  operation_name?: string
+  wc_id?: number
+  wc_code?: string
+  wc_name?: string
+  step_type?: string
+  planned_qty: number
+  input_qty: number
+  output_qty: number
+  scrap_qty: number
+  report_count: number
+  status: 'pending' | 'in_progress' | 'completed'
+  first_reported_at?: string
+  last_reported_at?: string
+  wo_no?: string
+  product_code?: string
+  product_name?: string
+  wo_status?: string
+  wo_planned_qty?: number
+  completed_qty?: number
+  material_check_status?: string
+  blocked?: boolean
+  /** 仅 `GET /work-orders/{id}/steps` 在无工序行时给，用于区分"未挂路线/未下达" */
+  hint?: string
+}
+
 // ============================================================
 // M02 — TPM 设备管理
 // ============================================================

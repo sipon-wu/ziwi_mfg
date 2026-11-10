@@ -194,6 +194,18 @@ export const STATUS_DICT: Record<string, Record<string, StateEntry>> = {
     rejected: { label: '已驳回', semantic: 'danger', icon: ICON.close, order: 30, actionable: true },
   },
 
+  // ── 生产 · 工序任务（work_order_steps）──
+  // ★ 只有三个状态，与后端 `constants/work_order_states.py::STEP_STATUSES` 一致。
+  //   刻意没有「阻塞」：阻塞与缺料是**工单侧**在查询时推出来的动态标记
+  //   （`blocked` / `material_check_status`），不是工序自身状态。
+  //   把它做成状态码，就得有人在安灯解除时负责改回来 —— 没人负责的字段
+  //   迟早长期卡在阻塞，现场见几次假的就不再信它。
+  work_order_step: {
+    pending: { label: '待作业', semantic: 'neutral', icon: ICON.clock, order: 10, actionable: true },
+    in_progress: { label: '作业中', semantic: 'progress', icon: ICON.play, order: 20, actionable: true },
+    completed: { label: '已完工', semantic: 'success', icon: ICON.check, order: 30 },
+  },
+
   // ── 品质 · 不合格评审 NCR ──
   // 后端模型注释写 `open/in_progress/completed/verified`，实际库里有
   // `open/reviewing/disposed/closed/cancelled` —— 两套都收，避免任何一边露英文。

@@ -1,4 +1,5 @@
 from app.repositories.base import MultiTenantRepository
+from app.constants.work_order_states import STEP_OPEN_STATUSES
 from typing import Optional, List, Dict
 from datetime import date, datetime
 
@@ -136,6 +137,206 @@ class ProductionRepository(MultiTenantRepository):
         from app.sync.change_log_service import ChangeLogService
         svc = ChangeLogService(self)
         await svc.record_change("work_report", id, "UPDATE")
+        return rows
+
+    # ==================== 工序实例（报工任务台） ====================
+    #
+    # ★ 这段 SQL 与 `migrations/20261110_work_order_steps.py::BACKFILL_STEPS`
+    #   **必须完全一致**。两处各写一套，就会出现"新下达的工单展开出 21 道、
+    #   迁移回填的老单展开出 20 道"——两个数字都有出处，但谁也说不清谁对。
+    #   改动请两边一起改。
+    EXPAND_STEPS_SQL = """
+        INSERT INTO work_order_steps
+            (tenant_id, work_order_id, step_seq, operation_id, operation_code,
+             operation_name, wc_id, step_type, planned_qty,
+             input_qty, output_qty, scrap_qty, report_count,
+             status, first_reported_at, last_reported_at, org_id)
+        SELECT wo.tenant_id, wo.id, rs.step_seq, rs.operation_id, o.code,
+               COALESCE(rs.step_name, o.name), rs.wc_id,
+               COALESCE(rs.step_type, 'production'),
+               COALESCE(wo.planned_qty, 0),
+               0, 0, 0, 0, 'pending', NULL, NULL, wo.org_id
+        FROM work_orders wo
+        JOIN route_steps rs ON rs.route_id = wo.route_id
+        LEFT JOIN operations o ON o.id = rs.operation_id
+        WHERE wo.id = :wo_id
+          AND rs.id = (SELECT MIN(r2.id) FROM route_steps r2
+                       WHERE r2.route_id = rs.route_id AND r2.step_seq = rs.step_seq)
+          AND NOT EXISTS (SELECT 1 FROM work_order_steps s
+                          WHERE s.tenant_id = wo.tenant_id
+                            AND s.work_order_id = wo.id
+                            AND s.step_seq = rs.step_seq)
+    """
+
+    async def expand_steps_from_route(self, order: dict) -> int:
+        """按工单的 `route_id` 展开工序快照。**幂等**：已有的一行都不动。
+
+        没有路线时返回 0 且不报错 —— 无路线老单是"报整单"的合法形态，
+        给它造一道假工序等于把"没有路线"这件事从数据上抹掉
+        （报表三桶里的 `unrouted_output` 正是靠这个区分才成立）。
+
+        ★ 返回值用**前后计数之差**，不取 `execute()` 的返回值：
+          `Base.execute()` 对 INSERT 统一拼 `RETURNING id` 且只 `fetchone()` 第一行，
+          所以 `INSERT ... SELECT` 走多行时它返回的是**第一个自增主键**而不是行数
+          （单行时恰好等于 1，看起来是对的 —— 典型的"测一道工序永远绿"）。
+          调用方拿这个数判断"展开出几道"，会在多工序路线上全部显示 1。
+        """
+        if not order or not order.get("route_id"):
+            return 0
+        before = await self.query_one(
+            "SELECT COUNT(*) AS n FROM work_order_steps WHERE work_order_id = :w",
+            {"w": order["id"]},
+        )
+        await self.execute(self.EXPAND_STEPS_SQL, {"wo_id": order["id"]})
+        after = await self.query_one(
+            "SELECT COUNT(*) AS n FROM work_order_steps WHERE work_order_id = :w",
+            {"w": order["id"]},
+        )
+        return int((after or {}).get("n") or 0) - int((before or {}).get("n") or 0)
+
+    async def steps_of_order(self, work_order_id: int) -> List[Dict]:
+        return await self.query(
+            """SELECT s.*, wc.name AS wc_name
+               FROM work_order_steps s
+               LEFT JOIN work_centers wc ON wc.id = s.wc_id
+               WHERE s.work_order_id = :w
+               ORDER BY s.step_seq""",
+            {"w": work_order_id},
+        )
+
+    async def get_step(self, work_order_id: int, step_seq: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM work_order_steps "
+            "WHERE work_order_id = :w AND step_seq = :s",
+            {"w": work_order_id, "s": step_seq},
+        )
+
+    async def get_step_by_id(self, step_id: int) -> Optional[Dict]:
+        return await self.query_one(
+            "SELECT * FROM work_order_steps WHERE id = :id", {"id": step_id}
+        )
+
+    async def find_step_by_code(self, work_order_id: int,
+                               operation_code: str) -> Optional[Dict]:
+        """按工序编码找工序行。
+
+        ★ 同一张工单的路线里同一道工序**可以出现两次**（返修复检），这时
+          返回序号最小的那条 —— 它是"第一次要走这道"，报工先落到它上面。
+          要精确报第二道，调用方必须传 `step_seq`（新页面就是这么做的）。
+          猜错不会报错，只会让产量记到另一行上，所以 `step_seq` 优先。
+        """
+        return await self.query_one(
+            "SELECT * FROM work_order_steps "
+            "WHERE work_order_id = :w AND operation_code = :c "
+            "ORDER BY step_seq LIMIT 1",
+            {"w": work_order_id, "c": operation_code},
+        )
+
+    async def list_work_steps(self, page: int = 1, page_size: int = 20,
+                              scope: str = "open", work_center_id: int = None,
+                              work_order_id: int = None,
+                              keyword: str = None) -> dict:
+        """工序任务列表（跨工单）—— 报工管理页的数据源。
+
+        `scope` 三档，对应页面上「待作业 / 已完工」两个 tab（默认待作业）：
+
+        - ``open``      → pending + in_progress，也就是"还有活没干完"
+        - ``completed`` → completed
+        - ``all``       → 全都要（无 tab 筛选时的总账视图）
+
+        ★ 为什么默认 ``open`` 而不是 ``all``：这是**车间当天要看的清单**，
+          不是工序总账。把已完工的 78 张工单的工序一起倒出来就是上千行，
+          工人第一屏看到的全是干完的活 —— 列表越长，越没人看。
+
+        ★ 缺料与阻塞**取工单级的**，不是工序级：`material_check_status` 与
+          `andon_call` 现在都挂在工单上。这里如实带出来并标明来源，
+          不假装它们是工序级的（那需要新表，属下一步）。
+        """
+        sql = """SELECT s.id, s.tenant_id, s.work_order_id, s.step_seq,
+                 s.operation_id, s.operation_code, s.operation_name,
+                 s.wc_id, s.step_type, s.planned_qty,
+                 s.input_qty, s.output_qty, s.scrap_qty, s.report_count,
+                 s.status, s.first_reported_at, s.last_reported_at,
+                 wo.wo_no, wo.product_code, wo.product_name, wo.wo_status,
+                 wo.planned_qty AS wo_planned_qty, wo.completed_qty,
+                 wo.material_check_status,
+                 wc.code AS wc_code, wc.name AS wc_name
+                 FROM work_order_steps s
+                 JOIN work_orders wo ON wo.id = s.work_order_id
+                 LEFT JOIN work_centers wc ON wc.id = s.wc_id
+                 WHERE 1=1"""
+        params: dict = {}
+        if scope == "open":
+            # 值域取常量，不在这里手写 —— 手写就会出现"仓储层认三种、
+            # 前端 tab 只发两种"的漂移，而两边都不会报错，只是少了几行。
+            marks = ", ".join(f"'{s}'" for s in STEP_OPEN_STATUSES)
+            sql += f" AND s.status IN ({marks})"
+        elif scope == "completed":
+            sql += " AND s.status = 'completed'"
+        if work_center_id:
+            sql += " AND s.wc_id = :wc"
+            params["wc"] = work_center_id
+        if work_order_id:
+            sql += " AND s.work_order_id = :wo"
+            params["wo"] = work_order_id
+        if keyword:
+            sql += (" AND (s.operation_code LIKE :kw OR s.operation_name LIKE :kw"
+                    " OR wo.wo_no LIKE :kw OR wo.product_name LIKE :kw)")
+            params["kw"] = f"%{keyword}%"
+        # ★ 排序＝车间实际的下一个动作：同一工单按工序顺序，工单之间按
+        #   计划开工时间（没排期的排最后）。按 created_at 排会把"刚建的单"
+        #   顶到最前，而现场要看的是**最早该开工的那张**。
+        sql += (" ORDER BY CASE WHEN wo.scheduled_start_at IS NULL THEN 1 ELSE 0 END,"
+                " wo.scheduled_start_at, wo.id, s.step_seq")
+        data = await self.query_page(sql, params, page, page_size)
+
+        # 阻塞标记单独查一次：工序行数 = 一页 20，用 IN 一次取完，
+        # 不在主 SQL 里加 EXISTS —— 那会让每行都跑一次子查询，
+        # 而且 andon_call 上没有 (work_order_id, status) 索引。
+        wo_ids = sorted({int(r["work_order_id"]) for r in data["items"]})
+        blocked: set = set()
+        if wo_ids:
+            ph = ", ".join(f":b{i}" for i in range(len(wo_ids)))
+            rows = await self.query(
+                f"SELECT DISTINCT work_order_id FROM andon_call "
+                f"WHERE work_order_id IN ({ph}) "
+                f"AND (status IS NULL OR status NOT IN ('resolved', 'cancelled'))",
+                {f"b{i}": v for i, v in enumerate(wo_ids)},
+            )
+            blocked = {int(r["work_order_id"]) for r in rows}
+        for r in data["items"]:
+            r["blocked"] = int(r["work_order_id"]) in blocked
+        return data
+
+    async def apply_report_to_step(self, step_id: int, input_qty: int = 0,
+                                   output_qty: int = 0, scrap_qty: int = 0,
+                                   reported_at=None) -> int:
+        """把一次报工累加到工序行，并就地推进状态。
+
+        ★ 累加与状态判定放在**同一条 UPDATE** 里：分两步（先累加、再 SELECT 判状态、
+          再 UPDATE）在并发报工时会出现"两个人都读到 28，各自写 30"—— 产量少算，
+          而两条报工记录都在，事后对不上任何数。SQL 的 `SET x = x + :d` 是原子的。
+
+        ★ 状态判据：有计划量时 `累计合格 >= 计划` 即完工；计划量为 0 时**不判完工**
+          （否则任何一次报工都让工序立刻完工，而计划量缺失恰恰是最常见的脏数据）。
+        """
+        rows = await self.execute(
+            """UPDATE work_order_steps SET
+                 input_qty = input_qty + :i,
+                 output_qty = output_qty + :o,
+                 scrap_qty = scrap_qty + :s,
+                 report_count = report_count + 1,
+                 first_reported_at = COALESCE(first_reported_at, :at),
+                 last_reported_at = :at,
+                 status = CASE
+                   WHEN planned_qty > 0 AND (output_qty + :o) >= planned_qty
+                     THEN 'completed'
+                   ELSE 'in_progress' END
+               WHERE id = :id""",
+            {"i": int(input_qty or 0), "o": int(output_qty or 0),
+             "s": int(scrap_qty or 0), "at": reported_at or datetime.now(),
+             "id": step_id},
+        )
         return rows
 
     # ==================== 报表 ====================

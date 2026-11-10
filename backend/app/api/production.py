@@ -8,6 +8,7 @@ from app.schemas.production import (
     CompleteWorkOrderRequest,
     CreateWorkOrderRequest,
     CreateWorkReportRequest,
+    StepReportRequest,
     AssignWorkOrderRequest,
     MergeWorkOrdersRequest,
     PauseWorkOrderRequest,
@@ -31,6 +32,37 @@ async def list_work_orders(
     svc = ProductionService(repo)
     data = await svc.list_work_orders(page, page_size, status, keyword)
     return {"code": 0, "message": "success", "data": data}
+
+
+# ★ 必须注册在 `/work-orders/{order_id}` **之前**：`order_id` 是 int，
+#   FastAPI 按声明顺序匹配，先撞上 `{order_id}` 的话 "steps" 会被拿去转 int
+#   直接 422。这个遮蔽坑在 `/work-orders/merge` 上已经吃过一次，注释就在下面。
+@router.get("/work-orders/steps")
+async def list_work_steps(
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    scope: str = Query("open", pattern="^(open|completed|all)$",
+                       description="open=待作业(pending+in_progress) / completed=已完工 / all=全部"),
+    work_center_id: int = Query(None, description="按工作中心过滤（工位任务台的入口）"),
+    work_order_id: int = Query(None),
+    keyword: str = Query(None, description="工序编码/名称、工单号、产品名"),
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """工序任务列表（跨工单）—— 报工管理页的数据源。
+
+    2026-11-10 起，报工管理的行对象从「报工记录」换成「工单 × 工序」：
+    列表就是全部工序，每行带生产状态，点进去是这道工序的报工页。
+
+    ★ 权限码是 `M01:work_order_step:read`（由路径自动推导，不是手写的
+      `M01:work_order:read`）—— 两者不同，前者需要显式授予，
+      迁移 `20261110b_step_permissions.py` 负责把已有的
+      `M01:work_order:read` 持有者同步过来。少了这一步，除通配 admin 外全员 403。
+    """
+    svc = ProductionService(repo)
+    data = await svc.list_work_steps(page, page_size, scope,
+                                     work_center_id, work_order_id, keyword)
+    return {"code": 0, "message": "success", "data": data}
+
 
 @router.post("/work-orders")
 async def create_work_order(
@@ -85,6 +117,51 @@ async def get_work_order(
     svc = ProductionService(repo)
     data = await svc.get_work_order(order_id)
     return {"code": 0, "message": "success", "data": data}
+
+
+@router.get("/work-orders/{order_id}/steps")
+async def list_order_steps(
+    order_id: int,
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository, require_auth=True)),
+):
+    """这张工单的工序快照（下达时展开的那一份）。
+
+    没有工序行有两种情况，**必须让调用方分得清**：
+    - 老单没挂工艺路线（"报整单"是它的合法形态，不是缺陷）；
+    - 单据还没下达（工序在下达时才展开）。
+    """
+    svc = ProductionService(repo)
+    steps = await svc.steps_of_order(order_id)
+    return {"code": 0, "message": "success",
+            "data": {"items": steps, "total": len(steps),
+                     "hint": None if steps else
+                             "该工单没有工序行：可能未挂工艺路线（老单按整单报工），或尚未下达"}}
+
+
+@router.post("/work-orders/{order_id}/steps/{step_seq}/execute")
+async def execute_step(
+    order_id: int,
+    step_seq: int = Path(..., ge=1, description="工序序号（route_steps.step_seq 的快照）"),
+    req: StepReportRequest = None,
+    current_user: dict = Depends(get_current_user),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """执行一道工序 = 报工（工序由路径决定，不用手输编码）。
+
+    ★ 为什么叫 `execute` 而不是 `report`：权限码是按路径末段推导的，
+      `report` 不在 `EXECUTE_SUFFIXES` 里，落库的码会变成
+      `M01:work_order_step_report:create` —— 一个没有任何角色拥有的码，
+      除通配 admin 外全员 403，而报错文案还指着一个页面上不存在的权限项。
+      `execute` 已在集合里，资源名收敛回 `work_order_step`，
+      动作收敛成 `execute`，与「检验执行 / 点检执行 / 出库执行」同一套词汇。
+    """
+    svc = ProductionService(repo)
+    payload = (req or StepReportRequest()).model_dump()
+    payload["reporter_id"] = current_user["id"]
+    result = await svc.report_step(order_id, step_seq, payload,
+                                   current_user.get("tenant_id", "default"))
+    return {"code": 0, "message": result["message"], "data": result}
+
 
 @router.put("/work-orders/{order_id}")
 async def update_work_order(

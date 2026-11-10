@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, BigInteger, String, Integer, Float, DateTime, Text, Date, Boolean,
-    UniqueConstraint,
+    UniqueConstraint, Index,
 )
 from sqlalchemy.sql import func
 from app.core.database import Base, PK_TYPE
@@ -91,6 +91,89 @@ class WorkReport(Base):
     status = Column(String(20), default="draft", comment="状态: draft/submitted/approved/rejected")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ── 工单工序实例（2026-11-10 · 报工管理改成工序任务台的地基）──────────
+
+
+class WorkOrderStep(Base):
+    """工单工序实例：下达那一刻按工艺路线**快照**展开的一条工序任务。
+
+    ## 为什么是快照，不是实时 join ``route_steps``
+
+    路线会被改版（加一道工序、换工作中心、调顺序）。实时 join 的话，一张三个月前
+    的工单今天打开会显示"它从没走过的那道工序"，而它的报工记录里一行都对不上 ——
+    **历史被后来的改版改写了，脏数据却是当时的人背锅**。``bom_snapshots`` 用的是
+    同一个道理：下达那一刻的工艺是事实，日后的改动是另一件事。
+
+    ## 为什么必须有这张表（而不是每次从 ``work_reports`` 反推）
+
+    「这道工序报了多少 / 是不是在制 / 完没完工」—— 报工记录只能回答第一问，
+    而且要靠 ``operation_code`` 字符串去猜。**工序级状态在库里一直没有任何载体**，
+    于是两件事都做不成：
+
+    - 报工管理只能做成"报工流水台账"（已发生的事），做不成"我今天该干什么"；
+    - 扫码过站没法判断"这个码现在该过哪道" —— 组套页能定位到合装工序，
+      是因为那个页面**硬编码了"这里就是合装"**，换一个工位就复用不了。
+
+    一行 = 某张工单的第 N 道工序。``status`` 就是这条工序链路的当前位置。
+
+    ## 状态取值
+
+    ``pending`` 未开工 → ``in_progress`` 在制 → ``completed`` 已完工。
+    **没有 blocked / paused**：阻塞与缺料都不是工序自身的状态 ——
+    阻塞是安灯（``andon_call``）在报，缺料是工单级齐套检查在报。
+    把它们塞进工序状态里，等于同一件事有两个真相源，早晚对不上。
+
+    ## 累计量为什么落在这一行上
+
+    ``output_qty`` 等是**该工序**的累计（不是工单的）。工单的 ``completed_qty``
+    只记末道工序的合格产出（三桶口径见 ``production_repo._rollup_by_wo``），
+    两者维度不同，不能互相覆盖。这里的累计量是"工序流转量"的来源。
+    """
+
+    __tablename__ = "work_order_steps"
+
+    id = Column(PK_TYPE, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), nullable=False, comment="租户ID")
+    work_order_id = Column(BigInteger, nullable=False, comment="工单ID（work_orders.id）")
+    # ★ 唯一性锚点是 (工单, 工序序号) 而不是工序编码：同一张工单的路线里
+    #   同一道工序可以出现两次（返修复检），按编码唯一会把第二次直接吃掉。
+    step_seq = Column(Integer, nullable=False, comment="工序序号（快照自 route_steps.step_seq）")
+    operation_id = Column(BigInteger, comment="工序ID（operations.id）")
+    operation_code = Column(String(100), comment="工序编码（快照，报工按它对账）")
+    operation_name = Column(String(200), comment="工序名称（快照）")
+    # ★ 工作中心也快照：路线改版换了工位时，历史工单该显示当时的工位。
+    #   实时 join route_steps 会把昨天干的活显示到今天的工位上。
+    wc_id = Column(BigInteger, comment="执行工作中心ID（快照自 route_steps.wc_id）")
+    step_type = Column(String(20), default="production", comment="步骤类型：production/inspect/outsource")
+
+    planned_qty = Column(Integer, default=0, comment="计划数量（快照自工单 planned_qty）")
+    input_qty = Column(Integer, default=0, comment="累计投入数量")
+    output_qty = Column(Integer, default=0, comment="累计合格产出（该工序）")
+    scrap_qty = Column(Integer, default=0, comment="累计报废数量（该工序）")
+    report_count = Column(Integer, default=0, comment="报工次数（分批报工的痕迹）")
+    status = Column(String(20), default="pending",
+                    comment="工序状态: pending/in_progress/completed")
+
+    first_reported_at = Column(DateTime(timezone=True), comment="首次报工时刻")
+    last_reported_at = Column(DateTime(timezone=True), comment="最近一次报工时刻")
+    # 归属组织（数据范围过滤用）：取工单的 org_id，不是操作人的 ——
+    # 这一行的"归属"由它属于哪张工单决定，跟谁报的无关（与 work_reports
+    # 取报工人组织是**相反**的口径，两处不要统一）。
+    org_id = Column(BigInteger, comment="归属组织ID（数据范围过滤用，取工单归属）")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "work_order_id", "step_seq",
+                         name="uq_wo_step_tenant_wo_seq"),
+        # 工序任务台的主查询是"某个工位还有哪些活没干" —— 靠这条索引命中。
+        Index("ix_wo_step_tenant_wc_status", "tenant_id", "wc_id", "status"),
+        # 工单详情页展开工序 / 下达时幂等判重走这条。
+        Index("ix_wo_step_tenant_wo", "tenant_id", "work_order_id"),
+    )
 
 
 # ── M02 BOM 版本锁定 ────────────────────────────────────────────────
