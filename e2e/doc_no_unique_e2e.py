@@ -193,10 +193,36 @@ def _db_path():
 
 
 def _api_is_local() -> bool:
-    """后端是不是就跑在本机（决定能不能直连 backend/ziwi.db 做 DB 级验证）。"""
+    """后端是不是真跑在本机 SQLite 上（决定能不能直连 backend/ziwi.db 做 DB 级验证）。
+
+    ★ 只看 hostname 不够（C-107 踩到）：在 CVM 上跑 staging 回归时 API 就是
+      127.0.0.1:8000 —— 后端在容器里、库是 PG，hostname 却命中本机。
+      只按 hostname 判断会让 D10/D11 在 PG 环境下被当成「约束没生效」：
+      `sqlite3.connect()` 会顺手**新建一个空库**，于是报 `no such table:
+      receipt_orders` —— 看着像服务端缺陷，其实是探针指错了库。
+
+    真正的判据是「本机那个 SQLite 文件存在、且真有这几张表」。
+    """
     from urllib.parse import urlparse
     host = (urlparse(API).hostname or "").lower()
-    return host in ("127.0.0.1", "localhost", "::1")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return False
+    path = _db_path()
+    if not os.path.exists(path):
+        return False
+    import sqlite3
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master"
+                " WHERE type='table' AND name='receipt_orders'"
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except sqlite3.Error:
+        return False
 
 
 def probe_db_unique(receipt_no: str) -> bool:
