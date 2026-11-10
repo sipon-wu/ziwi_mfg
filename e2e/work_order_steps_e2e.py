@@ -386,9 +386,15 @@ def main() -> int:
 
 def _summary() -> int:
     print("\n" + "=" * 64)
-    print(f"结果：{len(OK)} OK / {len(GAP)} GAP")
+    # ★ 这行必须写成 `通 X / 断 Y`：`run_all.py::_SUMMARY_RE` 只认
+    #   「通 X / 断 Y」「PASS X / FAIL Y」「X PASS / Y FAIL」「X 段通 / Y 段断」
+    #   「X/Y 通过」五种形态。原先这里打的是「结果：46 OK / 0 GAP」，
+    #   于是 run_all 把它归进"未输出可识别汇总（需人工确认是否真跑完）"——
+    #   探针明明跑完了、全过，却在门禁里**不被计入断言数**。
+    #   这类"跑了但不算数"和漏跑没有区别，而且它显示为 ✅ 更迷惑人。
+    print(f"汇总：通 {len(OK)} / 断 {len(GAP)}")
     if GAP:
-        print("GAP 明细：")
+        print("断点明细：")
         for g in GAP:
             print(f"  · {g}")
     print("=" * 64)
