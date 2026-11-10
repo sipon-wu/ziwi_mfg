@@ -10,6 +10,8 @@
 //   B. 快速键入（10ms/字符，模拟扫码枪）  + Enter  → 应查到这个码
 //   C. 慢速手输 + 点「扫码」按钮           → 应查到这个码
 //   D. 手输一个"太短的值"（2 字符，低于 minLength=3）+ Enter → 不提交、也不清空输入框
+//   E. 打字中途停顿（模拟边看单边敲）+ Enter → 提交的必须是**完整码**，不能是停顿后的后缀
+//      （E 比 A 更要命：A 是"没反应"，E 是"静默查了另一个码"，界面上看不出替换）
 //
 // 跑法：DIST_DIR=frontend/dist_xxx PORT=5190 node scripts/serve_alpha.js
 //       BASE_URL=http://127.0.0.1:5190 node e2e/browser_test/_probe_scan_as_typing.js
@@ -85,6 +87,21 @@ async function waitLooked(page, code, timeout = 12000) {
 const scanField = (page) => page.locator('.ziwi-scan-field').last()
 const inputOf = (page) => scanField(page).locator('input').first()
 
+/**
+ * 每个用例前把页面回到"没有任何查询结果"的干净态。
+ *
+ * ★ `page.goto()` 对**只有 hash 变化**的地址不会重新加载，组件实例被复用 ——
+ *   于是 `.bc-lookup` 里躺着上一个用例的结果。2026-11-10 实测：E 用例在老代码上
+ *   本该红（回车什么都没提交），却因为读到 C 用例残留的结果而报绿 —— **假绿**。
+ *   所以先 `reload()` 强制新实例，再等结果区**消失**，不是等它存在。
+ */
+async function freshPage(page) {
+  await page.goto(`${BASE}/#/wms/batches/compose`, { waitUntil: 'domcontentloaded' })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.ziwi-scan-field', { timeout: 15000 })
+  await page.waitForFunction(() => !document.querySelector('.bc-lookup'), { timeout: 10000 })
+}
+
 ;(async () => {
   const code = await pickCode()
   console.log(`靶码：${code}`)
@@ -115,8 +132,7 @@ const inputOf = (page) => scanField(page).locator('input').first()
   // ── B 快速键入 + Enter（扫码枪手感）────────────────────────
   console.log('\n== B 快速键入 + Enter（10ms/字符，模拟扫码枪）==')
   {
-    await page.goto(`${BASE}/#/wms/batches/compose`, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('.ziwi-scan-field', { timeout: 15000 })
+    await freshPage(page)
     const box = inputOf(page)
     const ms = await typeChars(box, code, 10)
     await box.press('Enter')
@@ -128,8 +144,7 @@ const inputOf = (page) => scanField(page).locator('input').first()
   // ── C 慢速手输 + 点「扫码」按钮 ────────────────────────────
   console.log('\n== C 慢速手输 + 点「扫码」按钮 ==')
   {
-    await page.goto(`${BASE}/#/wms/batches/compose`, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('.ziwi-scan-field', { timeout: 15000 })
+    await freshPage(page)
     const box = inputOf(page)
     await typeChars(box, code, 150)
     await scanField(page).locator('.ziwi-scan-field__btn').click()
@@ -141,8 +156,7 @@ const inputOf = (page) => scanField(page).locator('input').first()
   // ── D 半截码 + Enter（负向：不该静默提交截断值）─────────────
   console.log('\n== D 半截码 + Enter（负向）==')
   {
-    await page.goto(`${BASE}/#/wms/batches/compose`, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('.ziwi-scan-field', { timeout: 15000 })
+    await freshPage(page)
     const box = inputOf(page)
     // 组件 minLength=3；取 2 个字符才低于阈值（3 个字符按设计就是要提交的）
     const half = code.slice(-2)
@@ -156,6 +170,29 @@ const inputOf = (page) => scanField(page).locator('input').first()
     chk('D1', stillThere, `半截码「${half}」回车后输入框 = ${JSON.stringify(shown)}（不该被悄悄清掉）`)
     const wrongSubmitted = /不存在|查无|未找到/.test(body)
     chk('D2', !wrongSubmitted, wrongSubmitted ? '把半截码当完整码提交了（查无此码）' : '没有把半截码当成品提交')
+  }
+
+  // ── E 中途停顿 + Enter（负向：不能提交后缀）──────────────────
+  console.log('\n== E 打字中途停顿 400ms + Enter（负向：不能只提交后缀）==')
+  {
+    await freshPage(page)
+    const box = inputOf(page)
+    const cut = Math.max(1, Math.floor(code.length / 2))
+    const head = code.slice(0, cut)
+    const tail = code.slice(cut)
+    // 前半段慢敲 → 停 400ms（远超 maxInterval=120ms）→ 后半段慢敲
+    await typeChars(box, head, 150)
+    await page.waitForTimeout(400)
+    for (const ch of tail) {
+      await box.type(ch, { delay: 0 })
+      await page.waitForTimeout(150)
+    }
+    const shown = await box.inputValue()
+    chk('E1', shown === code, `停顿后输入框 = ${JSON.stringify(shown)}（应为完整 ${code}）`)
+    await box.press('Enter')
+    await page.waitForTimeout(1500)
+    const hit = await waitLooked(page, code, 6000)
+    chk('E2', hit, hit ? '提交的是完整码' : `**没有按完整码提交** —— 很可能把后缀「${tail}」当成了一次扫码`)
   }
 
   await browser.close()
