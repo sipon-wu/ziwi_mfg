@@ -67,7 +67,17 @@ DOCUMENTED = {
         "E2E-MAT", "E2E-TRACE-RM", "E2E_LOOP_20261107003420_f51afb_RAW",
         "P-E2E", "MAT-TC4-123456",
     ],
-    "process_routes": ["RTE-P-GE-12-V2", "RT-TS-123456"],
+    "process_routes": [
+        "RTE-P-GE-12-V2", "RT-TS-123456",
+        # C-108 扫码过站：末尾是**序号**不是时间戳，默认规则挡不住也匹配不上
+        "E2E-SC-RT-1110223604-1", "E2E-SC-RT-1110223604-2",
+    ],
+    # C-108：`operations` 原来完全没有专用规则，只吃默认 `[-_]<10位>$`，
+    # 扫码探针的工序编码末尾是序号 → 漏回收 → 引用登记变死代码。
+    "operations": [
+        "E2E-SC-OP-A-1110223604-1", "E2E-SC-OP-B-1110223604-2",
+        "E2E-OP-1110223604",         # 旧形态，走默认规则，别被新规则挤掉
+    ],
     "batches": [
         "E2E-DEC-ST-949439",        # 返修拆解探针（C-102）
         "E2E-BC-RT-NO-1110001319",  # 组套探针的部件码
@@ -134,6 +144,19 @@ class TestNoFalsePositives:
     def test_real_accounts_are_not_probe(self):
         assert not _matches("users", "mfg_admin")
         assert not _matches("users", "ah_admin")
+
+    def test_seed_operation_and_route_codes_are_not_probe(self):
+        """`^E2E[-_]` 只该认探针自己那族，种子工序/路线一行都不能碰。
+
+        这几个值是本地库里真实存在的种子编码（`OP-0010` / `RTE-BEARING`），
+        不是编出来的样例 —— 上一版 `work_orders` 的漏项就是因为注释写了、
+        代码没实现，所以这里宁可贴真实值。
+        """
+        for code in ("OP-0010", "OP-0100", "OP-0200"):
+            assert not _matches("operations", code), f"{code} 是种子工序"
+        for code in ("RTE-BEARING", "RTE-FLANGE", "RTE-SHAFT",
+                     "RTE-AH-STATOR", "RTE-AH-ROTOR", "RTE-AH-UNIT"):
+            assert not _matches("process_routes", code), f"{code} 是种子路线"
 
 
 class TestStructure:

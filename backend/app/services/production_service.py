@@ -36,6 +36,45 @@ def _bad_request(message: str, code: str = "400-0000") -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
+def _parse_scan_code(raw: str):
+    """拆扫码内容 → ``(工单号, 工序线索 | None)``。
+
+    认三种：``WO-x`` / ``WO-x#OP20``（工序编码）/ ``WO-x#3``（工序序号）。
+
+    ★ 全角 ``＃`` 必须一起认：中文输入法下敲 ``#`` 出来就是全角，手输和
+      某些扫码枪的键盘模拟都会带 —— 不处理的话，现场看到的是"码认不出来"，
+      然后跑去重打一张条码，问题却永远不消失。
+    """
+    code = (raw or "").strip().replace("＃", "#")
+    if not code:
+        return "", None
+    if "#" not in code:
+        return code, None
+    wo_no, _, hint = code.partition("#")
+    return wo_no.strip(), (hint.strip() or None)
+
+
+def _match_step_hint(steps: list, hint: str):
+    """按工序编码或工序序号在快照工序里定位一道。
+
+    工序编码优先于序号：``OP20`` 这种编码是人印在工序票上的，
+    而序号会随路线改版变，编码更稳。两者都不中返回 ``None``。
+    """
+    h = (hint or "").strip()
+    if not h:
+        return None
+    low = h.lower()
+    for s in steps:
+        if (s.get("operation_code") or "").lower() == low:
+            return s
+    if h.isdigit():
+        seq = int(h)
+        for s in steps:
+            if int(s.get("step_seq") or 0) == seq:
+                return s
+    return None
+
+
 def _as_dt(value) -> Optional[datetime]:
     """把"时间"归一成 naive datetime 再比较。
 
@@ -973,6 +1012,146 @@ class ProductionService:
         if not payload.get("report_date"):
             payload["report_date"] = business_today()
         return await self.create_report(payload, tenant_id, step_seq=step_seq)
+
+    # ── 扫码过站（C-108）──────────────────────────────────────────────
+    async def scan_execute(self, code: str, data: dict, tenant_id: str,
+                           allowed_wc_ids: Optional[list] = None) -> dict:
+        """扫一下码 = 完成这道工序并自动报工。
+
+        ## 码是什么
+
+        系统里**没有**实体条码表，也不该为此新建一张 —— 印码、发码、补印是
+        一整套实物流程，MVP 阶段车间手里的流转卡上印的就是工单号。所以码就
+        两种形态，都是拼出来的、不落库：
+
+        - ``WO-20261110-0001``           工单号，自动定位"该我过的下一道"
+        - ``WO-20261110-0001#OP20``      工单号 + 工序编码（工序票上印这个）
+        - ``WO-20261110-0001#3``         工单号 + 工序序号（``step_seq``）
+
+        ## 不带工序标识时，怎么决定过哪道
+
+        在该工单**未完工**的工序里按 ``step_seq`` 升序取第一条：
+        账号绑了工位就在自己工位那些里取，没绑（不限）就取全局第一条。
+
+        - **按 step_seq 而不是按时间**：工序链有顺序，扫一下该过下一道；
+          按最近报工时间会把"补报历史工序"排到后面，越扫越乱。
+        - **不取"最近一道已完成 +1"**：返工场景下工序会跳着走，只有
+          「未完工里最靠前的一道」不会把活干在没到的工序上。
+
+        ## 数量默认整批剩余 —— 这不是省事，是幂等的基石
+
+        扫码枪最容易出的错是**连扫**（手抖、条码磨损导致重读、旁边的人又扫一下）。
+        默认报「计划量 − 已报产出 − 已报废」的剩余量，报完这一道就 ``completed``，
+        第二遍扫直接被状态幂等挡住。若允许默认报 1 件，连扫两次就静默变成两件，
+        产量翻倍且**没有任何报错** —— 这是最坏的一类缺陷。
+
+        分批报工仍走原表单（显式填数量），那时连扫本来就应该报多次。
+
+        ## 403 / 409 / 400 的分工
+
+        - 404：码认不出（没有这个工单号）、或指定的工序不存在
+        - 409：工序已完成（重复扫）/ 工单已全部完工 —— 状态冲突，不是参数错
+        - 403：剩下的活都不归你绑定的工位 —— "不归你"不是"不存在"
+        - 400：工单没有工序行（未挂路线/未下达）、计划量已报满
+        """
+        wo_no, hint = _parse_scan_code(code)
+        if not wo_no:
+            raise _bad_request("扫码内容为空", "400-0008")
+
+        order = await self.repo.get_work_order_by_no(wo_no)
+        if not order:
+            raise HTTPException(status_code=404, detail={
+                "code": "404-0000",
+                "message": (f"没有找到工单号为 {wo_no} 的工单；"
+                            "确认码没扫错（旧单/别的租户的单/条码磨损都会这样）"),
+            })
+
+        steps = await self.repo.steps_of_order(order["id"])
+        if not steps:
+            raise _bad_request(
+                f"工单 {wo_no} 没有工序行（未挂工艺路线，或尚未下达），无法过站；"
+                "这类老单请按整单报工", "400-0009")
+
+        target = None
+        if hint is not None:
+            target = _match_step_hint(steps, hint)
+            if not target:
+                seqs = "、".join(str(s.get("step_seq")) for s in steps[:8])
+                raise HTTPException(status_code=404, detail={
+                    "code": "404-0000",
+                    "message": (f"工单 {wo_no} 没有「{hint}」这道工序；"
+                                f"该单现有工序序号：{seqs}"),
+                })
+        else:
+            opens = [s for s in steps if (s.get("status") or "pending") != "completed"]
+            if not opens:
+                raise HTTPException(status_code=409, detail={
+                    "code": "409-0001",
+                    "message": (f"工单 {wo_no} 的 {len(steps)} 道工序已全部完工，"
+                                "本次没有重复报工"),
+                })
+            if allowed_wc_ids is None:
+                candidates = opens
+            else:
+                allowed = set(int(x) for x in allowed_wc_ids)
+                candidates = [s for s in opens
+                              if int(s.get("wc_id") or 0) in allowed]
+            if not candidates:
+                head = opens[0]
+                raise HTTPException(status_code=403, detail={
+                    "code": "403-0000",
+                    "message": (f"工单 {wo_no} 还剩 {len(opens)} 道没做，但都不归你绑定的工位；"
+                                f"最靠前的是第 {head.get('step_seq')} 道"
+                                f"（{head.get('operation_name') or head.get('operation_code') or '-'}"
+                                f" @ {head.get('wc_name') or '未指定工位'}）。"
+                                "请让该工位的人过站，或让管理员在账号上绑定这个工作中心"),
+                })
+            target = candidates[0]
+
+        seq = int(target.get("step_seq") or 0)
+        op_label = target.get("operation_name") or target.get("operation_code") or "-"
+        # ★ 归属校验**在这里做一次**，不能只靠下游 `report_step` 兜。
+        #   两条定位路径的收口点必须一致：自动定位分支已经按工位筛过，但带线索
+        #   分支（`#CW020`）是"用户点名要报这道" —— 若只靠 `report_step` 校验，
+        #   这个函数单独被调用（或将来有人改成直接调 `create_report`）时
+        #   就会替别人报工。同一份判据放两处不是冗余，是让两条路径的口径不可能分叉。
+        if allowed_wc_ids is not None:
+            allowed = set(int(x) for x in allowed_wc_ids)
+            if int(target.get("wc_id") or 0) not in allowed:
+                raise HTTPException(status_code=403, detail={
+                    "code": "403-0000",
+                    "message": (f"第 {seq} 道（{op_label}）不归你绑定的工位"
+                                f"（该道在 {target.get('wc_name') or '未指定工位'}），无法过站"),
+                })
+        if (target.get("status") or "") == "completed":
+            raise HTTPException(status_code=409, detail={
+                "code": "409-0002",
+                "message": (f"第 {seq} 道（{op_label}）已完成，本次没有重复报工；"
+                            "如需超产或补报，请到该工序的报工表单显式填数量"),
+            })
+
+        payload = dict(data or {})
+        payload.pop("code", None)
+        if payload.get("output_qty") is None:
+            planned = int(target.get("planned_qty") or 0)
+            done = int(target.get("output_qty") or 0) + int(target.get("scrap_qty") or 0)
+            payload["output_qty"] = max(planned - done, 0)
+        if (int(payload.get("output_qty") or 0) + int(payload.get("scrap_qty") or 0)) <= 0:
+            raise _bad_request(
+                f"第 {seq} 道（{op_label}）的计划量已报满，扫描不会记 0 数量；"
+                "如需超产请在报工表单里手工填数量", "400-0010")
+
+        result = await self.report_step(order["id"], seq, payload, tenant_id,
+                                        allowed_wc_ids=allowed_wc_ids)
+        # 回话要让现场知道"刚才那一下报了哪道" —— 扫码是盲操作，
+        # 只提示"成功"的话，扫错单子也看不出来。
+        result["scanned_code"] = code
+        result["step_seq"] = seq
+        result["operation_name"] = op_label
+        result["work_order_no"] = wo_no
+        if isinstance(result.get("message"), str):
+            result["message"] = f"{wo_no} 第 {seq} 道（{op_label}）已过站：{result['message']}"
+        return result
 
     async def _last_operation_code(self, order: dict) -> Optional[str]:
         """工单所挂在工艺路线上**末道工序**的编码；解析不到返回 ``None``。

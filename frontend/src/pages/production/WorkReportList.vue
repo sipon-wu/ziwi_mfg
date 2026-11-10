@@ -19,9 +19,10 @@
  * 把已完工的一起倒出来是上千行，第一屏全是干完的活，列表越长越没人看。
  * 已完工的仍在「已完工」tab 里可查可补报（不隐藏）。
  */
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { get } from '@/api/client'
+import { showToast } from 'vant'
+import { get, post, errorText } from '@/api/client'
 import { statusTagOf } from '@/composables/useStatusTag'
 import type { WorkStep, PaginatedResponse } from '@/types'
 
@@ -103,11 +104,6 @@ function switchTab(name: string | number) {
   fetchPage(true)
 }
 
-onMounted(() => {
-  fetchGroups()
-  fetchPage(true)
-})
-
 /** 点行进这道工序的报工页 —— 工单与工序都由参数带过去，现场不用选也不用填 */
 function openStep(s: WorkStep) {
   router.push({
@@ -120,11 +116,78 @@ function openStep(s: WorkStep) {
 function goWholeOrder() {
   router.push('/work-reports/create')
 }
+
+/* ── 扫码过站（C-108）─────────────────────────────────────────────
+ *
+ * 扫码枪在系统眼里就是一个**键盘**：一串字符 + 回车。所以这里不做任何
+ * 设备对接 —— 一个输入框 + 回车就够，现场没有枪时用键盘敲工单号，
+ * 行为与扫码完全一致（Kane 原话："扫码和输入没区别，可以模拟"）。
+ *
+ * 码怎么拆（工单号 / 工单号#工序编码 / 工单号#工序序号）**由后端解析**，
+ * 前端不猜：这是业务规则，写在两处早晚不一致。
+ */
+const scanCode = ref('')
+const scanning = ref(false)
+const scanInput = ref<HTMLInputElement | null>(null)
+
+function focusScan() {
+  // 扫码枪连扫的前提是焦点一直在输入框上。点过别处（翻页、切 tab）之后
+  // 就扫不进去了，而现场不会意识到是焦点问题 —— 会以为枪坏了。
+  nextTick(() => scanInput.value?.focus())
+}
+
+async function doScan() {
+  const code = scanCode.value.trim()
+  if (!code || scanning.value) return
+  scanning.value = true
+  try {
+    const res = await post<{ message?: string }>('/work-orders/steps/execute', { code })
+    showToast(res?.message || `${code} 已过站`)
+    await fetchPage(true)
+  } catch (e) {
+    // ★ 失败也必须清空输入框：扫码枪的动作是「清空 + 输入 + 回车」，
+    //   框里留着旧码时，下一次扫码会**拼在旧码后面**，必然再报一次
+    //   "认不出来" —— 现场会以为条码印坏了，跑去重打一张，问题却永远不消失。
+    //   把扫到的内容放进提示里，现场仍然看得到刚才扫的是什么。
+    showToast({ message: `${code}：${errorText(e, '过站失败')}`, duration: 4000 })
+  } finally {
+    scanCode.value = ''
+    scanning.value = false
+    focusScan()
+  }
+}
+
+onMounted(() => {
+  fetchGroups()
+  fetchPage(true)
+  focusScan()
+})
 </script>
 
 <template>
   <div class="wrs">
     <van-nav-bar title="报工管理" right-text="整单报工" @click-right="goWholeOrder" />
+
+    <!-- 扫码过站（C-108）：扫码枪 = 键盘 + 回车，所以这里就是一个输入框。
+         放在最上面而不是收进筛选栏 —— 车间的主动作是"扫一下"，搜索在下面负责"查"。 -->
+    <div class="wrs-scan">
+      <input
+        ref="scanInput"
+        v-model="scanCode"
+        class="wrs-scan__input"
+        type="text"
+        autocomplete="off"
+        placeholder="扫工单码 / 输入工单号，回车过站"
+        :disabled="scanning"
+        @keyup.enter="doScan"
+      />
+      <button
+        type="button"
+        class="wrs-scan__btn"
+        :disabled="scanning || !scanCode.trim()"
+        @click="doScan"
+      >{{ scanning ? '过站中…' : '过站' }}</button>
+    </div>
 
     <van-tabs :active="tab" @change="switchTab">
       <van-tab title="待作业" name="open" />
@@ -221,6 +284,51 @@ function goWholeOrder() {
 <style scoped>
 .wrs {
   padding-bottom: var(--ziwi-gap-lg);
+}
+
+/* 扫码过站：整条是"输入框 + 过站按钮"，输入框吃满剩余宽度。
+   热区用 --ziwi-touch-min（车间触屏，戴手套也能点中），
+   高度不写死数字 —— 三档 W/T/H 由 formFactor 统一决定。 */
+.wrs-scan {
+  display: flex;
+  gap: var(--ziwi-gap-sm);
+  align-items: stretch;
+  padding: var(--ziwi-gap-sm) var(--ziwi-gap-md);
+  background: var(--ziwi-bg-white);
+  border-bottom: 1px solid var(--ziwi-border);
+}
+
+.wrs-scan__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--ziwi-touch-min);
+  padding: 0 var(--ziwi-gap-sm);
+  border: 1px solid var(--ziwi-border);
+  border-radius: var(--ziwi-radius-sm);
+  background: var(--ziwi-bg-light);
+  color: var(--ziwi-text-primary);
+  font-size: var(--ziwi-font-size-md);
+}
+
+.wrs-scan__input:focus {
+  outline: none;
+  border-color: var(--ziwi-primary);
+}
+
+.wrs-scan__btn {
+  flex: 0 0 auto;
+  min-height: var(--ziwi-touch-min);
+  padding: 0 var(--ziwi-gap-md);
+  border: none;
+  border-radius: var(--ziwi-radius-sm);
+  background: var(--ziwi-primary);
+  color: #fff;
+  font-size: var(--ziwi-font-size-md);
+  font-weight: 600;
+}
+
+.wrs-scan__btn:disabled {
+  opacity: 0.5;
 }
 
 .wrs__count {

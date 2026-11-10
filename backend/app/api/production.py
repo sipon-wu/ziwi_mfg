@@ -12,6 +12,7 @@ from app.schemas.production import (
     CreateWorkOrderRequest,
     CreateWorkReportRequest,
     StepReportRequest,
+    ScanExecuteRequest,
     AssignWorkOrderRequest,
     MergeWorkOrdersRequest,
     PauseWorkOrderRequest,
@@ -72,6 +73,47 @@ async def list_work_steps(
                                      group_id=group_id,
                                      allowed_wc_ids=allowed_wc_ids)
     return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/work-orders/steps/execute")
+async def execute_step_by_scan(
+    req: ScanExecuteRequest,
+    current_user: dict = Depends(get_current_user),
+    allowed_wc_ids: Optional[list] = Depends(get_user_work_center_ids),
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository)),
+):
+    """扫码过站：扫到码即完成该工序并自动报工。
+
+    ★ 路径为什么是 `steps/execute` 而不是 `scan-report`：
+      权限码按路径末段推导。`scan-report` 不在 `EXECUTE_SUFFIXES` 里，资源名会被
+      推成 `work_order_scan_report` —— 一个没有任何角色拥有的码，除通配 admin 外
+      全员 403，报错文案还指着页面上不存在的权限项（本仓第 N 次，与 compose /
+      decompose / material-check / aql-plan 同一形态）。写成 `steps` + `execute`
+      后资源收敛回 `work_order_step`、动作收敛成 `execute`，与逐道报工**共用同
+      一个权限码**：能点报工的人就能扫码，不需要再补一条迁移去授权。
+
+    ★ 必须注册在 `/work-orders/{order_id}` 之前：`{order_id}` 是 int，FastAPI 按
+      声明顺序匹配，"steps" 会被拿去转 int 直接 422（这个遮蔽坑在
+      `/work-orders/merge` 上吃过一次，注释就在上面）。
+
+    ★ `allowed_wc_ids` 与列表、与逐道报工是**同一个依赖**。扫码是"免选择"的报工
+      入口，正因为免选择，归属校验更必须做在服务端 —— 否则受限账号扫别人的流转
+      卡就能替别人报工，而界面看起来一切正常。
+    """
+    svc = ProductionService(repo)
+    # ★ 这里**不能**用 `model_dump(exclude_unset=True)`：用户只传了 `code` 时，
+    #   `input_qty` / `scrap_qty` / `labor_hours` / `machine_hours` 虽然都有默认值，
+    #   却会被 exclude_unset 一并剔掉 → `create_report` 的固定列 INSERT 少绑定参数
+    #   → `A value is required for bind parameter 'input_qty'` → 500。
+    #   （与「固定列 INSERT 少一列 = 运行时 500」同一条：默认值不等于会传。）
+    #   只有 `output_qty` 需要区分"没传"与"0"，它默认就是 None，直接带上即可。
+    payload = req.model_dump()
+    code = payload.pop("code", "")
+    payload["reporter_id"] = current_user["id"]
+    result = await svc.scan_execute(code, payload,
+                                    current_user.get("tenant_id", "default"),
+                                    allowed_wc_ids=allowed_wc_ids)
+    return {"code": 0, "message": result["message"], "data": result}
 
 
 @router.post("/work-orders")

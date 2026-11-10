@@ -139,6 +139,40 @@ class StepReportRequest(BaseModel):
     reported_at: Optional[datetime] = None
 
 
+class ScanExecuteRequest(BaseModel):
+    """扫码过站（`POST /work-orders/steps/execute`）—— 扫到码即完成该工序并报工。
+
+    ## 扫码枪在系统眼里就是一个键盘
+
+    工业扫码枪的输出是"一串字符 + 回车"，与手输完全等价。所以这里**不做**
+    任何设备对接，前端也只是一个输入框：现场没有枪时用键盘敲工单号一样能跑，
+    有枪时它只是把敲键盘这件事变快。这也意味着**码的内容必须人可读**
+    （工单号本身），而不是某个内部 id。
+
+    ## 码的三种形态（都是拼出来的，库里不存条码）
+
+    - ``WO-20261110-0001``            → 自动定位"该我过的下一道"
+    - ``WO-20261110-0001#OP20``       → 工序编码（工序票上印这个，最稳）
+    - ``WO-20261110-0001#3``          → 工序序号
+
+    ## ★ `output_qty` 默认 ``None`` = 整批剩余，这是幂等的基石
+
+    报满即 ``completed``，连扫第二遍被状态挡住。若默认 1 件，扫码枪手抖
+    连扫两次就静默变成 2 件 —— 产量翻倍且没有任何报错，是最坏的一类缺陷。
+    要分批报工请显式填数量（那时连扫本来就该报多次）。
+    """
+
+    code: str
+    output_qty: Optional[int] = None
+    input_qty: int = 0
+    scrap_qty: int = 0
+    defect_reason: Optional[str] = None
+    labor_hours: float = 0
+    machine_hours: float = 0
+    remark: Optional[str] = None
+    report_date: Optional[date] = None
+
+
 class DailyReportRow(BaseModel):
     report_date: date
     wo_no: str

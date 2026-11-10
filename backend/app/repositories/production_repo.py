@@ -194,6 +194,20 @@ class ProductionRepository(MultiTenantRepository):
         )
         return int((after or {}).get("n") or 0) - int((before or {}).get("n") or 0)
 
+    async def get_work_order_by_no(self, wo_no: str) -> Optional[Dict]:
+        """按工单号回查 —— 扫码过站的入口。
+
+        ★ 走 `query_one_unscoped`：`wo_no` 挂在 `uq_work_order_tenant_no` 上，
+          是**租户内唯一**，不是部门内唯一。带上组织范围的话，前段组扫总装
+          的流转卡会扫不到（跨部门协作是车间常态），而报出来的错会是
+          "码认不出来" —— 现场只会以为条码印坏了，去重打一张。
+          该不该允许操作由写入侧的 `allowed_wc_ids` 回答，不在这里回答。
+        """
+        return await self.query_one_unscoped(
+            "SELECT * FROM work_orders WHERE wo_no = :n",
+            {"n": wo_no},
+        )
+
     async def steps_of_order(self, work_order_id: int) -> List[Dict]:
         return await self.query(
             """SELECT s.*, wc.name AS wc_name
