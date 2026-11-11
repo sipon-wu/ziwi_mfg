@@ -158,6 +158,11 @@ class WorkOrderStep(Base):
 
     first_reported_at = Column(DateTime(timezone=True), comment="首次报工时刻")
     last_reported_at = Column(DateTime(timezone=True), comment="最近一次报工时刻")
+    # ★ IE 标准必须**快照**，不能分析时实时 join route_steps：
+    #   路线改版调了节拍，三个月前的工单不该被新标准重判一次（与 operation_code /
+    #   wc_id 快照同一个道理）。NULL = 下达时该工序未配置标准 → 分析判「未判」。
+    takt_target_min = Column(Float, comment="下达时快照的 IE 目标节拍(分钟/件)")
+    transit_limit_min = Column(Float, comment="下达时快照的 IE 过站时效上限(分钟)")
     # 归属组织（数据范围过滤用）：取工单的 org_id，不是操作人的 ——
     # 这一行的"归属"由它属于哪张工单决定，跟谁报的无关（与 work_reports
     # 取报工人组织是**相反**的口径，两处不要统一）。

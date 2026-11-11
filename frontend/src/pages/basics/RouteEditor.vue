@@ -46,6 +46,9 @@ interface StepItem {
   wc_id: number | null
   setup_time_override: number | null
   unit_time_override: number | null
+  // IE 精益配置（可空 = 该工序未设标准，分析判「未判」而不是达标）
+  takt_target_min: number | null
+  transit_limit_min: number | null
   is_parallel_eligible: boolean
   is_outsource: boolean
   next_step_seq: number | null
@@ -154,8 +157,16 @@ function getWcLabel(wcId: number | null): string {
   return wc ? `${wc.code}` : ''
 }
 
+/** 两个 IE 数字框单独用**字符串**接输入：v-model.number 会在用户敲「5.」时
+ *  立刻把它变成 5，接着再敲「5」就成 55；而且 `number | null` 绑到 van-field
+ *  的 `string | number` 上会新增 TS 错误。保存时再统一收敛成正数或 null。 */
+const taktInput = ref('')
+const transitInput = ref('')
+
 function openAddStep() {
   isNewStep.value = true
+  taktInput.value = ''
+  transitInput.value = ''
   editingStep.value = {
     route_id: routeId,
     operation_id: null,
@@ -165,6 +176,8 @@ function openAddStep() {
     wc_id: null,
     setup_time_override: null,
     unit_time_override: null,
+    takt_target_min: null,
+    transit_limit_min: null,
     is_parallel_eligible: false,
     is_outsource: false,
     next_step_seq: null,
@@ -178,6 +191,8 @@ function openEditStep(index: number) {
   isNewStep.value = false
   editingStepIndex.value = index
   editingStep.value = { ...steps.value[index] }
+  taktInput.value = editingStep.value.takt_target_min == null ? '' : String(editingStep.value.takt_target_min)
+  transitInput.value = editingStep.value.transit_limit_min == null ? '' : String(editingStep.value.transit_limit_min)
   showStepDetail.value = true
 }
 
@@ -186,6 +201,9 @@ function confirmAddStep() {
     showToast('请选择工序')
     return
   }
+  // 输入框是字符串，落回 StepItem 前收敛：'' / 0 / 负数 / NaN 一律 null
+  editingStep.value.takt_target_min = positiveOrNull(taktInput.value)
+  editingStep.value.transit_limit_min = positiveOrNull(transitInput.value)
   if (isNewStep.value) {
     editingStep.value.step_seq = steps.value.length + 1
     // 补齐显示字段
@@ -243,6 +261,14 @@ function recalcSeq() {
 
 // ── 保存步骤 ──
 
+/** 数字输入框清空时 v-model.number 给的是 ''，NaN/0/负数都不能发给后端：
+ *  后端 schema 是 `Optional[float] = Field(None, gt=0)`，0 会被当成「已配 0 分」
+ *  而判定层又把它算作「未配置」，两边说法不一致。统一收敛成 null。 */
+function positiveOrNull(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 async function saveSteps() {
   if (steps.value.length === 0) {
     showToast('请至少添加一个工序')
@@ -260,6 +286,8 @@ async function saveSteps() {
       wc_id: s.wc_id,
       setup_time_override: s.setup_time_override,
       unit_time_override: s.unit_time_override,
+      takt_target_min: positiveOrNull(s.takt_target_min),
+      transit_limit_min: positiveOrNull(s.transit_limit_min),
       is_parallel_eligible: s.is_parallel_eligible,
       is_outsource: s.step_type === 'outsource',
       next_step_seq: s.next_step_seq,
@@ -340,6 +368,12 @@ function wcTypeLabel(t: string): string {
                 <div v-if="step.setup_time_override || step.unit_time_override" class="ziwi-text-xs ziwi-text-muted ziwi-mt-2xs">
                   准备: {{ step.setup_time_override }}min | 单件: {{ step.unit_time_override }}min
                 </div>
+                <!-- 留空就什么都不显示：不把「未配置」印成 0 或「达标」 -->
+                <div v-if="step.takt_target_min || step.transit_limit_min" class="ziwi-text-xs ziwi-text-muted ziwi-mt-2xs">
+                  <span v-if="step.takt_target_min">目标节拍: {{ step.takt_target_min }}分/件</span>
+                  <span v-if="step.takt_target_min && step.transit_limit_min"> | </span>
+                  <span v-if="step.transit_limit_min">过站时效上限: {{ step.transit_limit_min }}分</span>
+                </div>
               </div>
             </div>
 
@@ -400,6 +434,16 @@ function wcTypeLabel(t: string): string {
         <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
           <van-field v-model.number="editingStep.setup_time_override" label="准备时间(min)" type="number" placeholder="继承工序" />
           <van-field v-model.number="editingStep.unit_time_override" label="单件时间(min)" type="number" placeholder="继承工序" />
+        </div>
+
+        <!-- IE 精益配置：两栏都留空＝「IE 未设标准」，过站时效分析会显示「未判」。
+             这里不设产品默认值 —— 换一种工艺/换一个租户时，别家的节拍不能拿来当本家的标准。 -->
+        <div class="ziwi-flex ziwi-flex-wrap ziwi-gap-2">
+          <van-field v-model="taktInput" label="目标节拍(分/件)" type="number" placeholder="留空=未配置" />
+          <van-field v-model="transitInput" label="过站时效上限(分)" type="number" placeholder="留空=未配置" />
+        </div>
+        <div class="ziwi-text-xs ziwi-text-muted">
+          目标节拍＝该站位处理一件的目标时间；过站时效上限＝本道完工到下一道开工允许的最大等待。产品可在上下工序之间等待，这里只设上限、不判等待为异常。
         </div>
 
         <van-field label="并行组标识" placeholder="可选，同组可并行">

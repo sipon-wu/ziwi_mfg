@@ -150,12 +150,14 @@ class ProductionRepository(MultiTenantRepository):
             (tenant_id, work_order_id, step_seq, operation_id, operation_code,
              operation_name, wc_id, step_type, planned_qty,
              input_qty, output_qty, scrap_qty, report_count,
-             status, first_reported_at, last_reported_at, org_id)
+             status, first_reported_at, last_reported_at,
+             takt_target_min, transit_limit_min, org_id)
         SELECT wo.tenant_id, wo.id, rs.step_seq, rs.operation_id, o.code,
                COALESCE(rs.step_name, o.name), rs.wc_id,
                COALESCE(rs.step_type, 'production'),
                COALESCE(wo.planned_qty, 0),
-               0, 0, 0, 0, 'pending', NULL, NULL, wo.org_id
+               0, 0, 0, 0, 'pending', NULL, NULL,
+               rs.takt_target_min, rs.transit_limit_min, wo.org_id
         FROM work_orders wo
         JOIN route_steps rs ON rs.route_id = wo.route_id
         LEFT JOIN operations o ON o.id = rs.operation_id
@@ -213,6 +215,28 @@ class ProductionRepository(MultiTenantRepository):
             """SELECT s.*, wc.name AS wc_name
                FROM work_order_steps s
                LEFT JOIN work_centers wc ON wc.id = s.wc_id
+               WHERE s.work_order_id = :w
+               ORDER BY s.step_seq""",
+            {"w": work_order_id},
+        )
+
+    async def takt_rows(self, work_order_id: int) -> List[Dict]:
+        """过站时效分析的输入行：工序快照的**事实 + 下达时快照的 IE 标准**。
+
+        ★ 标准取 ``work_order_steps`` 的快照列，不实时 JOIN ``route_steps``：
+          IE 后来调了节拍，历史工单不该被新标准重判一遍。工艺时长（``o.*``）
+          只用来算「理论节拍」参考值，**不参与判定**。
+        ★ 走基类 ``query``：主表是 ``work_order_steps``（有 tenant_id），
+          租户条件会加在 ``WHERE s.work_order_id`` 这一层，不会错层。
+        """
+        return await self.query(
+            """SELECT s.step_seq, s.operation_code, s.operation_name, s.wc_id, s.status,
+                      s.output_qty, s.report_count,
+                      s.first_reported_at, s.last_reported_at,
+                      s.takt_target_min, s.transit_limit_min,
+                      o.unit_time, o.setup_time, o.batch_size
+               FROM work_order_steps s
+               LEFT JOIN operations o ON o.id = s.operation_id
                WHERE s.work_order_id = :w
                ORDER BY s.step_seq""",
             {"w": work_order_id},

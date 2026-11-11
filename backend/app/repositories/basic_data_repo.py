@@ -523,9 +523,11 @@ class RouteStepRepository(MultiTenantRepository):
         return await self.execute(
             """INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, step_seq,
                step_type, wc_id, setup_time_override, unit_time_override,
+               takt_target_min, transit_limit_min,
                is_parallel_eligible, is_outsource, next_step_seq, parallel_group, remark)
                VALUES (:tenant_id, :route_id, :operation_id, :step_name, :step_seq,
                :step_type, :wc_id, :setup_time_override, :unit_time_override,
+               :takt_target_min, :transit_limit_min,
                :is_parallel_eligible, :is_outsource, :next_step_seq, :parallel_group, :remark)""",
             data,
         )
@@ -564,6 +566,9 @@ class RouteStepRepository(MultiTenantRepository):
                 "tenant_id": self._tenant_id or "default",
                 "step_name": None, "step_type": "production", "wc_id": None,
                 "setup_time_override": None, "unit_time_override": None,
+                # IE 标准两列必须进固定列清单 + 缺省：缺一列 = 绑定参数缺失 500
+                # （「固定列 INSERT 少一列」铁律），而 schema 传了也存不进去。
+                "takt_target_min": None, "transit_limit_min": None,
                 "is_parallel_eligible": False, "is_outsource": False,
                 "next_step_seq": None, "parallel_group": None, "remark": None,
                 **step,
@@ -572,9 +577,11 @@ class RouteStepRepository(MultiTenantRepository):
                 text(
                     """INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, step_seq,
                     step_type, wc_id, setup_time_override, unit_time_override,
+                    takt_target_min, transit_limit_min,
                     is_parallel_eligible, is_outsource, next_step_seq, parallel_group, remark)
                     VALUES (:tenant_id, :route_id, :operation_id, :step_name, :step_seq,
                     :step_type, :wc_id, :setup_time_override, :unit_time_override,
+                    :takt_target_min, :transit_limit_min,
                     :is_parallel_eligible, :is_outsource, :next_step_seq, :parallel_group, :remark)"""
                 ),
                 params,

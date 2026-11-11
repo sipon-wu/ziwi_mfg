@@ -737,7 +737,10 @@ class TrialService:
         # 试产的全部意义就是把这些参数试准，丢了等于白试。
         param_fields = ("setup_time_override", "unit_time_override",
                         "is_parallel_eligible", "next_step_seq",
-                        "parallel_group")
+                        "parallel_group",
+                        # IE 在试产阶段调准的节拍/过站时效必须随转量产继承，
+                        # 否则正式路线的每道工序都回到「未配置」（分析全未判）。
+                        "takt_target_min", "transit_limit_min")
         dropped_keys: set = set()
         for idx, step in enumerate(usable, start=1):
             seq = step.get("step_seq") or step.get("seq") or idx
@@ -745,9 +748,9 @@ class TrialService:
                 "INSERT INTO route_steps (tenant_id, route_id, operation_id, step_name, "
                 "step_seq, step_type, wc_id, is_outsource, remark, "
                 "setup_time_override, unit_time_override, is_parallel_eligible, "
-                "next_step_seq, parallel_group) "
+                "next_step_seq, parallel_group, takt_target_min, transit_limit_min) "
                 "VALUES (:tid, :rid, :op, :name, :seq, :stype, :wc, :outs, :remark, "
-                ":setup, :unit, :par, :nseq, :pgroup)",
+                ":setup, :unit, :par, :nseq, :pgroup, :takt, :transit)",
                 {
                     "tid": self.order_repo.tenant_id,
                     "rid": route_id,
@@ -767,6 +770,8 @@ class TrialService:
                     "par": bool(step.get("is_parallel_eligible")),
                     "nseq": step.get("next_step_seq"),
                     "pgroup": step.get("parallel_group"),
+                    "takt": step.get("takt_target_min"),
+                    "transit": step.get("transit_limit_min"),
                 },
             )
             written += 1

@@ -325,6 +325,11 @@ class RouteStepCreate(BaseModel):
     wc_id: Optional[int] = None
     setup_time_override: Optional[float] = None
     unit_time_override: Optional[float] = None
+    # IE 精益配置：None = 该工序未设标准（分析判「未判」，不是达标）。
+    # gt=0 挡住 0 与负数：0 会被判定逻辑当成「未配置」，界面却显示「已配 0 分」，
+    # 两边说法不一致；负数没有物理含义。
+    takt_target_min: Optional[float] = Field(None, gt=0, le=100000)
+    transit_limit_min: Optional[float] = Field(None, gt=0, le=100000)
     is_parallel_eligible: bool = False
     is_outsource: bool = False
     next_step_seq: Optional[int] = None
@@ -340,6 +345,8 @@ class RouteStepUpdate(BaseModel):
     wc_id: Optional[int] = None
     setup_time_override: Optional[float] = None
     unit_time_override: Optional[float] = None
+    takt_target_min: Optional[float] = Field(None, gt=0, le=100000)
+    transit_limit_min: Optional[float] = Field(None, gt=0, le=100000)
     is_parallel_eligible: Optional[bool] = None
     is_outsource: Optional[bool] = None
     next_step_seq: Optional[int] = None
@@ -358,6 +365,9 @@ class RouteStepResponse(BaseModel):
     wc_id: Optional[int] = None
     setup_time_override: Optional[float] = None
     unit_time_override: Optional[float] = None
+    # IE 精益配置：None = 该工序未设标准（分析判「未判」，不是达标）
+    takt_target_min: Optional[float] = None
+    transit_limit_min: Optional[float] = None
     is_parallel_eligible: bool = False
     is_outsource: bool = False
     next_step_seq: Optional[int] = None

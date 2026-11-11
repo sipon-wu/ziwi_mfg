@@ -74,12 +74,14 @@ INSERT INTO work_order_steps
     (tenant_id, work_order_id, step_seq, operation_id, operation_code,
      operation_name, wc_id, step_type, planned_qty,
      input_qty, output_qty, scrap_qty, report_count,
-     status, first_reported_at, last_reported_at, org_id)
+     status, first_reported_at, last_reported_at,
+     takt_target_min, transit_limit_min, org_id)
 SELECT wo.tenant_id, wo.id, rs.step_seq, rs.operation_id, o.code,
        COALESCE(rs.step_name, o.name), rs.wc_id,
        COALESCE(rs.step_type, 'production'),
        COALESCE(wo.planned_qty, 0),
-       0, 0, 0, 0, 'pending', NULL, NULL, wo.org_id
+       0, 0, 0, 0, 'pending', NULL, NULL,
+       rs.takt_target_min, rs.transit_limit_min, wo.org_id
 FROM work_orders wo
 JOIN route_steps rs ON rs.route_id = wo.route_id
 LEFT JOIN operations o ON o.id = rs.operation_id

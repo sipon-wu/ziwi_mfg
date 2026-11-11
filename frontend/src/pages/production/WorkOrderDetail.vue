@@ -74,6 +74,42 @@ const reasonValue = ref('')
 const reasonRequired = ref(false)
 let reasonIntent: 'pause' | 'force_complete' | 'cancel' | null = null
 
+/** 过站时效（IE 精益）：只读派生数据。判定的中文化 label 由后端给，
+ *  页面不自建字典 —— 三态（达标/超节拍/未判）只要多一处就会漂移。 */
+interface TaktVerdict {
+  state: string
+  label: string
+  reason: string | null
+}
+interface TaktStep {
+  step_seq: number
+  operation_name: string
+  theory_cycle_min: number
+  takt_target_min: number | null
+  observed_pace_min: number | null
+  takt_verdict: TaktVerdict
+  transit_wait_min: number | null
+  transit_limit_min: number | null
+  transit_verdict: TaktVerdict
+}
+interface TaktData {
+  steps: TaktStep[]
+  line_balance: { rate: number | null; label: string }
+  summary: { step_count: number; takt_ok: number; takt_over: number
+             transit_over: number; unjudged: number }
+  hint: string
+}
+const taktData = ref<TaktData | null>(null)
+
+async function fetchTakt() {
+  try {
+    taktData.value = await get<TaktData>(`/work-orders/${route.params.id}/takt`)
+  } catch {
+    // 权限未开通 / 接口未部署时静默隐藏这一段，不让整张详情页打不开
+    taktData.value = null
+  }
+}
+
 async function fetch() {
   loading.value = true
   try {
@@ -84,6 +120,7 @@ async function fetch() {
     // 按钮由后端状态机给出，前端不再自己 v-if 状态 —— 避免两处判断漂移
     actions.value = (data as any).available_actions || []
     statusLogs.value = await get(`/work-orders/${route.params.id}/status-log`)
+    await fetchTakt()
   } finally { loading.value = false }
 }
 
@@ -365,6 +402,21 @@ function fmtTime(v?: string | null) {
           :title="`${statusTagOf('work_order', log.from_status).label} → ${statusTagOf('work_order', log.to_status).label}`"
           :label="`${log.created_at}${log.remark ? ' · ' + log.remark : ''}`" />
         <van-cell v-if="!statusLogs.length" title="暂无记录" />
+      </van-cell-group>
+
+      <!-- 过站时效（IE 精益）：标准是工单下达时从工艺路线快照下来的，
+           IE 之后改路线不会重判这张单。未配置标准显示「未判」，不按达标计。 -->
+      <van-cell-group v-if="taktData" title="过站时效（IE 精益）">
+        <van-cell title="线平衡率"
+          :value="taktData.line_balance.rate == null ? '未判' : `${(taktData.line_balance.rate * 100).toFixed(1)}%`" />
+        <van-cell title="节拍判定"
+          :value="`达标 ${taktData.summary.takt_ok} · 超节拍 ${taktData.summary.takt_over} · 未判 ${taktData.summary.unjudged}`" />
+        <van-cell
+          v-for="s in taktData.steps" :key="s.step_seq"
+          :title="`${s.step_seq}. ${s.operation_name}`"
+          :label="`理论 ${s.theory_cycle_min} 分/件 · 目标 ${s.takt_target_min ?? '未配置'} · 实测 ${s.observed_pace_min ?? '—'} 分/件；过站 ${s.transit_wait_min ?? '—'} 分 / 上限 ${s.transit_limit_min ?? '未配置'}${s.takt_verdict.reason ? '（' + s.takt_verdict.reason + '）' : ''}`"
+          :value="`节拍${s.takt_verdict.label} · 过站${s.transit_verdict.label}`" />
+        <van-cell :title="taktData.hint" />
       </van-cell-group>
     </div>
 

@@ -190,6 +190,27 @@ async def list_order_steps(
                              "该工单没有工序行：可能未挂工艺路线（老单按整单报工），或尚未下达"}}
 
 
+@router.get("/work-orders/{order_id}/takt")
+async def work_order_takt(
+    order_id: int,
+    repo: ProductionRepository = Depends(get_tenant_repo(ProductionRepository, require_auth=True)),
+):
+    """过站时效分析（只读）：IE 配置的标准 vs 报工时刻算出的实测。
+
+    ★ 权限码是 `M01:work_order_takt:read` —— 末段 `takt` 不是动作词，
+      会被静态段拼进资源名（与 `/work-centers/capacity` 同一形态）。
+      迁移 `20261111b_takt_sla.py` 负责建码并按 `M01:work_order_step:read`
+      的持有者授予；漏了这步除通配 admin 外全员 403。
+
+    ★ 与产能口径互不覆盖：`design_verdict` 只回答「交不交得出货」，
+      这里回答「节拍有没有超 IE 设的标准」。等待本身不是异常（产品过站
+      上下工序之间可以等），只报等了多久、有没有超上限。
+    """
+    svc = ProductionService(repo)
+    return {"code": 0, "message": "success",
+            "data": await svc.takt_analysis(order_id)}
+
+
 @router.post("/work-orders/{order_id}/steps/{step_seq}/execute")
 async def execute_step(
     order_id: int,

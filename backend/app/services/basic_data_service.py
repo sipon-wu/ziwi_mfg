@@ -353,6 +353,10 @@ class RouteService:
                 "wc_id": step.get("wc_id"),
                 "setup_time_override": step.get("setup_time_override"),
                 "unit_time_override": step.get("unit_time_override"),
+                # IE 标准随版本一起复制：升一版路线就把 IE 调好的节拍/过站时效
+                # 全丢回「未配置」，是最容易漏掉的一种抽象层断裂。
+                "takt_target_min": step.get("takt_target_min"),
+                "transit_limit_min": step.get("transit_limit_min"),
                 "is_parallel_eligible": step.get("is_parallel_eligible", False),
                 "is_outsource": step.get("is_outsource", False),
                 "next_step_seq": step.get("next_step_seq"),

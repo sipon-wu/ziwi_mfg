@@ -241,6 +241,17 @@ class RouteStep(Base):
     wc_id             = Column(BigInteger, comment="执行工作中心ID(引用work_centers.id)")
     setup_time_override   = Column(Float, comment="准备时间覆盖(分钟)")
     unit_time_override    = Column(Float, comment="单件加工时间覆盖(分钟)")
+    # ── IE 精益配置（2026-11-11）──────────────────────────────────
+    # ★ 两列刻意**可空且没有 Python 默认值**：NULL 的语义是「IE 还没给这道工序
+    #   设标准」，分析端点据此判「未判」。给 default=0 会把「没配」变成「标准 0
+    #   分钟」，于是所有实测都被判超节拍；给一个产品默认值（例如推进器 30 分）
+    #   更糟 —— 换租户时拿别家的合同判本家的活，正是 C-111 抓到的那种残留。
+    # ★ 配置挂在 route_steps 而不是 operations：同一道工序挂到不同产品/路线时，
+    #   站位节拍可以不同（与已有的 setup_time_override 同一层 override 语义）。
+    # ★ 工单下达时快照进 work_order_steps 同名列（见 20261111b 迁移）：
+    #   IE 后来改了标准，不该把历史工单按新标准重判一遍。
+    takt_target_min   = Column(Float, comment="IE 目标节拍(分钟/件)：该站位处理一件的目标时间；空=未配置")
+    transit_limit_min = Column(Float, comment="IE 过站时效上限(分钟)：本道完工到下一道开工允许的最大等待；空=未配置")
     is_parallel_eligible  = Column(Boolean, default=False, comment="是否允许并行")
     is_outsource          = Column(Boolean, default=False, comment="是否为外协工序")
     next_step_seq         = Column(Integer, comment="下一工序序号(串行) / 空表示末工序")

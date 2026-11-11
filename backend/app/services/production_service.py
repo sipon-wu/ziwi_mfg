@@ -971,6 +971,28 @@ class ProductionService:
         await self._require_order(order_id)
         return await self.repo.steps_of_order(order_id)
 
+    async def takt_analysis(self, order_id: int) -> dict:
+        """这张工单的过站时效分析（**只读**，不改库、不改任何现有判定）。
+
+        三条纪律：
+        - 算法全在 ``app.core.takt`` 纯函数里，本方法只负责取数 + 拼上下文；
+        - 标准取下达时快照，不实时读路线当前配置；
+        - 没有工序行（未挂路线的老单 / 未下达）如实返回空 steps + hint，
+          不造一道假工序、也不把「没有数据」包装成「全部达标」。
+        """
+        from app.core.takt import analyze_steps
+
+        order = await self._require_order(order_id)
+        rows = await self.repo.takt_rows(order_id)
+        data = analyze_steps(rows)
+        data["work_order_id"] = order_id
+        data["work_order_no"] = order.get("wo_no")
+        data["route_id"] = order.get("route_id")
+        if not rows:
+            data["hint"] = ("该工单没有工序行：可能未挂工艺路线（老单按整单报工），"
+                            "或尚未下达。没有事实就算不出过站时效。")
+        return data
+
     async def report_step(self, order_id: int, step_seq: int, data: dict,
                           tenant_id: str, allowed_wc_ids: Optional[list] = None) -> dict:
         """按工序报工：**工序由路径决定，不让用户填编码**。
