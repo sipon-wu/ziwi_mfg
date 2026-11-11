@@ -166,6 +166,14 @@ class WorkCenterService:
         rows = await self.repo.capacity_inputs(route_id)
 
         stations: Dict[int, dict] = {}
+        # ★ 未取整的占机，单独记一份用来算产能。
+        #   `steps[].occupancy` 是给人看的，做了 `round(..., 4)`；若拿它反过来
+        #   算产能，就是「显示精度决定计算结果」。2026-11-11 反例租户实测：
+        #   注塑一模 8 件、0.75 分/模 → 真实占机 0.09375，显示成 0.0938，
+        #   480 ÷ 0.0938 = 5117（真值 5120），**每班少数 3 件而四舍五入看不出来**。
+        #   靶场租户的占机恰好全是 ≤4 位小数（2.55 / 31.25 / 30），取整是空操作，
+        #   所以这个错在 DEMO 上跑多少轮都是绿的 —— 这正是反例租户要抓的东西。
+        exact_occ: Dict[int, List[float]] = {}
         for r in rows:
             wc_id = int(r["wc_id"])
             st = stations.setdefault(wc_id, {
@@ -183,6 +191,7 @@ class WorkCenterService:
             setup = float(r.get("setup_time") or 0)
             batch = max(1, int(r.get("batch_size") or 1))
             occ = piece_occupancy(unit, setup, batch)
+            exact_occ.setdefault(wc_id, []).append(occ)
             st["steps"].append({
                 "step_seq": r.get("step_seq"),
                 "step_name": r.get("step_name"),
@@ -204,7 +213,7 @@ class WorkCenterService:
             minutes, declared = shift_minutes_from_config(st.get("shift_config"))
             st["shift_minutes"] = minutes
             st["shift_declared"] = declared
-            slowest = slowest_occupancy([s["occupancy"] for s in st["steps"]])
+            slowest = slowest_occupancy(exact_occ.get(st["wc_id"], []))
             st["slowest_occupancy"] = slowest
             cap = station_capacity(slowest, minutes)
             st["capacity_per_shift"] = cap

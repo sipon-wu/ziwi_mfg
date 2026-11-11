@@ -29,6 +29,7 @@ from app.services.basic_data_service import WorkCenterService
 BACKEND = Path(__file__).resolve().parents[2]
 
 DAY_SHIFT = "白班 08:00-20:00"      # 单班 12h = 720 分
+DAY_SHIFT_8H = "早班 08:00-16:00；中班 16:00-24:00；夜班 00:00-08:00"   # 三班 8h = 480 分
 
 
 def _row(wc_id: int, wc_code: str, step_seq: int, unit: float, setup: float = 0,
@@ -155,9 +156,26 @@ class TestCapacityMath:
         assert st["capacity_per_shift"] == 24
 
     @pytest.mark.asyncio
+    async def test_occupancy_rounding_does_not_leak_into_capacity(self):
+        """★★ 显示精度不许决定计算结果：占机 0.09375 被显示成 0.0938，产能仍须按真值算。
+
+        2026-11-11 反例租户（注塑一模 8 件、0.75 分/模）实测抓到的真缺陷：
+        服务端一边把 `occupancy` 做 `round(..., 4)` 给人看，一边又拿这个**取过整**
+        的值去除班时 —— 480 ÷ 0.0938 = 5117，真值 5120，每班少数 3 件。
+
+        为什么靶场跑不出来：AH-THR 的占机恰好全是 ≤4 位小数（2.55 / 31.25 / 30），
+        取整是空操作。**只有"占机小数位超过 4 位"的工艺（一模多件、大批量摊薄）
+        才会露馅** —— 所以这条用例本身就是反例租户验证的固化。
+        """
+        data = await _preview([_row(8, "WC-1", 1, unit=0.75, batch=8, shift_config=DAY_SHIFT_8H)])
+        st = data["stations"][0]
+        assert st["steps"][0]["occupancy"] == 0.0938          # 显示值：取整
+        assert st["slowest_occupancy"] == 0.09375             # 计算值：不取整
+        assert st["capacity_per_shift"] == 5120               # 480 ÷ 0.09375，不是 5117
+
+    @pytest.mark.asyncio
     async def test_shift_minutes_is_per_station(self):
         """★ 换租户的核心：两个工位配了不同班次，产能各按自己的班时算。
-
         这是本轮重构要根治的那件事 —— 以前班时是一个全局常量，
         24h 连续生产的工位会被按 12h 算，产能凭空少一半且**不会报错**。
         """

@@ -104,13 +104,27 @@ def preview(c: httpx.Client, route_id=None):
     return c.get(f"{API}/work-centers/capacity", params=params)
 
 
+def step_occupancy(step: dict) -> float:
+    """按**原始输入**重算每件占机：`(unit_time + setup_time) / batch_size`。
+
+    ★★ 刻意不用服务端返回的 `occupancy`：那个值做了 `round(..., 4)`，是给人看的。
+      2026-11-11 实测过一次：服务端拿这个取过整的值去除班时，注塑一模 8 件
+      （0.75 分/模 → 0.09375）被截成 0.0938，480 ÷ 0.0938 = 5117，真值 5120。
+      **探针若也读 `occupancy`，就会跟这个 bug 得出同一个错数、一起报绿** ——
+      自算必须从原始字段出发，不许用被测方给的中间产物。
+    """
+    batch = max(1, int(step.get("batch_size") or 1))
+    return (float(step.get("unit_time") or 0)
+            + float(step.get("setup_time") or 0)) / batch
+
+
 def expect_capacity(st: dict):
     """独立重算口径 A：`floor(班时 ÷ 最慢一道占机)`，整件 floor。
 
     ★ 刻意不 import 服务端的实现 —— 探针要是调同一个函数，那就成了
       "同一个 bug 验同一个 bug"。这里按口径定义重写一遍。
     """
-    occs = [float(s.get("occupancy") or 0) for s in (st.get("steps") or [])]
+    occs = [step_occupancy(s) for s in (st.get("steps") or [])]
     slowest = max(occs) if occs else 0.0
     minutes = float(st.get("shift_minutes") or 0)
     if slowest <= 0 or minutes <= 0:
@@ -167,6 +181,24 @@ def main():
                set(no_cap) == set(expect_no),
                f"服务端 {no_cap[:3]} vs 自算 {expect_no[:3]}")
 
+        # ★ 钉子：最慢占机必须是未取整的真值。
+        #   曾经走过一遍「occupancy 取 4 位小数 → 再拿它去除班时」，靶场租户的占机
+        #   全是 ≤4 位小数（2.55 / 31.25 / 30）时取整是空操作，怎么跑都绿；
+        #   换成一模 8 件（0.09375）立刻少算 3 件/班。
+        drift = []
+        for s in stations:
+            occs = [step_occupancy(x) for x in (s.get("steps") or [])]
+            want = max(occs) if occs else 0.0
+            got = s.get("slowest_occupancy")
+            if want <= 0:
+                continue
+            if got is None or abs(float(got) - want) > 1e-9:
+                drift.append((s["wc_code"], got, round(want, 6)))
+        report("P2-3 最慢占机是未取整的真值（显示精度不许决定计算结果）",
+               not drift,
+               f"取整漂移：{drift[:3]}" if drift else
+               f"例：{stations[0]['wc_code']} slowest={stations[0].get('slowest_occupancy')}")
+
         # ── P3 batch_size 摊算 ───────────────────────────────
         print("\n── P3 同装量摊算（一炉多件）──")
         batched = [(s, st) for s in stations for st in (s.get("steps") or [])
@@ -176,7 +208,8 @@ def main():
         else:
             st0 = batched[0][1]
             want = (float(st0["unit_time"]) + float(st0["setup_time"])) / int(st0["batch_size"])
-            report("P3-1 占机 = (工时+准备) ÷ 同装量", abs(float(st0["occupancy"]) - want) < 1e-6,
+            report("P3-1 占机 = (工时+准备) ÷ 同装量",
+                   round(float(st0["occupancy"]), 4) == round(want, 4),
                    f"{st0['operation_code']} {st0['unit_time']:g}分÷{st0['batch_size']}"
                    f"={st0['occupancy']:g}（期望 {want:g}）")
             report("P3-2 摊算过程写在 occupancy_text 里（看得出它来自一炉几件）",
