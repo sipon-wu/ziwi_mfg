@@ -377,31 +377,74 @@ class TestDesignVerdictIsOneSided:
     拿天花板判 +633% 等于把**余量**当**缺陷**；闸该管的只有「交不出货」。
     """
 
+    #: 靶场（推进器厂）的验收纲领。**放在测试里**，不再从脚本里读全局常量 ——
+    #: 纲领是"这个租户的契约"，测试替它显式说 45（C-110）。
+    DESIGN = 45.0
+
     def test_shortfall_still_fails(self):
         """负向用例：达不到纲领必须红，否则这个改动就是纯放松。"""
-        ok, diff = gate.design_verdict(30)
+        ok, diff = gate.design_verdict(30, self.DESIGN)
         assert ok is False
         assert round(diff, 1) == -33.3
 
     def test_just_below_tolerance_fails(self):
         # 45 × (1 - 15%) = 38.25；38 差一点点
-        assert gate.design_verdict(38)[0] is False
+        assert gate.design_verdict(38, self.DESIGN)[0] is False
 
     def test_exactly_at_lower_bound_passes(self):
-        assert gate.design_verdict(38.25)[0] is True
+        assert gate.design_verdict(38.25, self.DESIGN)[0] is True
 
     def test_surplus_never_fails(self):
         """转子线 330 台/月 = 7.3 倍余量 —— 达标，不是缺陷。"""
-        ok, diff = gate.design_verdict(330)
+        ok, diff = gate.design_verdict(330, self.DESIGN)
         assert ok is True and diff > 600
 
     def test_both_sides_not_symmetric(self):
         """同一档偏差，正负两侧结论必须相反（这就是"单向"的意思）。"""
-        assert gate.design_verdict(45 * 2)[0] is True
-        assert gate.design_verdict(45 / 2)[0] is False
+        assert gate.design_verdict(45 * 2, self.DESIGN)[0] is True
+        assert gate.design_verdict(45 / 2, self.DESIGN)[0] is False
+
+    def test_no_design_means_not_judged(self):
+        """★★ 没给纲领 = **未判**，不是达标。
+
+        原文是 `if not design: return True, 0.0` —— 把"我不知道"当成"通过"。
+        换租户时纲领缺失（或穿了 0 / None）会被判成绿灯，而绿灯没人再看。
+        同一族错误：C-108「兜底值不能当事实报」、本闸的 `shift_declared`。
+        """
+        for degenerate in (None, 0, 0.0, -45):
+            assert gate.design_verdict(100, degenerate) == (None, None)
 
     def test_degenerate_design_does_not_divide_by_zero(self):
-        assert gate.design_verdict(100, design=0) == (True, 0.0)
+        """除零防护仍在，但结论是"未判"而不是"达标"。"""
+        assert gate.design_verdict(100, design=0) == (None, None)
+
+    def test_script_has_no_hardcoded_design_monthly(self):
+        """★★ 源码级闸：产能闸脚本里不许再出现写死的纲领。
+
+        C-110 之前是 `DESIGN_MONTHLY = 45.0`，注释还写着"用户 2026-11-05 明确" ——
+        换一个租户跑，脚本照样拿 45 判别人的产能，报「达纲领（余量 91.9 倍）」：
+        数字算对了，判的却是别家的合同。纲领只能从 `--design-monthly` /
+        环境变量 / 调用点来。
+
+        ★ 用 AST 不用字符串匹配：本文件大量注释里都写着 45，文本匹配会自己绊自己。
+        ★ 同时要认 `ast.AnnAssign`：带类型注解的 `DESIGN_MONTHLY: Optional[float] = None`
+          走的是 AnnAssign 而不是 Assign —— 只看 Assign 会报「模块级常量被删了」，
+          而它明明在那儿。（第一版就是这么假红的。）
+        """
+        tree = ast.parse((SCRIPTS / "check_capacity_consistency.py").read_text(encoding="utf-8"))
+        assigns = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        assigns[tgt.id] = node.value
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                assigns[node.target.id] = node.value
+        assert "DESIGN_MONTHLY" in assigns, "模块级 DESIGN_MONTHLY 被整个删了？"
+        node = assigns["DESIGN_MONTHLY"]
+        assert isinstance(node, ast.Constant) and node.value is None, (
+            "DESIGN_MONTHLY 必须是 None（纲领由调用方注入），"
+            f"现在是 {ast.dump(node)[:80]}")
 
 
 class TestSeedReferencesRealWorkCenters:

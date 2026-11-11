@@ -95,6 +95,7 @@ import math
 import os
 import re
 import sys
+from typing import Optional
 
 # 让 `import app.*` 能生效。两种摆放都要认：
 #   仓库里脚本在 `code/scripts/`，包在 `code/backend/app/`；
@@ -142,8 +143,33 @@ BASELINE_NOTE = (
     "给人看的理由写在「备注」里。"
 )
 
-#: 设计纲领：月产 45 台（用户 2026-11-05 明确）。
-DESIGN_MONTHLY = 45.0
+#: 设计纲领（单班月产）。**没有默认值** —— 它是每个租户/每条线自己的验收契约。
+#:
+#: ★ 2026-11-11（C-110 反例租户验证后改）：原来是写死的 `45.0`（推进器厂 2026-11-05
+#:   的验收目标）。问题是**换一个租户它就变成别人的纲领**：拿注塑厂去跑，脚本照样
+#:   报「达纲领（余量 91.9 倍）」—— 数字算对了，判的却是别家的合同。抽象只做在
+#:   模型层的典型残留：工艺参数都进库了，**验收口径还留在代码里**。
+#:   现在：由 `--design-monthly` 或 `DESIGN_MONTHLY` 环境变量注入；没给就
+#:   **不判达标**（三态 `None`），只报产能。跑靶场时在调用点显式给 45。
+DESIGN_MONTHLY: Optional[float] = None
+
+
+def _design_from_env() -> Optional[float]:
+    """环境变量 `DESIGN_MONTHLY` → 纲领。空/未设=不判；写了但不是数字=直接拒绝。
+
+    ★ 不静默吞掉非法值：`DESIGN_MONTHLY=45台` 这种手误若退回"不判"，用户会以为
+      判过了（绿），实际一个都没判 —— 与"把兜底当事实报"是同一族错误。
+    """
+    raw = (os.environ.get("DESIGN_MONTHLY") or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"[拒绝] 环境变量 DESIGN_MONTHLY={raw!r} 不是数字 —— "
+              f"要么删掉它（不判达标），要么给个数（如 45）")
+        raise SystemExit(2)
+
 #: 月工作日口径（工厂日历为空时用）。
 WORKDAYS = 22
 #: 没配 `shift_config` 时按几班兜底。
@@ -172,8 +198,8 @@ DESIGN_TOLERANCE_PCT = 15.0
 PROCESS_WAIT_RE = ("预热", "固化", "冷却", "烘烤", "老化", "真空", "保温", "跑合", "浸胶", "灌胶")
 
 
-def design_verdict(closed_monthly: float, design: float = DESIGN_MONTHLY,
-                   tol: float = DESIGN_TOLERANCE_PCT) -> tuple[bool, float]:
+def design_verdict(closed_monthly: float, design: Optional[float] = None,
+                   tol: float = DESIGN_TOLERANCE_PCT) -> tuple[Optional[bool], Optional[float]]:
     """纲领判定：**只判「达不到」**，富余一律算达标。返回 `(ok, 偏差%)`。
 
     ★ 为什么是单向（2026-11-07 用户拍板「转子线 330 台/月达不到，按 45 台/月产能」）：
@@ -182,9 +208,14 @@ def design_verdict(closed_monthly: float, design: float = DESIGN_MONTHLY,
       "理论上能跑 330"就真产出 330。拿天花板判 +633% 是把**余量**当**缺陷**。
 
     闸该管的只有一件事：**交不出货**。所以下限（低于纲领 -tol）仍然判死。
+
+    ★★ 没给纲领时返回 `(None, None)` —— **三态，不是 True**。
+      原文是 `if not design or design <= 0: return True, 0.0`，那是把"我不知道"
+      当成"达标"：换租户时纲领缺失（或穿了个 0）会被判成绿灯，而绿灯是没人会
+      再看的。同一族错误见 C-108「兜底值不能当事实报」、本节 `shift_declared`。
     """
     if not design or design <= 0:
-        return True, 0.0
+        return None, None
     diff = (closed_monthly - design) / design * 100
     return diff >= -tol, diff
 
@@ -260,7 +291,11 @@ def closed_loop_output(seq: list[tuple[object, float, int]],
 
 
 async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
-               update_baseline: bool = False, prune: bool = False) -> int:
+               update_baseline: bool = False, prune: bool = False,
+               design_monthly: Optional[float] = None) -> int:
+    # 纲领是**输入**，不是本脚本的属性。调用方给就判、不给就不判（见 design_verdict）。
+    global DESIGN_MONTHLY
+    DESIGN_MONTHLY = design_monthly
     eng = create_async_engine(get_settings().DATABASE_URL)
     try:
         async with eng.connect() as conn:
@@ -297,8 +332,10 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 routes.setdefault((r[1], r[3]), {"name": r[2], "steps": []})["steps"].append(r)
 
             print("=" * 100)
-            print(f"产能自洽性核查 · 租户 {tenant} · 设计纲领 {DESIGN_MONTHLY:.0f} 台/月 · "
-                  f"{WORKDAYS} 工作日")
+            print(f"产能自洽性核查 · 租户 {tenant} · "
+                  + (f"设计纲领 {DESIGN_MONTHLY:g}/月 · " if DESIGN_MONTHLY
+                     else "未给设计纲领（只报产能，不判达标）· ")
+                  + f"{WORKDAYS} 工作日")
             print("=" * 100)
 
             verdicts, problems = [], []
@@ -452,35 +489,43 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                       f" ｜ 稳态节拍 {m1:6.1f} ｜ {shifts} 班 {mn:6.1f}")
 
                 # ★★ 判定口径见 design_verdict()：**只判「达不到」**，富余算达标。
-                ok, diff = design_verdict(m_closed)
-                short = not ok
-                if short:
-                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
+                #    没给纲领时 `ok is None` —— 这一档必须显式写出来，否则
+                #    `tag` 会落进"不是 OK 就算坏"的筛选里，把"没判"报成"不达标"。
+                ok, diff = design_verdict(m_closed, DESIGN_MONTHLY)
+                if ok is None:
+                    print(f"  对比纲领  未给设计纲领（--design-monthly）→ 只看产能，不做达标判定")
+                elif ok is False:
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:g} → "
                           f"❌ 达不到 {diff:+.0f}%")
                 elif diff > DESIGN_TOLERANCE_PCT:
-                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → "
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:g} → "
                           f"✅ 达纲领（余量 {m_closed / DESIGN_MONTHLY:.1f} 倍 · "
-                          f"闭环值是满负荷理论能力，按纲领 {DESIGN_MONTHLY:.0f} 规划）")
+                          f"闭环值是满负荷理论能力，按纲领 {DESIGN_MONTHLY:g} 规划）")
                 else:
-                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:.0f} → ✅ 对得上")
+                    print(f"  对比纲领  单班闭环 {m_closed} vs {DESIGN_MONTHLY:g} → ✅ 对得上")
                 if abs(m1 - m_closed) > 0.5:
                     print(f"            ⚠️ 稳态节拍 {m1:.0f} 台/月 是按瓶颈节拍算的，隐含流水线"
                           f"连续运转、在制品可跨班；按「每班走完全流程并下线」只有 "
                           f"{n_closed} 台/班 —— 两个数都对，但**纲领该对后者**")
                 if not shift_declared:
                     print(f"            ⚠️ 该工位没配 shift_config → 按单班 {shift_hours:g}h 兜底核算"
-                          f"（月产能按 {DESIGN_MONTHLY:.0f} 台/月的单班纲领比）")
+                          + (f"（月产能按 {DESIGN_MONTHLY:g}/月的单班纲领比）"
+                             if DESIGN_MONTHLY else ""))
                 elif shifts > 1:
                     print(f"            ⚠️ shift_config 写的是 {shifts} 班（{shift_hours:g}h）→ "
-                          f"按配置算 {mn:.0f} 台/月，是单班的 {shifts} 倍；"
-                          f"若纲领是 {DESIGN_MONTHLY:.0f} 台，两班配置与实际不符")
-                tag = "OK" if ok else f"达不到 {diff:+.0f}%"
-                if ok and diff > DESIGN_TOLERANCE_PCT:
-                    tag = f"OK（余量 {m_closed / DESIGN_MONTHLY:.1f} 倍）"
+                          f"按配置算 {mn:.0f} 台/月，是单班的 {shifts} 倍"
+                          + (f"；若纲领是 {DESIGN_MONTHLY:g} 台，两班配置与实际不符"
+                             if DESIGN_MONTHLY else ""))
+                if ok is None:
+                    tag = "未判（没给纲领）"
+                else:
+                    tag = "OK" if ok else f"达不到 {diff:+.0f}%"
+                    if ok and diff > DESIGN_TOLERANCE_PCT:
+                        tag = f"OK（余量 {m_closed / DESIGN_MONTHLY:.1f} 倍）"
                 verdicts.append((code, ver, tag, m_closed, mn))
-                if not ok:
+                if ok is False:
                     findings[f"design:{code}"] = (
-                        f"{code} 单班闭环下线 {m_closed} 台/月 vs 纲领 {DESIGN_MONTHLY:.0f}"
+                        f"{code} 单班闭环下线 {m_closed} 台/月 vs 纲领 {DESIGN_MONTHLY:g}"
                         f"（{diff:+.0f}%）")
 
             print("\n" + "=" * 100)
@@ -529,13 +574,25 @@ async def main(tenant: str = DEFAULT_TENANT, check: bool = False,
                 print(f"  → {len(seen_wc)} 个工位，{len(off)} 个与本口径不一致"
                       + ("：" + "、".join(off) if off else ""))
 
-            bad = [v for v in verdicts if not str(v[2]).startswith("OK")]
-            print(f"\n结论：{len(verdicts)} 条路线，单班**闭环下线**口径 {len(verdicts) - len(bad)} 条"
-                  f"达到 {DESIGN_MONTHLY:.0f} 台/月纲领；{len(problems)} 个工位字段填错")
-            print("     （闭环 = 空线起跑、整条流程在本班内走完并下线；"
-                  "稳态节拍另列，两者之差就是跨班在制）")
-            print("     ★ 只判「达不到」：闭环是满负荷理论能力，按订单节拍跑多少就是多少，"
-                  "余量不构成交付风险。")
+            # ★ 三态筛选：`未判` 既不是达标也不是不达标。
+            #   用 `not tag.startswith("OK")` 会把"没给纲领"算成坏路线，
+            #   于是换租户时脚本自己报「0 条达到纲领」并 exit 1 —— 判的是
+            #   "你没告诉我纲领"，不是"这条线交不出货"。
+            judged = [v for v in verdicts if v[2] != "未判（没给纲领）"]
+            bad = [v for v in judged if not str(v[2]).startswith("OK")]
+            if DESIGN_MONTHLY:
+                print(f"\n结论：{len(verdicts)} 条路线，单班**闭环下线**口径 "
+                      f"{len(judged) - len(bad)} 条达到 {DESIGN_MONTHLY:g}/月纲领；"
+                      f"{len(problems)} 个工位字段填错")
+                print("     （闭环 = 空线起跑、整条流程在本班内走完并下线；"
+                      "稳态节拍另列，两者之差就是跨班在制）")
+                print("     ★ 只判「达不到」：闭环是满负荷理论能力，按订单节拍跑多少就是多少，"
+                      "余量不构成交付风险。")
+            else:
+                print(f"\n结论：{len(verdicts)} 条路线，产能已算；**未给设计纲领，不做达标判定**；"
+                      f"{len(problems)} 个工位字段填错")
+                print("     （要判达标请给 --design-monthly <单班月产>；"
+                      "纲领是每个租户自己的验收契约，脚本不替你猜）")
 
             # ── 棘轮档位 ────────────────────────────────────────────────
             if update_baseline:
@@ -580,9 +637,18 @@ def _save_baseline(findings: dict, prune: bool = False) -> None:
             notes = {}
     merged = {**old, **findings}
     notes = {k: v for k, v in notes.items() if k in merged}
+    # 纲领只是**记录**（不参与比对）。没给就不覆盖旧值 —— 否则一次不带
+    # `--design-monthly` 的 `--update-baseline` 会把"这份基线是按哪个纲领建的"抹成 null。
+    recorded_design = DESIGN_MONTHLY
+    if recorded_design is None and os.path.isfile(BASELINE):
+        try:
+            recorded_design = json.loads(
+                open(BASELINE, encoding="utf-8").read()).get("设计纲领")
+        except Exception:
+            recorded_design = None
     payload = {
         "说明": BASELINE_NOTE,
-        "设计纲领": DESIGN_MONTHLY,
+        "设计纲领": recorded_design,
         "已知偏差": len(merged),
         "known": dict(sorted(merged.items())),
         "备注": dict(sorted(notes.items())),
@@ -660,5 +726,9 @@ if __name__ == "__main__":
                     help="把当前偏差并入基线（默认并集，不动其他环境的条目）")
     ap.add_argument("--prune", action="store_true",
                     help="配合 --update-baseline：用当前结果整体替换基线（确认都修完了才用）")
+    ap.add_argument("--design-monthly", type=float, default=_design_from_env(),
+                    help="设计纲领（单班月产）。**不给就不做达标判定** —— 它是每个租户"
+                         "自己的验收契约，脚本不替人猜；也可用 DESIGN_MONTHLY 环境变量")
     _a = ap.parse_args()
-    sys.exit(asyncio.run(main(_a.tenant, _a.check, _a.update_baseline, _a.prune)))
+    sys.exit(asyncio.run(main(_a.tenant, _a.check, _a.update_baseline, _a.prune,
+                              _a.design_monthly)))

@@ -777,9 +777,14 @@ def main():
             #   测试路线当成新增偏差，闸直接红。实测踩过一次。
             #   产能闸的靶场是固定的（推进器厂），跟 E2E 跑在哪个租户无关。
             cap_tenant = os.environ.get("CAPACITY_TENANT", "AH-THR")
+            # ★ 设计纲领属于**这个靶场**（推进器厂 45 台/月），不属于产能闸脚本。
+            #   C-110 之前它是脚本里的 `DESIGN_MONTHLY = 45.0`，于是拿注塑厂去跑，
+            #   脚本会拿推进器的纲领判别人的产能（数字对、语义错）。现在纲领是
+            #   闸的**输入**：跑哪个靶场就在这儿给哪个数；不给就不判达标。
+            cap_design = os.environ.get("CAPACITY_DESIGN_MONTHLY", "45")
             cap = subprocess.run(
                 [py, os.path.join(root, "scripts", "check_capacity_consistency.py"),
-                 "--check", cap_tenant],
+                 "--check", "--design-monthly", cap_design, cap_tenant],
                 capture_output=True, text=True, cwd=os.path.join(root, "backend"),
                 env=_child_env())
             cout = (cap.stdout or "") + (cap.stderr or "")
